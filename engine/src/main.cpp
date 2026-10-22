@@ -1,9 +1,11 @@
 // nova3: level viewer for the N.O.V.A. 3 reimplementation.
 //
-//   nova3 [--data DIR] [--level NAME.lvc]                       fly through a level
+//   nova3 [--data DIR] [--level NAME.lvc]                       walk through a level
 //   nova3 ... --screenshot OUT.bmp [--eye X,Y,Z,YAW[,PITCH]] [--size WxH]   render one frame, no window
+//   nova3 ... --walk-test SECONDS [--screenshot OUT.bmp]          simulate walking forward from the start
 //
-// Controls: mouse to look, WASD to move, Space/Ctrl up/down, Shift faster, Esc to quit.
+// Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
+// (Space/Ctrl then move up/down), Esc to quit.
 // The data directory is the game's own files folder (the .gla archives).
 #include <chrono>
 #include <cstdio>
@@ -15,6 +17,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "core/vfs.h"
+#include "game/player.h"
 #include "game/scene.h"
 #include "render/renderer.h"
 
@@ -26,6 +29,7 @@ struct Options {
     std::string data = "work/data";
     std::string level = "Ship_01.lvc";
     std::string screenshot;
+    float walk_test = 0;
     bool have_eye = false;
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
     float pitch = 0;
@@ -43,6 +47,7 @@ Options parse(int argc, char** argv) {
         if (a == "--data") o.data = next();
         else if (a == "--level") o.level = next();
         else if (a == "--screenshot") o.screenshot = next();
+        else if (a == "--walk-test") o.walk_test = std::stof(next());
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -116,20 +121,50 @@ int main(int argc, char** argv) {
             Scene scene(vfs, renderer, gol);
             scene.load_level(opt.level);
             const SceneStats& st = scene.stats();
-            std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, loaded in %.2fs\n",
+            std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, "
+                        "%zu collision objects (%zu triangles, %zu missing), loaded in %.2fs\n",
                         opt.level.c_str(), st.placements, st.models, st.missing_models, st.textures,
-                        st.missing_textures, st.draws, st.load_seconds);
+                        st.missing_textures, st.draws, st.collision_objects, st.collision_triangles,
+                        st.missing_collision, st.load_seconds);
+            Player player;
+            player.spawn(scene.start_position, scene.start_yaw);
+            constexpr float kPhysicsStep = 1.0f / 120.0f;
 
             Camera cam;
-            cam.position = opt.have_eye ? glm::vec3(opt.eye) : scene.start_position;
+            cam.position = opt.have_eye ? glm::vec3(opt.eye) : player.eye();
             cam.yaw = opt.have_eye ? opt.eye.w : scene.start_yaw;
             cam.pitch = opt.pitch;
 
-            if (headless) {
+            if (opt.walk_test > 0) {
+                // Settle for a second, then walk forward; report the path.
+                const glm::vec3 start = player.center;
+                const int steps = int(opt.walk_test / kPhysicsStep);
+                float travelled = 0;
+                glm::vec3 last = player.center;
+                for (int i = 0; i <= steps; ++i) {
+                    PlayerInput in;
+                    in.forward = i * kPhysicsStep >= 1.0f ? 1.0f : 0.0f;
+                    player.update(scene.collision(), in, kPhysicsStep);
+                    travelled += glm::length(glm::vec2(player.center - last));
+                    last = player.center;
+                    if (i % 60 == 0) {
+                        std::printf("t=%5.2fs  pos=(%8.2f %8.2f %7.2f)  %s\n", i * kPhysicsStep, player.center.x,
+                                    player.center.y, player.center.z, player.on_ground ? "ground" : "air");
+                    }
+                }
+                std::printf("walk test: start z %.2f, end z %.2f, horizontal distance %.2f m, %s\n", start.z,
+                            player.center.z, travelled, player.on_ground ? "on ground" : "in the air");
+                cam.position = player.eye();
+                cam.yaw = player.yaw;
+            }
+            if (headless || opt.walk_test > 0) {
+                if (opt.screenshot.empty()) return 0;
                 const Image img = renderer.render_to_image(scene.draws(), cam.frame(opt.width, opt.height), opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
                 std::printf("wrote %s\n", opt.screenshot.c_str());
             } else {
+                bool flying = false;
+                float accumulator = 0;
                 SDL_SetWindowRelativeMouseMode(window, true);
                 bool running = true;
                 auto last = std::chrono::steady_clock::now();
@@ -138,24 +173,42 @@ int main(int argc, char** argv) {
                     while (SDL_PollEvent(&e)) {
                         if (e.type == SDL_EVENT_QUIT) running = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F && !e.key.repeat) {
+                            flying = !flying;
+                            if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
+                        }
                         if (e.type == SDL_EVENT_MOUSE_MOTION) {
                             cam.yaw -= e.motion.xrel * 0.12f;
                             cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * 0.12f, -89.0f, 89.0f);
                         }
                     }
                     const auto now = std::chrono::steady_clock::now();
-                    const float dt = std::chrono::duration<float>(now - last).count();
+                    const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
                     last = now;
                     const bool* keys = SDL_GetKeyboardState(nullptr);
-                    const float speed = (keys[SDL_SCANCODE_LSHIFT] ? 25.0f : 6.0f) * dt;
-                    const glm::vec3 fwd = cam.forward();
-                    const glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1)));
-                    if (keys[SDL_SCANCODE_W]) cam.position += fwd * speed;
-                    if (keys[SDL_SCANCODE_S]) cam.position -= fwd * speed;
-                    if (keys[SDL_SCANCODE_D]) cam.position += right * speed;
-                    if (keys[SDL_SCANCODE_A]) cam.position -= right * speed;
-                    if (keys[SDL_SCANCODE_SPACE]) cam.position.z += speed;
-                    if (keys[SDL_SCANCODE_LCTRL]) cam.position.z -= speed;
+                    if (flying) {
+                        const float speed = (keys[SDL_SCANCODE_LSHIFT] ? 25.0f : 6.0f) * dt;
+                        const glm::vec3 fwd = cam.forward();
+                        const glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1)));
+                        if (keys[SDL_SCANCODE_W]) cam.position += fwd * speed;
+                        if (keys[SDL_SCANCODE_S]) cam.position -= fwd * speed;
+                        if (keys[SDL_SCANCODE_D]) cam.position += right * speed;
+                        if (keys[SDL_SCANCODE_A]) cam.position -= right * speed;
+                        if (keys[SDL_SCANCODE_SPACE]) cam.position.z += speed;
+                        if (keys[SDL_SCANCODE_LCTRL]) cam.position.z -= speed;
+                    } else {
+                        PlayerInput in;
+                        in.forward = float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]);
+                        in.right = float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]);
+                        in.jump = keys[SDL_SCANCODE_SPACE];
+                        in.run = keys[SDL_SCANCODE_LSHIFT];
+                        player.yaw = cam.yaw;
+                        for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
+                            player.update(scene.collision(), in, kPhysicsStep);
+                        }
+                        if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
+                        cam.position = player.eye();
+                    }
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     renderer.render_to_window(scene.draws(), cam.frame(w, h));

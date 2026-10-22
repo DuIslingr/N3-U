@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <regex>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -107,6 +108,33 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement) {
     }
 }
 
+void Scene::build_collision() {
+    collision_ = CollisionWorld();
+    std::unordered_map<std::string, std::optional<CollisionMesh>> cache;
+    for (const Placement& p : collision_placements(level_, gol_)) {
+        if (doors_open && to_lower(p.object).find("door") != std::string::npos) continue;
+        const std::string key = to_lower(p.model);
+        auto it = cache.find(key);
+        if (it == cache.end()) {
+            std::optional<CollisionMesh> mesh;
+            try {
+                mesh = load_collision(vfs_, p.model);
+            } catch (const FormatError& ex) {
+                std::fprintf(stderr, "collision %s: %s\n", p.model.c_str(), ex.what());
+            }
+            it = cache.emplace(key, std::move(mesh)).first;
+        }
+        if (!it->second) {
+            ++stats_.missing_collision;
+            continue;
+        }
+        collision_.add(it->second->vertices, it->second->materials, placement_matrix(p.transform));
+        ++stats_.collision_objects;
+    }
+    collision_.build();
+    stats_.collision_triangles = collision_.triangle_count();
+}
+
 void Scene::load_level(const std::string& lvc_name) {
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
@@ -118,6 +146,7 @@ void Scene::load_level(const std::string& lvc_name) {
         if (const LoadedModel* lm = model(p.model)) add_instance(*lm, placement_matrix(p.transform));
     }
     stats_.draws = draws_.size();
+    build_collision();
 
     // Start at the level's start spawn point (spawn flags: 3 chars, the first marks the start).
     const LevelObject* spawn = nullptr;
@@ -129,8 +158,26 @@ void Scene::load_level(const std::string& lvc_name) {
             break;
         }
     }
+    // Some start points only play an intro and then move the player on with the Lua
+    // call TeleportPlayerToZone(id), where id is another spawn point. Until scripts
+    // run, follow that call directly.
+    if (spawn && spawn->fields.size() > 3) {
+        static const std::regex teleport(R"(TeleportPlayerToZone\s*\(\s*(\d+)\s*\))");
+        std::smatch m;
+        const std::string& script = spawn->fields[3].s;
+        int target = -1;
+        for (auto it = std::sregex_iterator(script.begin(), script.end(), teleport); it != std::sregex_iterator(); ++it) {
+            target = std::stoi((*it)[1].str());   // the last call wins
+        }
+        for (const auto& o : level_.objects) {
+            if (target >= 0 && o.kind == "spawn_point" && o.base && o.base->id == target) {
+                spawn = &o;
+                break;
+            }
+        }
+    }
     if (spawn) {
-        start_position = spawn->base->position + glm::vec3(0, 0, 1.7f);
+        start_position = spawn->base->position;
         start_yaw = spawn->base->rotation.z;
     }
     stats_.load_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
