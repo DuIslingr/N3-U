@@ -14,12 +14,14 @@ find_path(GLM_INCLUDE_DIR glm/glm.hpp REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+# The game embeds Lua 5.1.4; its level scripts rely on 5.1 semantics.
+pkg_check_modules(LUA51 REQUIRED IMPORTED_TARGET lua5.1)
 
 # Engine core: file system, asset decoders and the game-shader compiler (no rendering).
-file(GLOB CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp src/assets/*.cpp src/shader/*.cpp)
+file(GLOB CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp src/assets/*.cpp src/shader/*.cpp src/script/*.cpp)
 add_library(nova3core STATIC ${CORE_SOURCES})
 target_include_directories(nova3core PUBLIC src ${GLM_INCLUDE_DIR})
-target_link_libraries(nova3core PUBLIC ZLIB::ZLIB PkgConfig::SHADERC)
+target_link_libraries(nova3core PUBLIC ZLIB::ZLIB PkgConfig::SHADERC PkgConfig::LUA51)
 target_compile_options(nova3core PRIVATE -Wall -Wextra)
 
 # Shaders: GLSL -> SPIR-V (Vulkan). Metal/D3D12 builds will add other formats.

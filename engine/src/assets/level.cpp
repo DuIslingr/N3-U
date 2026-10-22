@@ -188,6 +188,7 @@ Transform transform_from_values(const Value& v, size_t first) {
     t.position = {v[first + 1].as_float(), v[first + 2].as_float(), v[first + 3].as_float()};
     t.rotation = {v[first + 4].as_float(), v[first + 5].as_float(), v[first + 6].as_float()};
     t.scale = {v[first + 7].as_float(), v[first + 8].as_float(), v[first + 9].as_float()};
+    if (v.size() > first + 10) t.visible = v[first + 10].i != 0;
     return t;
 }
 
@@ -300,7 +301,8 @@ std::optional<Transform> object_transform(const LevelObject& o, const GolType& t
 
 std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool library) {
     std::vector<Placement> out;
-    for (const auto& o : level.objects) {
+    for (size_t index = 0; index < level.objects.size(); ++index) {
+        const LevelObject& o = level.objects[index];
         if (o.kind != "object") continue;
         auto g = gol.find(o.type);
         if (g == gol.end()) continue;
@@ -311,6 +313,7 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
         auto tf = library ? object_transform(o, g->second, gol) : o.base;
         if (model.empty() || !tf || is_helper_model(model)) continue;
         Placement p;
+        p.object_index = index;
         p.model = model;
         p.transform = *tf;
         p.object = o.name;
@@ -329,7 +332,8 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
 
 std::vector<Placement> collision_placements(const Level& level, const Gol& gol) {
     std::vector<Placement> out;
-    for (const auto& o : level.objects) {
+    for (size_t index = 0; index < level.objects.size(); ++index) {
+        const LevelObject& o = level.objects[index];
         if (o.kind != "object") continue;
         auto g = gol.find(o.type);
         if (g == gol.end()) continue;
@@ -339,6 +343,7 @@ std::vector<Placement> collision_placements(const Level& level, const Gol& gol) 
         auto tf = object_transform(o, g->second, gol);
         if (data && tf && data->size() > 5 && (*data)[5].type == Value::String && !(*data)[5].s.empty()) {
             Placement p;
+            p.object_index = index;
             p.model = (*data)[5].s;
             p.transform = *tf;
             p.object = o.name;

@@ -28,10 +28,12 @@ struct AnimTrack {
 };
 
 // Animated values other than node transforms: material parameters (channel 114:
-// target material id, parameter name, mask of the components written) and light
-// colours (channel 19: target light id, RGB bytes).
+// target material id, parameter name, mask of the components written), light
+// colours (channel 19: target light id, RGB bytes) and node visibility (channel 24:
+// target node id, 0/1 held until the next key).
 struct ValueTrack {
     bool light = false;
+    bool visibility = false;
     std::string target, param;
     int first = 0;                    // first component written (lowest bit of the channel's mask)
     int stride = 0;                   // components per key

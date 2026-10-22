@@ -8,14 +8,21 @@
 //   nova3 ... --builtin-shaders                                  draw with the fallback shader, not the game's
 //   nova3 ... --screenshot OUT.bmp --bench N                      also time N offscreen frames
 //   nova3 ... --skybox ID                                          start with another of the level's skyboxes
+//   nova3 ... --no-scripts                                         do not run the level scripts
+//   nova3 ... --trace-scripts                                      log every script function that starts
+//   nova3 ... --spawn-at ID|X,Y,Z,YAW                              start at a level object, spawn point, waypoint or position
+//   nova3 ... --exec "LUA"                                         run a script snippet once the level has started
+//   nova3 ... --hide-models SUBSTR                                 (debugging) hide placements whose model matches
+//   nova3 ... --screenshot OUT.bmp --run SECONDS                    run the level logic (standing still) first
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
-// (Space/Ctrl then move up/down), G to switch game/built-in shaders, Esc to quit.
+// (Space/Ctrl then move up/down), E to use, G to switch game/built-in shaders, Esc to quit.
 // The data directory is the game's own files folder (the .gla archives).
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -23,6 +30,7 @@
 
 #include "core/vfs.h"
 #include "game/player.h"
+#include "game/level_logic.h"
 #include "game/scene.h"
 #include "render/renderer.h"
 
@@ -43,6 +51,11 @@ struct Options {
     bool builtin_shaders = false;
     int bench = 0;
     int skybox = -1;          // show this skybox id (as the level script's SetSkybox would)
+    bool scripts = true, trace_scripts = false;
+    float run = 0;            // headless: seconds of level logic before the screenshot
+    std::string spawn_at;
+    std::vector<std::string> exec;
+    std::vector<std::string> hide_models;
     int width = 1600, height = 900;
 };
 
@@ -63,6 +76,12 @@ Options parse(int argc, char** argv) {
         else if (a == "--builtin-shaders") o.builtin_shaders = true;
         else if (a == "--bench") o.bench = std::stoi(next());
         else if (a == "--skybox") o.skybox = std::stoi(next());
+        else if (a == "--no-scripts") o.scripts = false;
+        else if (a == "--trace-scripts") o.trace_scripts = true;
+        else if (a == "--run") o.run = std::stof(next());
+        else if (a == "--spawn-at") o.spawn_at = next();
+        else if (a == "--exec") o.exec.push_back(next());
+        else if (a == "--hide-models") o.hide_models.push_back(next());
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -196,6 +215,34 @@ int main(int argc, char** argv) {
                         st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.irradiance_volumes, st.lights, st.skyboxes, st.load_seconds);
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
+            LevelLogic logic(scene, player, gol);
+            logic.trace = opt.trace_scripts;
+            logic.log = [&opt](const std::string& line) {
+                if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
+                std::printf("[script] %s\n", line.c_str());
+            };
+            if (opt.scripts) {
+                logic.start();
+                const auto& ls = logic.stats();
+                std::printf("scripts: %zu chunks (%zu with errors), %zu objects, %zu triggers, %zu doors, %zu usable\n",
+                            ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
+            }
+            if (!opt.spawn_at.empty()) {
+                float v[4] = {0, 0, 0, 0};
+                if (std::sscanf(opt.spawn_at.c_str(), "%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3]) >= 3) {
+                    player.spawn({v[0], v[1], v[2]}, v[3]);
+                } else {
+                    const LevelLogic::Object* o = logic.object(std::stoi(opt.spawn_at));
+                    if (!o) throw std::runtime_error("no object with id " + opt.spawn_at);
+                    player.spawn(o->position, o->yaw);
+                }
+            }
+            for (const std::string& code : opt.exec) logic.exec(code);
+            for (const std::string& h : opt.hide_models) std::printf("hid %zu placements of *%s*\n", scene.hide_models(h), h.c_str());
+            // Level logic at a fixed step, so triggers and doors see every position.
+            auto step_logic = [&](float dt) {
+                if (opt.scripts) logic.update(dt);
+            };
             constexpr float kPhysicsStep = 1.0f / 120.0f;
 
             Camera cam;
@@ -215,6 +262,7 @@ int main(int argc, char** argv) {
                     PlayerInput in;
                     in.forward = i * kPhysicsStep >= 1.0f ? 1.0f : 0.0f;
                     player.update(scene.collision(), in, kPhysicsStep);
+                    step_logic(kPhysicsStep);
                     travelled += glm::length(glm::vec2(player.center - last));
                     last = player.center;
                     if (i % 60 == 0) {
@@ -229,6 +277,15 @@ int main(int argc, char** argv) {
             }
             if (headless || opt.walk_test > 0) {
                 if (opt.screenshot.empty()) return 0;
+                for (float t = 0; t < opt.run; t += kPhysicsStep) {   // stand still and let the scripts run
+                    player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
+                    step_logic(kPhysicsStep);
+                    scene.update(kPhysicsStep, cam.position);
+                }
+                if (opt.run > 0 && !opt.have_eye && opt.focus.empty()) {
+                    cam.position = player.eye();
+                    cam.yaw = player.yaw;
+                }
                 scene.update(opt.time, cam.position);
                 const Image img = renderer.render_to_image(scene.draws(), frame(cam, opt.width, opt.height), opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
@@ -257,6 +314,7 @@ int main(int argc, char** argv) {
                             flying = !flying;
                             if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
                         }
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
                         }
@@ -279,6 +337,7 @@ int main(int argc, char** argv) {
                         if (keys[SDL_SCANCODE_A]) cam.position -= right * speed;
                         if (keys[SDL_SCANCODE_SPACE]) cam.position.z += speed;
                         if (keys[SDL_SCANCODE_LCTRL]) cam.position.z -= speed;
+                        step_logic(dt);
                     } else {
                         PlayerInput in;
                         in.forward = float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]);
@@ -288,6 +347,7 @@ int main(int argc, char** argv) {
                         player.yaw = cam.yaw;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
                             player.update(scene.collision(), in, kPhysicsStep);
+                            step_logic(kPhysicsStep);
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         cam.position = player.eye();

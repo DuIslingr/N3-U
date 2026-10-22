@@ -166,8 +166,8 @@ int cmd_anim(const std::string& dir, const std::string& file, const std::vector<
         for (float t : times) {
             float v[16] = {};
             sample_value(vt, t, v);
-            std::printf("%s %s%s first %d %.1f:", vt.light ? "light" : "material", vt.target.c_str(),
-                        vt.light ? "" : ("/" + vt.param).c_str(), vt.first, t);
+            std::printf("%s %s%s first %d %.1f:", vt.visibility ? "visibility" : vt.light ? "light" : "material", vt.target.c_str(),
+                        vt.light || vt.visibility ? "" : ("/" + vt.param).c_str(), vt.first, t);
             for (int c = 0; c < vt.stride && c < 16; ++c) std::printf(" %.4f", v[c]);
             std::printf("\n");
         }

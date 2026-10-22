@@ -206,6 +206,11 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
             }
             for (const ValueTrack& vt : lib->values) {
                 if (vt.light) continue;   // bound when the light is placed below
+                if (vt.visibility) {
+                    for (size_t n = 0; n < m.cpu.nodes.size(); ++n)
+                        if (m.cpu.nodes[n].id == vt.target) anim->values.push_back({&vt, -1, -1, -1, 1, int(n)});
+                    continue;
+                }
                 for (size_t mi = 0; mi < m.cpu.materials.size(); ++mi) {
                     if (m.cpu.materials[mi].id != vt.target) continue;
                     anim->overrides[mi].push_back({vt.param, vt.first, std::min(vt.stride, 4 - vt.first), glm::vec4(0)});
@@ -294,6 +299,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
     }
     if (anim) {
         pose(*anim);
+        inst.anim = anim.get();
         lods.anim = anim.get();
         animated_.push_back(std::move(anim));
         ++stats_.animated;
@@ -425,7 +431,8 @@ void Scene::pose(AnimatedInstance& a) {
     if (a.library) {
         const float len = a.clip.end - a.clip.start;
         const float ms = a.time * 1000.0f;
-        t = a.clip.start + (len <= 0 ? 0.0f : a.loop ? std::fmod(ms, len) : std::min(ms, len));
+        const float into = len <= 0 ? 0.0f : a.loop ? std::fmod(ms, len) : std::min(ms, len);
+        t = a.reverse ? a.clip.end - into : a.clip.start + into;
     }
     for (size_t n = 0; n < m.cpu.nodes.size(); ++n) {   // parents come before children
         const ModelNode& node = m.cpu.nodes[n];
@@ -435,10 +442,15 @@ void Scene::pose(AnimatedInstance& a) {
         a.world[n] = parent * local_matrix(p.translation, p.rotation, p.scale);
     }
     float v[16];
+    bool any_visibility = false;
+    a.node_hidden.assign(m.cpu.nodes.size(), 0);
     for (const auto& vb : a.values) {
         if (vb.track->stride > 16) continue;
         sample_value(*vb.track, t, v);
-        if (vb.material >= 0) {
+        if (vb.node >= 0) {
+            a.node_hidden[size_t(vb.node)] = v[0] < 0.5f;
+            any_visibility = true;
+        } else if (vb.material >= 0) {
             ParamOverride& o = a.overrides[size_t(vb.material)][size_t(vb.slot)];
             for (int c = 0; c < o.count; ++c) o.value[c] = v[c];
         } else if (vb.light >= 0) {
@@ -455,8 +467,13 @@ void Scene::pose(AnimatedInstance& a) {
             a.palettes[s][j] = node >= 0 ? a.placement_inverse * a.world[node] * sk.inverse_bind[j] : glm::mat4(1);
         }
     }
+    if (any_visibility) {
+        for (size_t n = 0; n < m.cpu.nodes.size(); ++n)   // parents come before children
+            if (m.parent[n] >= 0 && a.node_hidden[size_t(m.parent[n])]) a.node_hidden[n] = 1;
+    }
     for (const auto& d : a.draws) {
         DrawItem& item = draws_[d.item];
+        item.anim_hidden = any_visibility && a.node_hidden[size_t(d.node)];
         if (d.skin >= 0) {
             item.world = a.placement;
             item.joints = a.palettes[d.skin].data();
@@ -483,7 +500,6 @@ void Scene::build_collision() {
     collision_ = CollisionWorld();
     std::unordered_map<std::string, std::optional<CollisionMesh>> cache;
     for (const Placement& p : collision_placements(level_, gol_)) {
-        if (doors_open && to_lower(p.object).find("door") != std::string::npos) continue;
         const std::string key = to_lower(p.model);
         auto it = cache.find(key);
         if (it == cache.end()) {
@@ -499,7 +515,7 @@ void Scene::build_collision() {
             ++stats_.missing_collision;
             continue;
         }
-        collision_.add(it->second->vertices, it->second->materials, placement_matrix(p.transform));
+        collision_.add(it->second->vertices, it->second->materials, placement_matrix(p.transform), uint32_t(p.object_index));
         ++stats_.collision_objects;
     }
     collision_.build();
@@ -552,9 +568,10 @@ void Scene::load_level(const std::string& lvc_name) {
         lights_.push_back(pl);
         light_sources_.push_back({nullptr, -1, pl.position});
     }
+    object_instances_.clear();
     for (const Placement& p : model_placements(level_, gol_)) {
         ++stats_.placements;
-        if (const LoadedModel* lm = model(p.model)) add_instance(*lm, placement_matrix(p.transform), &p);
+        if (const LoadedModel* lm = model(p.model)) object_instances_[p.object_index] = add_instance(*lm, placement_matrix(p.transform), &p);
     }
     load_skyboxes();
     compute_object_lighting();
@@ -597,6 +614,47 @@ void Scene::load_level(const std::string& lvc_name) {
         start_yaw = spawn->base->rotation.z;
     }
     stats_.load_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
+void Scene::set_object_visible(size_t object, bool visible) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return;
+    const Instance& inst = instances_[it->second];
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].hidden = !visible;
+}
+
+bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool reverse) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return false;
+    AnimatedInstance* a = instances_[it->second].anim;
+    if (!a || !a->library) return false;
+    const AnimClip* c = a->library->clip(clip);
+    if (!c) return false;
+    a->clip = *c;
+    a->time = 0;
+    a->loop = loop;
+    a->reverse = reverse;
+    pose(*a);
+    return true;
+}
+
+bool Scene::clip_finished(size_t object) const {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return true;
+    const AnimatedInstance* a = instances_[it->second].anim;
+    if (!a || a->loop) return !a;
+    return a->time * 1000.0f >= a->clip.end - a->clip.start;
+}
+
+size_t Scene::hide_models(const std::string& substring) {
+    size_t n = 0;
+    const std::string want = to_lower(substring);
+    for (const Placement& p : model_placements(level_, gol_)) {
+        if (to_lower(p.model).find(want) == std::string::npos) continue;
+        set_object_visible(p.object_index, false);
+        ++n;
+    }
+    return n;
 }
 
 }  // namespace nova

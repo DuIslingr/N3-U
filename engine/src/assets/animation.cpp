@@ -151,11 +151,12 @@ AnimationLibrary load_animation(const Bytes& raw) {
         uint32_t s[8];
         for (int k = 0; k < 8; ++k) s[k] = b.u32(sampler + 4 * k);
         const uint32_t ctype = b.u32(channel + 4);
-        if (ctype == 114 || ctype == 19) {
+        if (ctype == 114 || ctype == 19 || ctype == 24) {
             ValueTrack vt;
             vt.light = ctype == 19;
+            vt.visibility = ctype == 24;
             vt.target = b.cstr(channel);
-            if (!vt.light) {
+            if (!vt.light && !vt.visibility) {
                 vt.param = b.cstr(channel + 8);
                 const uint32_t mask = b.u32(channel + 0xC);
                 while (vt.first < 3 && !(mask & (1u << vt.first))) ++vt.first;
@@ -242,6 +243,7 @@ void sample_value(const ValueTrack& track, float t, float* out) {
     size_t i;
     float f;
     locate(track.times, t, i, f);
+    if (track.visibility) f = 0;   // stepped
     for (int c = 0; c < track.stride; ++c) {
         const float a = track.values[i * size_t(track.stride) + size_t(c)];
         out[c] = f == 0 ? a : a + (track.values[(i + 1) * size_t(track.stride) + size_t(c)] - a) * f;

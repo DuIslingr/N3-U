@@ -20,11 +20,15 @@ namespace nova {
 struct Triangle {
     glm::vec3 a, b, c;
     uint8_t material;
+    uint32_t owner;           // object it belongs to, for switching its collision off
 };
 
 class CollisionWorld {
 public:
-    void add(const std::vector<glm::vec3>& vertices, const std::vector<uint8_t>& materials, const glm::mat4& transform);
+    void add(const std::vector<glm::vec3>& vertices, const std::vector<uint8_t>& materials, const glm::mat4& transform,
+             uint32_t owner = 0);
+    // Disabled owners' triangles are ignored by move() and the ray queries.
+    void set_owner_enabled(uint32_t owner, bool enabled);
     void build(float cell_size = 4.0f);
     size_t triangle_count() const { return tris_.size(); }
 
@@ -49,6 +53,7 @@ private:
     void candidates(const glm::vec3& lo, const glm::vec3& hi, std::vector<uint32_t>& out) const;
 
     std::vector<Triangle> tris_;
+    std::vector<uint8_t> owner_disabled_;   // by owner
     float cell_ = 4.0f;
     std::unordered_map<int64_t, std::vector<uint32_t>> grid_;
     mutable std::vector<uint32_t> stamp_;

@@ -41,9 +41,15 @@ public:
     const Level& level() const { return level_; }
     const CollisionWorld& collision() const { return collision_; }
 
-    // Doors are opened by triggers and scripts in the game; until those exist, leave
-    // their collision out so the level can be explored.
-    bool doors_open = true;
+    // Level objects (by index into level().objects), for game logic.
+    void set_object_visible(size_t object, bool visible);
+    void set_object_collision(size_t object, bool enabled) { collision_.set_owner_enabled(uint32_t(object), enabled); }
+    // Debugging: hide every placement whose model name contains `substring`; returns how many.
+    size_t hide_models(const std::string& substring);
+    // Play a named clip of the object's animation; false if it has none.
+    bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false);
+    // The object's current clip has played through (never true for looping clips).
+    bool clip_finished(size_t object) const;
     const SceneStats& stats() const { return stats_; }
 
     // Draw with the game's own shaders (default) or the built-in fallback shader.
@@ -99,6 +105,7 @@ private:
         AnimClip clip;
         float speed = 1, time = 0;                     // seconds into the clip
         bool loop = true;                              // false: play once and hold the last frame (skyboxes)
+        bool reverse = false;                          // play the clip backwards (door closing)
         std::vector<const std::vector<AnimTrack>*> tracks;   // per node, or null
         std::vector<glm::mat4> world;                  // per node
         std::vector<std::array<glm::mat4, kMaxJoints>> palettes;   // per skin
@@ -114,8 +121,10 @@ private:
             int material = -1, slot = -1;   // material parameter: overrides[material][slot]
             int light = -1;                  // light colour: index into Scene::lights_
             float intensity = 1;
+            int node = -1;                   // visibility: node index
         };
         std::vector<ValueBinding> values;
+        std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
     };
 
     // A placed model with distance-dependent LOD sets.
@@ -155,7 +164,9 @@ private:
     struct Instance {
         size_t first_draw = 0, draw_count = 0;
         ObjectLighting lighting;
+        struct AnimatedInstance* anim = nullptr;
     };
+    std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
     struct Skybox {
         int id = 0;

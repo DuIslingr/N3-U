@@ -46,6 +46,8 @@ struct DrawItem {
     glm::vec3 center{0};                        // world-space bounds centre, for sorting
     const glm::mat4* joints = nullptr;          // skinned: kMaxJoints palette (object space: placement^-1 * world * inverse bind)
     bool visible = true;                        // false for LOD levels not currently shown
+    bool hidden = false;                        // switched off by game logic (disabled or hidden object)
+    bool anim_hidden = false;                   // under a node an animation has made invisible
     const GpuMaterial* material = nullptr;      // game shader; null: built-in shader with diffuse/lightmap
     const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
     bool sky = false;                           // skybox: drawn first, around the camera, at the far depth

@@ -31,6 +31,7 @@ struct Transform {
     glm::vec3 position{0};
     glm::vec3 rotation{0};   // degrees, applied X then Y then Z (Irrlicht setRotationDegrees)
     glm::vec3 scale{1};
+    bool visible = true;     // CComponentBase flag: shown (and enabled) when the level starts
 };
 
 struct GolType {
@@ -76,6 +77,7 @@ std::vector<std::pair<int, int>> resolved_components(const GolType& type, const 
 const Value* resolved_template(const GolType& type, const Gol& gol, int comp);
 
 struct Placement {
+    size_t object_index = 0;   // into Level::objects
     std::string model;
     Transform transform;
     std::string object;

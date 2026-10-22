@@ -45,11 +45,20 @@ struct CollisionWorld::Data {
     std::vector<uint32_t> cand;
 };
 
-void CollisionWorld::add(const std::vector<glm::vec3>& v, const std::vector<uint8_t>& m, const glm::mat4& tf) {
+void CollisionWorld::add(const std::vector<glm::vec3>& v, const std::vector<uint8_t>& m, const glm::mat4& tf,
+                         uint32_t owner) {
     for (size_t t = 0; t < m.size(); ++t) {
         tris_.push_back({glm::vec3(tf * glm::vec4(v[3 * t], 1)), glm::vec3(tf * glm::vec4(v[3 * t + 1], 1)),
-                         glm::vec3(tf * glm::vec4(v[3 * t + 2], 1)), m[t]});
+                         glm::vec3(tf * glm::vec4(v[3 * t + 2], 1)), m[t], owner});
     }
+}
+
+void CollisionWorld::set_owner_enabled(uint32_t owner, bool enabled) {
+    if (owner >= owner_disabled_.size()) {
+        if (enabled) return;
+        owner_disabled_.resize(owner + 1, 0);
+    }
+    owner_disabled_[owner] = !enabled;
 }
 
 void CollisionWorld::build(float cell_size) {
@@ -80,6 +89,7 @@ void CollisionWorld::candidates(const glm::vec3& lo, const glm::vec3& hi, std::v
                 if (stamp_[i] == epoch_) continue;
                 stamp_[i] = epoch_;
                 const Triangle& t = tris_[i];
+                if (t.owner < owner_disabled_.size() && owner_disabled_[t.owner]) continue;
                 const glm::vec3 tlo = glm::min(glm::min(t.a, t.b), t.c), thi = glm::max(glm::max(t.a, t.b), t.c);
                 if (thi.z < lo.z || tlo.z > hi.z) continue;
                 out.push_back(i);
