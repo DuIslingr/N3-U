@@ -46,6 +46,7 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     if (window_) SDL_SetGPUSwapchainParameters(device_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_VSYNC);
 
     vs_ = load_shader(shader_dir + "/mesh.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    vs_skinned_ = load_shader(shader_dir + "/mesh_skinned.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 2);
     fs_ = load_shader(shader_dir + "/mesh.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
 
     SDL_GPUSamplerCreateInfo si{};
@@ -74,10 +75,13 @@ Renderer::~Renderer() {
     for (auto& [fmt, p] : pipelines_) {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.opaque);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blend);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.opaque_skinned);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.blend_skinned);
     }
     if (depth_) SDL_ReleaseGPUTexture(device_, depth_);
     SDL_ReleaseGPUSampler(device_, sampler_);
     SDL_ReleaseGPUShader(device_, vs_);
+    SDL_ReleaseGPUShader(device_, vs_skinned_);
     SDL_ReleaseGPUShader(device_, fs_);
     if (window_) SDL_ReleaseWindowFromGPUDevice(device_, window_);
     SDL_DestroyGPUDevice(device_);
@@ -106,15 +110,17 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
     vb.slot = 0;
     vb.pitch = sizeof(Vertex);
     vb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-    SDL_GPUVertexAttribute attrs[5] = {
+    SDL_GPUVertexAttribute attrs[7] = {
         {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, position))},
         {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, normal))},
         {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(Vertex, uv0))},
         {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(Vertex, uv1))},
         {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(Vertex, color))},
+        {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4, uint32_t(offsetof(Vertex, joints))},
+        {6, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(Vertex, weights))},
     };
 
-    auto make = [&](bool blend) {
+    auto make = [&](bool blend, bool skinned) {
         SDL_GPUColorTargetDescription ct{};
         ct.format = format;
         if (blend) {
@@ -127,12 +133,12 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
             ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
         }
         SDL_GPUGraphicsPipelineCreateInfo pi{};
-        pi.vertex_shader = vs_;
+        pi.vertex_shader = skinned ? vs_skinned_ : vs_;
         pi.fragment_shader = fs_;
         pi.vertex_input_state.vertex_buffer_descriptions = &vb;
         pi.vertex_input_state.num_vertex_buffers = 1;
         pi.vertex_input_state.vertex_attributes = attrs;
-        pi.vertex_input_state.num_vertex_attributes = 5;
+        pi.vertex_input_state.num_vertex_attributes = skinned ? 7 : 5;
         pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;   // TODO: match the game's winding and cull
@@ -147,7 +153,7 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
         if (!p) fail("SDL_CreateGPUGraphicsPipeline");
         return p;
     };
-    return pipelines_[int(format)] = Pipelines{make(false), make(true)};
+    return pipelines_[int(format)] = Pipelines{make(false, false), make(true, false), make(false, true), make(true, true)};
 }
 
 void Renderer::ensure_depth(uint32_t w, uint32_t h) {
@@ -284,7 +290,8 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
 
     // Opaque first, then translucent back to front.
     std::vector<const DrawItem*> opaque, blended;
-    for (const auto& it : items) (it.blend ? blended : opaque).push_back(&it);
+    for (const auto& it : items)
+        if (it.visible) (it.blend ? blended : opaque).push_back(&it);
     std::sort(blended.begin(), blended.end(), [&](const DrawItem* a, const DrawItem* b) {
         return glm::distance(a->center, frame.camera) > glm::distance(b->center, frame.camera);
     });
@@ -293,6 +300,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     SDL_GPUGraphicsPipeline* bound_pipe = nullptr;
     auto draw = [&](const DrawItem& it, SDL_GPUGraphicsPipeline* pipe) {
         if (!it.model->vertices) return;
+        if (it.joints) pipe = pipe == pipes.opaque ? pipes.opaque_skinned : pipes.blend_skinned;
         if (pipe != bound_pipe) {
             SDL_BindGPUGraphicsPipeline(pass, pipe);
             bound_pipe = pipe;
@@ -306,6 +314,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
         }
         const DrawUniforms du{view_proj, it.world};
         SDL_PushGPUVertexUniformData(cmd, 0, &du, sizeof du);
+        if (it.joints) SDL_PushGPUVertexUniformData(cmd, 1, it.joints, sizeof(glm::mat4) * kMaxJoints);
         mu.flags = glm::vec4(it.lightmap ? 1.0f : 0.0f, it.alpha_test ? 0.5f : 0.0f, 0, 0);
         SDL_PushGPUFragmentUniformData(cmd, 0, &mu, sizeof mu);
         SDL_GPUTextureSamplerBinding tex[2] = {

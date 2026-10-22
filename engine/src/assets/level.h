@@ -22,6 +22,7 @@ namespace nova {
 
 constexpr int kCompBase = 0x00;       // CComponentBase: id, position, rotation (degrees), scale, 2 flags
 constexpr int kCompMesh = 0x01;       // CComponentMesh: model name, int, 11 flags
+constexpr int kCompAnimation = 0x0C;  // CAnimationComponent: s(animation file) s(default clip) f(speed) ...
 constexpr int kCompCollision = 0x19;  // CCollisionComponent: c c c c c s(collision model) [s i] i(triangles)
 
 struct Transform {
@@ -77,6 +78,9 @@ struct Placement {
     std::string model;
     Transform transform;
     std::string object;
+    std::string anim_file;     // from the animation component, if any
+    std::string anim_clip;
+    float anim_speed = 1.0f;
 };
 
 // Visible models placed in the level: per-instance meshes, or the type's template mesh.

@@ -41,6 +41,8 @@ struct DrawItem {
     bool blend = false;
     bool alpha_test = false;
     glm::vec3 center{0};                        // world-space bounds centre, for sorting
+    const glm::mat4* joints = nullptr;          // skinned: kMaxJoints palette (world * inverse bind)
+    bool visible = true;                        // false for LOD levels not currently shown
 };
 
 struct FrameParams {
@@ -77,6 +79,8 @@ private:
     struct Pipelines {
         SDL_GPUGraphicsPipeline* opaque = nullptr;
         SDL_GPUGraphicsPipeline* blend = nullptr;
+        SDL_GPUGraphicsPipeline* opaque_skinned = nullptr;
+        SDL_GPUGraphicsPipeline* blend_skinned = nullptr;
     };
     const Pipelines& pipelines_for(SDL_GPUTextureFormat format);
     SDL_GPUShader* load_shader(const std::string& path, SDL_GPUShaderStage stage, uint32_t samplers, uint32_t uniforms);
@@ -88,6 +92,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_GPUDevice* device_ = nullptr;
     SDL_GPUShader* vs_ = nullptr;
+    SDL_GPUShader* vs_skinned_ = nullptr;
     SDL_GPUShader* fs_ = nullptr;
     SDL_GPUSampler* sampler_ = nullptr;
     SDL_GPUTexture* depth_ = nullptr;

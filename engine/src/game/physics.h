@@ -40,6 +40,8 @@ public:
 
     // Nearest hit of a downward ray from `from`, within `max_dist`; returns false if none.
     bool ray_down(const glm::vec3& from, float max_dist, float& hit_z) const;
+    // First hit along the segment from -> to, as a fraction of its length; false if none.
+    bool raycast(const glm::vec3& from, const glm::vec3& to, float& t) const;
 
 private:
     struct Data;

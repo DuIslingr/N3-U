@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "assets/bres.h"
 #include "core/zipfile.h"
 
 namespace nova {
@@ -11,9 +12,6 @@ namespace nova {
 namespace {
 
 // Root (glitch::collada::SCollada) collections: (count offset, pointer offset, stride).
-struct Coll {
-    uint32_t count, ptr, stride;
-};
 constexpr Coll kImages{0x68, 0x6C, 0x10};
 constexpr Coll kMaterials{0x78, 0x7C, 0x24};
 constexpr Coll kGeometries{0x84, 0x88, 0x10};
@@ -32,42 +30,6 @@ constexpr uint32_t kInstanceGeometry = 3;
 // Submesh attribute slots (SMeshBuffer +0x0c..): position, normal, colour, texcoords 0-3.
 constexpr int kSlotPosition = 0, kSlotNormal = 1, kSlotColor = 2, kSlotTexcoord0 = 4;
 constexpr uint8_t kNoSlot = 0xFF;
-
-class Bres {
-public:
-    explicit Bres(const Bytes& d) : data(d) {
-        if (data.size() < 0x3C || std::memcmp(data.data(), "BRES", 4) != 0) throw FormatError("not a BRES file");
-        const uint32_t n = u32(0x10), table = u32(0x18);
-        for (uint32_t i = 0; i < n; ++i) relocs.insert(u32(table + 4 * i));
-        root = u32(0x20);
-    }
-    uint32_t u32(size_t off) const { return read_le<uint32_t>(data, off); }
-    int32_t i32(size_t off) const { return read_le<int32_t>(data, off); }
-    float f32(size_t off) const { return read_le<float>(data, off); }
-    uint32_t ptr(size_t off) const {
-        const uint32_t v = u32(off);
-        return v && relocs.count(uint32_t(off)) ? v : 0;
-    }
-    std::string cstr(size_t off) const {
-        const uint32_t p = ptr(off);
-        if (!p) return {};
-        check_range(data.size(), p, 0);
-        const auto* begin = reinterpret_cast<const char*>(data.data() + p);
-        return std::string(begin, strnlen(begin, data.size() - p));
-    }
-    std::vector<uint32_t> array(uint32_t base, Coll c) const {
-        const int32_t n = i32(base + c.count);
-        const uint32_t p = ptr(base + c.ptr);
-        std::vector<uint32_t> out;
-        if (n <= 0 || !p) return out;
-        for (int32_t i = 0; i < n; ++i) out.push_back(p + uint32_t(i) * c.stride);
-        return out;
-    }
-
-    const Bytes& data;
-    std::unordered_set<uint32_t> relocs;
-    uint32_t root = 0;
-};
 
 bool contains_any(const std::string& s, std::initializer_list<const char*> needles) {
     const std::string l = to_lower(s);
@@ -136,16 +98,21 @@ private:
     }
 
     void index_controllers() {
-        for (uint32_t o : b.array(b.root, kControllers)) controllers[b.cstr(o + 4)] = b.ptr(o + 8);
+        // Type 0 controllers are skins; type 1 are morph targets (not supported yet).
+        for (uint32_t o : b.array(b.root, kControllers)) {
+            if (b.u32(o) == 0) controllers[b.cstr(o + 4)] = b.ptr(o + 8);
+        }
     }
 
-    int mesh_for(const std::string& geometry_id) {
-        auto cached = mesh_index.find(geometry_id);
+    // Mesh for a geometry, optionally skinned by the skin struct at `skin` (0 = static).
+    int mesh_for(const std::string& geometry_id, uint32_t skin = 0) {
+        const std::string key = geometry_id + "#" + std::to_string(skin);
+        auto cached = mesh_index.find(key);
         if (cached != mesh_index.end()) return cached->second;
         int result = -1;
         for (const auto& [id, off] : geometry_offsets) {
             if (id == geometry_id && off) {
-                Mesh mesh = load_mesh(id, off);
+                Mesh mesh = load_mesh(id, off, skin);
                 if (!mesh.primitives.empty()) {
                     result = int(model.meshes.size());
                     model.meshes.push_back(std::move(mesh));
@@ -153,13 +120,38 @@ private:
                 break;
             }
         }
-        mesh_index[geometry_id] = result;
+        mesh_index[key] = result;
         return result;
     }
 
-    Mesh load_mesh(const std::string& id, uint32_t o) {
+    // Skin struct (CColladaDatabase skin controller): +0/+4 inverse bind floats,
+    // +0x4c/+0x50 joint names, +0x54/+0x58 per-vertex influences (4 x u8 joint, 4 x f32 weight).
+    int skin_for(uint32_t skin) {
+        auto cached = skin_index.find(skin);
+        if (cached != skin_index.end()) return cached->second;
+        Skin sk;
+        for (uint32_t o : b.array(skin, {0x4C, 0x50, 4})) sk.joints.push_back(b.cstr(o));
+        const uint32_t nfloats = b.u32(skin), mats = b.ptr(skin + 4);
+        if (sk.joints.size() > size_t(kMaxJoints) || nfloats != sk.joints.size() * 16 || !mats) return skin_index[skin] = -1;
+        for (size_t j = 0; j < sk.joints.size(); ++j) {
+            glm::mat4 m;
+            for (int k = 0; k < 16; ++k) m[k / 4][k % 4] = b.f32(mats + 4 * (16 * j + k));   // column-major
+            sk.inverse_bind.push_back(m);
+        }
+        const int index = int(model.skins.size());
+        model.skins.push_back(std::move(sk));
+        return skin_index[skin] = index;
+    }
+
+    Mesh load_mesh(const std::string& id, uint32_t o, uint32_t skin_off) {
         Mesh mesh;
         mesh.id = id;
+        uint32_t influences = 0;
+        if (skin_off) {
+            mesh.skin = skin_for(skin_off);
+            if (mesh.skin >= 0) influences = b.ptr(skin_off + 0x58);
+            if (influences) influences += 4;   // skip the buffer's u32 prefix
+        }
         const bool interleaved = b.u32(o) != 0;
         const uint32_t vcount = b.u32(o + 4);
         std::vector<uint32_t> strides, offsets, types, comps;
@@ -219,6 +211,25 @@ private:
                 if (slots[kSlotTexcoord0 + 1] != kNoSlot) {
                     out.uv1 = {comp(slots[kSlotTexcoord0 + 1], v, 0), comp(slots[kSlotTexcoord0 + 1], v, 1)};
                 }
+                if (influences) {
+                    const size_t rec = influences + size_t(v) * 20;
+                    check_range(b.data.size(), rec, 20);
+                    float w[4], sum = 0;
+                    uint8_t j[4];
+                    for (int k = 0; k < 4; ++k) {
+                        j[k] = b.data[rec + k];
+                        w[k] = std::max(load_le<float>(&b.data[rec + 4 + 4 * k]), 0.0f);
+                        if (w[k] == 0) j[k] = 0;
+                        sum += w[k];
+                    }
+                    if (sum <= 0) w[0] = sum = 1;
+                    // Quantize to unorm8 so the four weights still sum to exactly 255.
+                    int q[4], total = 0;
+                    for (int k = 0; k < 4; ++k) total += q[k] = int(w[k] / sum * 255.0f + 0.5f);
+                    q[int(std::max_element(w, w + 4) - w)] += 255 - total;
+                    out.joints = uint32_t(j[0]) | uint32_t(j[1]) << 8 | uint32_t(j[2]) << 16 | uint32_t(j[3]) << 24;
+                    out.weights = uint32_t(q[0]) | uint32_t(q[1]) << 8 | uint32_t(q[2]) << 16 | uint32_t(q[3]) << 24;
+                }
             }
             // Indices are relative to min_index; 16-bit unless the range needs 32.
             const bool wide = max_index - min_index >= 0xFFFF;
@@ -243,6 +254,7 @@ private:
         node.translation = {b.f32(o + 0x0C), b.f32(o + 0x10), b.f32(o + 0x14)};
         node.rotation = glm::quat(b.f32(o + 0x24), b.f32(o + 0x18), b.f32(o + 0x1C), b.f32(o + 0x20));
         node.scale = {b.f32(o + 0x28), b.f32(o + 0x2C), b.f32(o + 0x30)};
+        if (const uint32_t extra = b.ptr(o + 0x48)) node.properties = b.cstr(extra);
         for (uint32_t inst : b.array(o, kNodeInstances)) {
             const uint32_t type = b.u32(inst), ip = b.ptr(inst + 4);
             if (!ip) continue;
@@ -252,12 +264,11 @@ private:
             if (type == kInstanceGeometry) {
                 m = mesh_for(url);
             } else if (type == kInstanceController) {
-                // Skinned mesh: drawn in its bind pose for now.
                 auto it = controllers.find(url);
                 if (it != controllers.end() && it->second) {
                     std::string source = b.cstr(it->second + 0x48);
                     if (!source.empty() && source[0] == '#') source.erase(0, 1);
-                    m = mesh_for(source);
+                    m = mesh_for(source, it->second);
                 }
             }
             if (m >= 0) node.meshes.push_back(m);
@@ -278,6 +289,7 @@ private:
     std::vector<std::pair<std::string, uint32_t>> geometry_offsets;
     std::unordered_map<std::string, uint32_t> controllers;
     std::unordered_map<std::string, int> mesh_index;
+    std::unordered_map<uint32_t, int> skin_index;
 };
 
 }  // namespace

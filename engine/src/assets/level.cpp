@@ -306,7 +306,20 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
             if (const Value* t = resolved_template(g->second, gol, kCompMesh)) model = (*t)[0].s;
         }
         auto tf = library ? object_transform(o, g->second, gol) : o.base;
-        if (!model.empty() && tf && !is_helper_model(model)) out.push_back({model, *tf, o.name});
+        if (model.empty() || !tf || is_helper_model(model)) continue;
+        Placement p;
+        p.model = model;
+        p.transform = *tf;
+        p.object = o.name;
+        const Value* anim = nullptr;
+        if (auto it = o.components.find(kCompAnimation); it != o.components.end()) anim = &it->second;
+        else if (library) anim = resolved_template(g->second, gol, kCompAnimation);
+        if (anim && anim->size() >= 3 && (*anim)[0].type == Value::String) {
+            p.anim_file = (*anim)[0].s;
+            p.anim_clip = (*anim)[1].s;
+            p.anim_speed = (*anim)[2].as_float();
+        }
+        out.push_back(std::move(p));
     }
     return out;
 }
@@ -322,7 +335,11 @@ std::vector<Placement> collision_placements(const Level& level, const Gol& gol) 
         else data = resolved_template(g->second, gol, kCompCollision);
         auto tf = object_transform(o, g->second, gol);
         if (data && tf && data->size() > 5 && (*data)[5].type == Value::String && !(*data)[5].s.empty()) {
-            out.push_back({(*data)[5].s, *tf, o.name});
+            Placement p;
+            p.model = (*data)[5].s;
+            p.transform = *tf;
+            p.object = o.name;
+            out.push_back(std::move(p));
         }
     }
     return out;

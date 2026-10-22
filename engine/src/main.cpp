@@ -3,6 +3,7 @@
 //   nova3 [--data DIR] [--level NAME.lvc]                       walk through a level
 //   nova3 ... --screenshot OUT.bmp [--eye X,Y,Z,YAW[,PITCH]] [--size WxH]   render one frame, no window
 //   nova3 ... --walk-test SECONDS [--screenshot OUT.bmp]          simulate walking forward from the start
+//   nova3 ... --focus OBJECT[#N] [--time T]                        start looking at the Nth placement of a type
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
 // (Space/Ctrl then move up/down), Esc to quit.
@@ -30,9 +31,11 @@ struct Options {
     std::string level = "Ship_01.lvc";
     std::string screenshot;
     float walk_test = 0;
+    float time = 0;           // advance animations by this many seconds before a screenshot
     bool have_eye = false;
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
     float pitch = 0;
+    std::string focus;        // object type name (substring), optionally #index
     int width = 1600, height = 900;
 };
 
@@ -48,6 +51,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--level") o.level = next();
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--walk-test") o.walk_test = std::stof(next());
+        else if (a == "--time") o.time = std::stof(next());
+        else if (a == "--focus") o.focus = next();
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -61,6 +66,40 @@ Options parse(int argc, char** argv) {
         }
     }
     return o;
+}
+
+// A viewpoint looking at the Nth placement whose object type contains `spec` (NAME[#N]),
+// from whichever side has the most open space. Returns false if there is no such object.
+bool focus_camera(const Scene& scene, const Gol& gol, const std::string& spec, glm::vec3& eye, float& yaw, float& pitch) {
+    const size_t hash = spec.find('#');
+    const std::string name = to_lower(spec.substr(0, hash));
+    int index = hash == std::string::npos ? 0 : std::stoi(spec.substr(hash + 1));
+    for (const Placement& p : model_placements(scene.level(), gol)) {
+        if (to_lower(p.object).find(name) == std::string::npos || index-- > 0) continue;
+        const glm::vec3 target = p.transform.position + glm::vec3(0, 0, 1.0f);
+        constexpr float kWant = 4.0f;
+        float best = -1;
+        for (int i = 0; i < 16; ++i) {
+            // Start from the object's facing (its local +Y) and go round.
+            const float a = glm::radians(p.transform.rotation.z + i * 22.5f);
+            const glm::vec3 dir(-std::sin(a), std::cos(a), 0.3f);
+            float t = 1;
+            scene.collision().raycast(target, target + dir * kWant, t);
+            const float clear = t * kWant - 0.3f;
+            if (clear > best + 0.25f) {
+                best = clear;
+                eye = target + dir * std::max(clear, 0.5f);
+            }
+        }
+        const glm::vec3 d = target - eye;
+        yaw = glm::degrees(std::atan2(-d.x, d.y));
+        pitch = glm::degrees(std::asin(d.z / glm::length(d)));
+        std::printf("focus: %s (%s, anim %s:%s) at (%.2f %.2f %.2f), eye %.2f,%.2f,%.2f,%.1f,%.1f\n", p.object.c_str(), p.model.c_str(), p.anim_file.c_str(), p.anim_clip.c_str(),
+                    p.transform.position.x, p.transform.position.y, p.transform.position.z, eye.x, eye.y, eye.z, yaw,
+                    pitch);
+        return true;
+    }
+    return false;
 }
 
 struct Camera {
@@ -122,10 +161,11 @@ int main(int argc, char** argv) {
             scene.load_level(opt.level);
             const SceneStats& st = scene.stats();
             std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, "
-                        "%zu collision objects (%zu triangles, %zu missing), loaded in %.2fs\n",
+                        "%zu collision objects (%zu triangles, %zu missing), %zu animated (%zu animations missing), "
+                        "%zu draws hidden by LOD, loaded in %.2fs\n",
                         opt.level.c_str(), st.placements, st.models, st.missing_models, st.textures,
                         st.missing_textures, st.draws, st.collision_objects, st.collision_triangles,
-                        st.missing_collision, st.load_seconds);
+                        st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.load_seconds);
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             constexpr float kPhysicsStep = 1.0f / 120.0f;
@@ -134,6 +174,8 @@ int main(int argc, char** argv) {
             cam.position = opt.have_eye ? glm::vec3(opt.eye) : player.eye();
             cam.yaw = opt.have_eye ? opt.eye.w : scene.start_yaw;
             cam.pitch = opt.pitch;
+            if (!opt.focus.empty() && !focus_camera(scene, gol, opt.focus, cam.position, cam.yaw, cam.pitch))
+                throw std::runtime_error("no placement matching " + opt.focus);
 
             if (opt.walk_test > 0) {
                 // Settle for a second, then walk forward; report the path.
@@ -159,6 +201,7 @@ int main(int argc, char** argv) {
             }
             if (headless || opt.walk_test > 0) {
                 if (opt.screenshot.empty()) return 0;
+                scene.update(opt.time, cam.position);
                 const Image img = renderer.render_to_image(scene.draws(), cam.frame(opt.width, opt.height), opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
                 std::printf("wrote %s\n", opt.screenshot.c_str());
@@ -209,6 +252,7 @@ int main(int argc, char** argv) {
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         cam.position = player.eye();
                     }
+                    scene.update(dt, cam.position);
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     renderer.render_to_window(scene.draws(), cam.frame(w, h));

@@ -23,6 +23,15 @@ struct Vertex {
     glm::vec2 uv0{0};
     glm::vec2 uv1{0};
     uint32_t color = 0xFFFFFFFF;     // RGBA8, R in the low byte
+    uint32_t joints = 0;             // 4 x u8 joint indices (skinned meshes)
+    uint32_t weights = 0x000000FF;   // 4 x unorm8 weights, summing to 255
+};
+
+constexpr int kMaxJoints = 128;      // largest skin in the game has 89
+
+struct Skin {
+    std::vector<std::string> joints;            // node sids (or ids)
+    std::vector<glm::mat4> inverse_bind;        // per joint; already includes the bind-shape matrix
 };
 
 struct Primitive {
@@ -33,6 +42,7 @@ struct Primitive {
 
 struct Mesh {
     std::string id;
+    int skin = -1;                   // index into Model::skins, or -1 for static
     std::vector<Primitive> primitives;
 };
 
@@ -51,12 +61,14 @@ struct ModelNode {
     glm::vec3 translation{0};
     glm::quat rotation{1, 0, 0, 0};  // glm order: w, x, y, z
     glm::vec3 scale{1};
+    std::string properties;          // max user properties, e.g. "lod_dist=30"
     std::vector<int> children;
     std::vector<int> meshes;         // indices into Model::meshes drawn at this node
 };
 
 struct Model {
     std::vector<Mesh> meshes;
+    std::vector<Skin> skins;
     std::vector<Material> materials;
     std::vector<ModelNode> nodes;
     std::vector<int> roots;

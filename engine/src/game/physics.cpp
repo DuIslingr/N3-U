@@ -246,4 +246,33 @@ bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_
     return any;
 }
 
+bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& t) const {
+    std::vector<uint32_t> cand;
+    candidates(glm::min(from, to), glm::max(from, to), cand);
+    const glm::vec3 dir = to - from;
+    bool any = false;
+    t = 1;
+    for (uint32_t i : cand) {
+        // Moller-Trumbore, two-sided.
+        const Triangle& tri = tris_[i];
+        const glm::vec3 e1 = tri.b - tri.a, e2 = tri.c - tri.a;
+        const glm::vec3 p = glm::cross(dir, e2);
+        const float det = glm::dot(e1, p);
+        if (std::fabs(det) < 1e-12f) continue;
+        const float inv = 1 / det;
+        const glm::vec3 s = from - tri.a;
+        const float u = glm::dot(s, p) * inv;
+        if (u < 0 || u > 1) continue;
+        const glm::vec3 q = glm::cross(s, e1);
+        const float v = glm::dot(dir, q) * inv;
+        if (v < 0 || u + v > 1) continue;
+        const float h = glm::dot(e2, q) * inv;
+        if (h >= 0 && h < t) {
+            t = h;
+            any = true;
+        }
+    }
+    return any;
+}
+
 }  // namespace nova

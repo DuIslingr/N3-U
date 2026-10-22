@@ -7,8 +7,11 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
 #include <string>
+#include <vector>
 
+#include "assets/animation.h"
 #include "assets/bdae.h"
 #include "assets/level.h"
 #include "assets/texture.h"
@@ -147,6 +150,28 @@ int cmd_levels(const std::string& dir, const std::string& out_dir) {
     return bad > 1 ? 1 : 0;   // menus.lvc is known not to parse yet
 }
 
+// Sample every track of an animation file at the given times (ms); one line per node and time.
+int cmd_anim(const std::string& dir, const std::string& file, const std::vector<float>& times) {
+    Vfs vfs;
+    vfs.mount_directory(dir);
+    const AnimationLibrary lib = load_animation(vfs.read(file));
+    std::printf("%zu animated nodes, %zu clips, timeline %.1f-%.1f ms\n", lib.tracks.size(), lib.clips.size(),
+                lib.timeline_start, lib.timeline_end);
+    std::vector<std::string> names;
+    for (const auto& [n, t] : lib.tracks) names.push_back(n);
+    std::sort(names.begin(), names.end());
+    for (const auto& n : names) {
+        for (float t : times) {
+            NodePose p{glm::vec3(0), glm::quat(1, 0, 0, 0), glm::vec3(1)};
+            sample_tracks(lib.tracks.at(n), t, p);
+            std::printf("%s %.1f T %.4f %.4f %.4f R %.4f %.4f %.4f %.4f S %.4f %.4f %.4f\n", n.c_str(), t, p.translation.x,
+                        p.translation.y, p.translation.z, p.rotation.x, p.rotation.y, p.rotation.z, p.rotation.w,
+                        p.scale.x, p.scale.y, p.scale.z);
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -160,6 +185,11 @@ int main(int argc, char** argv) {
         if (cmd == "textures") return cmd_textures(argv[2]);
         if (cmd == "models" && argc >= 4) return cmd_models(argv[2], argv[3]);
         if (cmd == "levels" && argc >= 4) return cmd_levels(argv[2], argv[3]);
+        if (cmd == "anim" && argc >= 5) {
+            std::vector<float> times;
+            for (int k = 4; k < argc; ++k) times.push_back(std::stof(argv[k]));
+            return cmd_anim(argv[2], argv[3], times);
+        }
         if (cmd == "texture" && argc >= 5) return cmd_texture(argv[2], argv[3], argv[4]);
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
