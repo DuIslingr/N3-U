@@ -12,11 +12,14 @@ find_package(SDL3 REQUIRED CONFIG)
 find_package(ZLIB REQUIRED)
 find_path(GLM_INCLUDE_DIR glm/glm.hpp REQUIRED)
 
-# Engine core: file system and asset decoders (no rendering).
-file(GLOB CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp src/assets/*.cpp)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+
+# Engine core: file system, asset decoders and the game-shader compiler (no rendering).
+file(GLOB CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp src/assets/*.cpp src/shader/*.cpp)
 add_library(nova3core STATIC ${CORE_SOURCES})
 target_include_directories(nova3core PUBLIC src ${GLM_INCLUDE_DIR})
-target_link_libraries(nova3core PUBLIC ZLIB::ZLIB)
+target_link_libraries(nova3core PUBLIC ZLIB::ZLIB PkgConfig::SHADERC)
 target_compile_options(nova3core PRIVATE -Wall -Wextra)
 
 # Shaders: GLSL -> SPIR-V (Vulkan). Metal/D3D12 builds will add other formats.

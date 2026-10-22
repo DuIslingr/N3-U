@@ -22,7 +22,10 @@ struct Vertex {
     glm::vec3 normal{0, 0, 1};
     glm::vec2 uv0{0};
     glm::vec2 uv1{0};
-    uint32_t color = 0xFFFFFFFF;     // RGBA8, R in the low byte
+    glm::vec2 uv2{0};
+    glm::vec3 tangent{0};
+    glm::vec3 binormal{0};
+    uint32_t color = 0xFF000000;     // RGBA8, R in the low byte; (0,0,0,1) like a GL attribute left unset
     uint32_t joints = 0;             // 4 x u8 joint indices (skinned meshes)
     uint32_t weights = 0x000000FF;   // 4 x unorm8 weights, summing to 255
 };
@@ -46,9 +49,19 @@ struct Mesh {
     std::vector<Primitive> primitives;
 };
 
+// A material's value for one effect parameter.
+struct MaterialParam {
+    std::string name;
+    uint32_t type = 0;               // ParamType (assets/effect.h)
+    std::vector<float> value;        // numeric parameters
+    std::string texture;             // sampler parameters: image file name
+};
+
 struct Material {
     std::string id;
     std::string effect;              // e.g. NV_LightMap.bdae
+    std::string technique;           // from the "<effect>-profile_GLES2/CurrentTechnique" parameter
+    std::vector<MaterialParam> params;
     std::string diffuse;             // image file names (as referenced, usually .tga)
     std::string lightmap;
     std::string normal;

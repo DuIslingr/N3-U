@@ -22,7 +22,15 @@ glm::mat4 placement_matrix(const Transform& t) {
     return glm::scale(m, t.scale);
 }
 
-Scene::Scene(const Vfs& vfs, Renderer& renderer, const Gol& gol) : vfs_(vfs), renderer_(renderer), gol_(gol) {}
+Scene::Scene(const Vfs& vfs, Renderer& renderer, const Gol& gol) : vfs_(vfs), renderer_(renderer), gol_(gol) {
+    materials_ = std::make_unique<MaterialSystem>(
+        vfs_, renderer_, [this](const std::string& image) { return texture(image); }, ShaderCompiler::default_cache_dir());
+}
+
+void Scene::set_game_shaders(bool on) {
+    game_shaders_ = on;
+    for (size_t i = 0; i < draws_.size(); ++i) draws_[i].material = on ? draw_materials_[i] : nullptr;
+}
 
 const GpuTexture* Scene::texture(const std::string& image_name) {
     if (image_name.empty()) return nullptr;
@@ -180,6 +188,7 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
         anim = std::make_unique<AnimatedInstance>();
         anim->model = &m;
         anim->placement = placement;
+        anim->placement_inverse = glm::inverse(placement);
         anim->library = lib;
         anim->world.assign(m.cpu.nodes.size(), glm::mat4(1));
         anim->palettes.resize(m.cpu.skins.size());
@@ -195,6 +204,9 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
             anim->time = float((p->transform.id * 2654435761u) % 10007u) / 1000.0f;
         }
     }
+
+    probes_.push_back(irradiance_parameters(sample_irradiance(irradiance_, glm::vec3(placement[3]))));
+    const IrradianceParams* probe = &probes_.back();
 
     LodInstance lods;
     lods.model = &m;
@@ -238,6 +250,10 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
                 glm::vec3 c(0);
                 for (const auto& v : verts) c += v.position;
                 d.center = glm::vec3(world * glm::vec4(c / float(std::max<size_t>(verts.size(), 1)), 1));
+                const GpuMaterial* gm = range.material >= 0 ? materials_->get(m.cpu.materials[range.material], skin >= 0) : nullptr;
+                d.material = game_shaders_ ? gm : nullptr;
+                d.irradiance = probe;
+                draw_materials_.push_back(gm);
                 if (anim) anim->draws.push_back({draws_.size(), ni, skin});
                 if (!v.lod_nodes.empty()) lods.draws.push_back({draws_.size(), v.lod_nodes});
                 draws_.push_back(d);
@@ -310,13 +326,14 @@ void Scene::pose(AnimatedInstance& a) {
         const Skin& sk = m.cpu.skins[s];
         for (size_t j = 0; j < sk.joints.size(); ++j) {
             const int node = m.joint_nodes[s][j];
-            a.palettes[s][j] = node >= 0 ? a.world[node] * sk.inverse_bind[j] : a.placement;
+            // Object space: the game's shaders get the placement as World.
+            a.palettes[s][j] = node >= 0 ? a.placement_inverse * a.world[node] * sk.inverse_bind[j] : glm::mat4(1);
         }
     }
     for (const auto& d : a.draws) {
         DrawItem& item = draws_[d.item];
         if (d.skin >= 0) {
-            item.world = glm::mat4(1);
+            item.world = a.placement;
             item.joints = a.palettes[d.skin].data();
         } else {
             item.world = a.world[d.node];
@@ -363,7 +380,33 @@ void Scene::build_collision() {
 void Scene::load_level(const std::string& lvc_name) {
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
+    for (const LevelObject& o : level_.objects) {
+        if (o.kind != "level_properties" || o.fields.size() < 8) continue;
+        // i, then fog colour as an SColor's bytes (B, G, R, A), fog near, fog far, density.
+        auto byte = [&](size_t k) { return float(uint8_t(o.fields[k].i)) / 255.0f; };
+        fog_color = {byte(3), byte(2), byte(1), byte(4)};
+        fog_start = o.fields[5].as_float();
+        fog_end = o.fields[6].as_float();
+        fog_density = o.fields[7].as_float();
+    }
     draws_.clear();
+    draw_materials_.clear();
+    probes_.clear();
+    irradiance_.clear();
+    // Irradiance volumes belong to level objects: <level>_<object id>.irr, relative to the object.
+    const std::string stem = lvc_name.substr(0, lvc_name.rfind('.'));
+    for (const LevelObject& o : level_.objects) {
+        if (!o.base) continue;
+        const auto& hits = vfs_.find(stem + "_" + std::to_string(o.base->id) + ".irr");
+        if (hits.empty()) continue;
+        try {
+            auto vols = load_irradiance(vfs_.read(hits.front()), o.base->position);
+            for (auto& v : vols) irradiance_.push_back(std::move(v));
+        } catch (const FormatError& ex) {
+            std::fprintf(stderr, "irradiance %s_%d: %s\n", stem.c_str(), o.base->id, ex.what());
+        }
+    }
+    stats_.irradiance_volumes = irradiance_.size();
     animated_.clear();
     lod_instances_.clear();
     for (const Placement& p : model_placements(level_, gol_)) {

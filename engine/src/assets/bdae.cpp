@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "assets/bres.h"
+#include "assets/effect.h"
 #include "core/zipfile.h"
 
 namespace nova {
@@ -27,8 +28,10 @@ constexpr uint32_t kGeometryMesh = 0;
 constexpr uint32_t kInstanceController = 2;
 constexpr uint32_t kInstanceGeometry = 3;
 
-// Submesh attribute slots (SMeshBuffer +0x0c..): position, normal, colour, texcoords 0-3.
-constexpr int kSlotPosition = 0, kSlotNormal = 1, kSlotColor = 2, kSlotTexcoord0 = 4;
+// Submesh attribute slots (SMeshBuffer +0x0c..): position, normal, colour, texcoords 0-3,
+// tangents 0-3, binormals 0-3.
+constexpr int kSlotPosition = 0, kSlotNormal = 1, kSlotColor = 2, kSlotTexcoord0 = 4, kSlotTangent0 = 8,
+              kSlotBinormal0 = 12;
 constexpr uint8_t kNoSlot = 0xFF;
 
 bool contains_any(const std::string& s, std::initializer_list<const char*> needles) {
@@ -73,13 +76,28 @@ private:
             m.id = b.cstr(o);
             m.effect = b.cstr(o + 8);
             for (uint32_t p : b.array(o, kMaterialParams)) {
-                const uint32_t type = b.u32(p + 8);
+                // +0 name, +8 type, +0xC count, +0x14 value.
+                const uint32_t type = b.u32(p + 8), count = std::max<uint32_t>(b.u32(p + 0xC), 1);
                 const uint32_t value = b.ptr(p + 0x14);
-                if (type < 0x0C || type > 0x10 || !value) continue;   // sampler parameters only
+                if (!value) continue;
+                const std::string name = b.cstr(p);
+                if (type == kParamTechnique) {
+                    if (name.size() > 17 && name.ends_with("/CurrentTechnique")) m.technique = b.cstr(value + 4);
+                    continue;
+                }
+                if (!is_sampler(type)) {
+                    const size_t n = type == kParamFloat ? 1 : type == kParamVec2 ? 2 : type == kParamVec3 ? 3
+                                   : type == kParamVec4 ? 4 : type == kParamMat4 ? 16 : 0;
+                    if (!n || value + 4 * n * count > b.data.size()) continue;
+                    MaterialParam mp{name, type, {}, {}};
+                    for (size_t k = 0; k < n * count; ++k) mp.value.push_back(b.f32(value + 4 * uint32_t(k)));
+                    m.params.push_back(std::move(mp));
+                    continue;
+                }
                 const uint32_t image_ref = b.ptr(value);
                 const int32_t idx = image_ref ? b.i32(image_ref) : -1;
                 if (idx < 0 || size_t(idx) >= images.size()) continue;
-                const std::string name = b.cstr(p);
+                m.params.push_back({name, type, {}, images[idx]});
                 if (name == "DiffuseTexture" || (name == "DiffuseMap" && m.diffuse.empty())) m.diffuse = images[idx];
                 else if (name == "LightmapTexture") m.lightmap = images[idx];
                 else if (name == "NormalTexture") m.normal = images[idx];
@@ -187,7 +205,6 @@ private:
             prim.material = mi == material_index.end() ? -1 : mi->second;
             const uint32_t n = max_index - min_index + 1;
             prim.vertices.resize(n);
-            const bool vc = prim.material >= 0 && model.materials[prim.material].vertex_color;
             for (uint32_t i = 0; i < n; ++i) {
                 const uint32_t v = min_index + i;
                 Vertex& out = prim.vertices[i];
@@ -199,7 +216,7 @@ private:
                     const float len = glm::length(nrm);
                     out.normal = len > 0 ? nrm / len : glm::vec3(0, 0, 1);
                 }
-                if (vc && slots[kSlotColor] != kNoSlot) {
+                if (slots[kSlotColor] != kNoSlot) {
                     const size_t ca = slots[kSlotColor];
                     uint32_t c = 0;
                     for (uint32_t k = 0; k < 4; ++k) c |= uint32_t(comp(ca, v, k) * 255.0f + 0.5f) << (8 * k);
@@ -210,6 +227,17 @@ private:
                 }
                 if (slots[kSlotTexcoord0 + 1] != kNoSlot) {
                     out.uv1 = {comp(slots[kSlotTexcoord0 + 1], v, 0), comp(slots[kSlotTexcoord0 + 1], v, 1)};
+                }
+                if (slots[kSlotTexcoord0 + 2] != kNoSlot) {
+                    out.uv2 = {comp(slots[kSlotTexcoord0 + 2], v, 0), comp(slots[kSlotTexcoord0 + 2], v, 1)};
+                }
+                if (slots[kSlotTangent0] != kNoSlot) {
+                    const size_t ta = slots[kSlotTangent0];
+                    out.tangent = {comp(ta, v, 0), comp(ta, v, 1), comp(ta, v, 2)};
+                }
+                if (slots[kSlotBinormal0] != kNoSlot) {
+                    const size_t ba = slots[kSlotBinormal0];
+                    out.binormal = {comp(ba, v, 0), comp(ba, v, 1), comp(ba, v, 2)};
                 }
                 if (influences) {
                     const size_t rec = influences + size_t(v) * 20;

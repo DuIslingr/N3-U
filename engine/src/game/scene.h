@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -9,9 +10,11 @@
 
 #include "assets/animation.h"
 #include "assets/collision.h"
+#include "assets/irradiance.h"
 #include "assets/level.h"
 #include "game/physics.h"
 #include "core/vfs.h"
+#include "render/material_system.h"
 #include "render/renderer.h"
 
 namespace nova {
@@ -21,6 +24,7 @@ struct SceneStats {
     size_t collision_objects = 0, collision_triangles = 0, missing_collision = 0;
     size_t animated = 0, missing_animations = 0;
     size_t lod_hidden = 0;    // draws hidden because another level of detail shows
+    size_t irradiance_volumes = 0;
     double load_seconds = 0;
 };
 
@@ -41,6 +45,16 @@ public:
     // their collision out so the level can be explored.
     bool doors_open = true;
     const SceneStats& stats() const { return stats_; }
+
+    // Draw with the game's own shaders (default) or the built-in fallback shader.
+    void set_game_shaders(bool on);
+    bool game_shaders() const { return game_shaders_; }
+    const MaterialStats& material_stats() const { return materials_->stats(); }
+    const ShaderCompiler& shader_compiler() const { return materials_->compiler(); }
+
+    // Fog from the level properties (CComponentLevelProperties).
+    glm::vec4 fog_color{0, 0, 0, 1};
+    float fog_start = 0, fog_end = 0, fog_density = 0;
 
     // Where the player starts: the level's start spawn point (floor level).
     glm::vec3 start_position{0, 0, 0};
@@ -75,7 +89,7 @@ private:
     // A placed model whose nodes move: an animation clip, and/or skinned meshes.
     struct AnimatedInstance {
         const LoadedModel* model = nullptr;
-        glm::mat4 placement{1};
+        glm::mat4 placement{1}, placement_inverse{1};
         const AnimationLibrary* library = nullptr;
         AnimClip clip;
         float speed = 1, time = 0;                     // seconds into the clip
@@ -116,6 +130,11 @@ private:
     const Gol& gol_;
     Level level_;
     std::vector<DrawItem> draws_;
+    std::vector<const GpuMaterial*> draw_materials_;   // per draw: its game-shader material (or null)
+    std::vector<IrradianceVolume> irradiance_;
+    std::deque<IrradianceParams> probes_;               // per placed instance
+    std::unique_ptr<MaterialSystem> materials_;
+    bool game_shaders_ = true;
     CollisionWorld collision_;
     std::vector<std::unique_ptr<AnimatedInstance>> animated_;
     std::vector<LodInstance> lod_instances_;

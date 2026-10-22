@@ -5,8 +5,11 @@
 //   nova3 ... --walk-test SECONDS [--screenshot OUT.bmp]          simulate walking forward from the start
 //   nova3 ... --focus OBJECT[#N] [--time T]                        start looking at the Nth placement of a type
 //
+//   nova3 ... --builtin-shaders                                  draw with the fallback shader, not the game's
+//   nova3 ... --screenshot OUT.bmp --bench N                      also time N offscreen frames
+//
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
-// (Space/Ctrl then move up/down), Esc to quit.
+// (Space/Ctrl then move up/down), G to switch game/built-in shaders, Esc to quit.
 // The data directory is the game's own files folder (the .gla archives).
 #include <chrono>
 #include <cstdio>
@@ -36,6 +39,8 @@ struct Options {
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
     float pitch = 0;
     std::string focus;        // object type name (substring), optionally #index
+    bool builtin_shaders = false;
+    int bench = 0;
     int width = 1600, height = 900;
 };
 
@@ -53,6 +58,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--walk-test") o.walk_test = std::stof(next());
         else if (a == "--time") o.time = std::stof(next());
         else if (a == "--focus") o.focus = next();
+        else if (a == "--builtin-shaders") o.builtin_shaders = true;
+        else if (a == "--bench") o.bench = std::stoi(next());
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -159,13 +166,29 @@ int main(int argc, char** argv) {
             Renderer renderer(window, shader_dir);
             Scene scene(vfs, renderer, gol);
             scene.load_level(opt.level);
+            if (opt.builtin_shaders) scene.set_game_shaders(false);
             const SceneStats& st = scene.stats();
+            const MaterialStats& ms = scene.material_stats();
+            std::printf("materials: %zu with game shaders, %zu fallback; %zu programs (%zu failed), %zu effects missing; "
+                        "%zu shader stages compiled, %zu from cache\n",
+                        ms.materials, ms.fallback, ms.programs, ms.failed_programs, ms.missing_effects,
+                        scene.shader_compiler().compiled, scene.shader_compiler().cache_hits);
+            float clock = opt.time;
+            auto frame = [&](const Camera& cam, int w, int h) {
+                FrameParams f = cam.frame(w, h);
+                f.fog_color = scene.fog_color;
+                f.fog_start = scene.fog_start;
+                f.fog_end = scene.fog_end;
+                f.fog_density = scene.fog_density;
+                f.time = clock;
+                return f;
+            };
             std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, "
                         "%zu collision objects (%zu triangles, %zu missing), %zu animated (%zu animations missing), "
-                        "%zu draws hidden by LOD, loaded in %.2fs\n",
+                        "%zu draws hidden by LOD, %zu irradiance volumes, loaded in %.2fs\n",
                         opt.level.c_str(), st.placements, st.models, st.missing_models, st.textures,
                         st.missing_textures, st.draws, st.collision_objects, st.collision_triangles,
-                        st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.load_seconds);
+                        st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.irradiance_volumes, st.load_seconds);
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             constexpr float kPhysicsStep = 1.0f / 120.0f;
@@ -202,8 +225,17 @@ int main(int argc, char** argv) {
             if (headless || opt.walk_test > 0) {
                 if (opt.screenshot.empty()) return 0;
                 scene.update(opt.time, cam.position);
-                const Image img = renderer.render_to_image(scene.draws(), cam.frame(opt.width, opt.height), opt.width, opt.height);
+                const Image img = renderer.render_to_image(scene.draws(), frame(cam, opt.width, opt.height), opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
+                if (opt.bench > 0) {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    for (int i = 0; i < opt.bench; ++i) {
+                        scene.update(1.0f / 60.0f, cam.position);
+                        renderer.render_to_image(scene.draws(), frame(cam, opt.width, opt.height), opt.width, opt.height);
+                    }
+                    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
+                }
                 std::printf("wrote %s\n", opt.screenshot.c_str());
             } else {
                 bool flying = false;
@@ -219,6 +251,9 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F && !e.key.repeat) {
                             flying = !flying;
                             if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
+                        }
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
+                            scene.set_game_shaders(!scene.game_shaders());
                         }
                         if (e.type == SDL_EVENT_MOUSE_MOTION) {
                             cam.yaw -= e.motion.xrel * 0.12f;
@@ -255,7 +290,8 @@ int main(int argc, char** argv) {
                     scene.update(dt, cam.position);
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
-                    renderer.render_to_window(scene.draws(), cam.frame(w, h));
+                    clock += dt;
+                    renderer.render_to_window(scene.draws(), frame(cam, w, h));
                 }
             }
         }

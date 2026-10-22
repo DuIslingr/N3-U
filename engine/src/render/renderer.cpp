@@ -1,11 +1,14 @@
 #include "render/renderer.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
 
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace nova {
@@ -30,6 +33,115 @@ struct MaterialUniforms {
 };
 
 void fail(const std::string& what) { throw std::runtime_error(what + ": " + SDL_GetError()); }
+
+SDL_GPUBlendFactor blend_factor(BlendFactor f) {
+    switch (f) {
+        case BlendFactor::Zero: return SDL_GPU_BLENDFACTOR_ZERO;
+        case BlendFactor::One: return SDL_GPU_BLENDFACTOR_ONE;
+        case BlendFactor::SrcColor: return SDL_GPU_BLENDFACTOR_SRC_COLOR;
+        case BlendFactor::OneMinusSrcColor: return SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_COLOR;
+        case BlendFactor::SrcAlpha: return SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        case BlendFactor::OneMinusSrcAlpha: return SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        case BlendFactor::DstAlpha: return SDL_GPU_BLENDFACTOR_DST_ALPHA;
+        case BlendFactor::OneMinusDstAlpha: return SDL_GPU_BLENDFACTOR_ONE_MINUS_DST_ALPHA;
+        case BlendFactor::DstColor: return SDL_GPU_BLENDFACTOR_DST_COLOR;
+        case BlendFactor::OneMinusDstColor: return SDL_GPU_BLENDFACTOR_ONE_MINUS_DST_COLOR;
+        case BlendFactor::ConstantColor:
+        case BlendFactor::ConstantAlpha: return SDL_GPU_BLENDFACTOR_CONSTANT_COLOR;
+        case BlendFactor::OneMinusConstantColor:
+        case BlendFactor::OneMinusConstantAlpha: return SDL_GPU_BLENDFACTOR_ONE_MINUS_CONSTANT_COLOR;
+        case BlendFactor::SrcAlphaSaturate: return SDL_GPU_BLENDFACTOR_SRC_ALPHA_SATURATE;
+    }
+    return SDL_GPU_BLENDFACTOR_ONE;
+}
+
+// Every vertex attribute, at the locations the shader translator assigns.
+constexpr SDL_GPUVertexAttribute kAllAttributes[] = {
+    {kLocPosition, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, position))},
+    {kLocNormal, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, normal))},
+    {kLocUv0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(Vertex, uv0))},
+    {kLocUv1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(Vertex, uv1))},
+    {kLocColor, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(Vertex, color))},
+    {kLocJoints, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4, uint32_t(offsetof(Vertex, joints))},
+    {kLocWeights, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(Vertex, weights))},
+    {kLocUv2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(Vertex, uv2))},
+    {kLocTangent, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, tangent))},
+    {kLocBinormal, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(Vertex, binormal))},
+};
+
+// Per-draw values for engine semantics.
+struct DrawContext {
+    const FrameParams& frame;
+    glm::mat4 world{1};
+    glm::mat4 view_proj{1};
+    const IrradianceParams* irradiance = nullptr;
+    bool have_inverse = false;
+    glm::mat4 inverse{1};
+
+    const IrradianceParams& probe() const {
+        static const IrradianceParams kDefault = irradiance_parameters(sample_irradiance({}, glm::vec3(0)));
+        return irradiance ? *irradiance : kDefault;
+    }
+
+    const glm::mat4& world_inverse() {
+        if (!have_inverse) inverse = glm::inverse(world), have_inverse = true;
+        return inverse;
+    }
+
+    void write(std::vector<uint8_t>& block, const SemanticSlot& s) {
+        float v[16] = {};
+        size_t n = 16;
+        auto mat = [&](const glm::mat4& m) { std::memcpy(v, glm::value_ptr(m), sizeof v); };
+        auto vec = [&](const glm::vec4& x) {
+            std::memcpy(v, glm::value_ptr(x), sizeof x);
+            n = 4;
+        };
+        const PointLight* light = size_t(s.light) < frame.lights.size() ? &frame.lights[s.light] : nullptr;
+        switch (s.semantic) {
+            case Semantic::WorldViewProjection: mat(view_proj * world); break;
+            case Semantic::World: mat(world); break;
+            case Semantic::WorldInverse: mat(world_inverse()); break;
+            case Semantic::WorldInverseTransposed: mat(glm::transpose(world_inverse())); break;
+            case Semantic::WorldView: mat(frame.view * world); break;
+            case Semantic::WorldViewTransposed: mat(glm::transpose(frame.view * world)); break;
+            case Semantic::WorldViewInverseTransposed: mat(glm::transpose(glm::inverse(frame.view * world))); break;
+            case Semantic::WorldViewInverse: mat(glm::inverse(frame.view * world)); break;
+            case Semantic::View: mat(frame.view); break;
+            case Semantic::ViewInverse: mat(glm::inverse(frame.view)); break;
+            case Semantic::ViewTransposed: mat(glm::transpose(frame.view)); break;
+            case Semantic::Projection: mat(frame.proj); break;
+            case Semantic::ViewProjection: mat(view_proj); break;
+            case Semantic::CameraPositionObject: vec(world_inverse() * glm::vec4(frame.camera, 1)); break;
+            case Semantic::CameraPositionWorld: vec(glm::vec4(frame.camera, 1)); break;
+            case Semantic::CameraDirectionWorld: vec(-glm::inverse(frame.view)[2]); break;
+            case Semantic::Time: vec(glm::vec4(frame.time, 0, 0, 0)); break;
+            case Semantic::FogColor: vec(frame.fog_color); break;
+            case Semantic::FogStartEnd: {
+                const float range = std::max(frame.fog_end - frame.fog_start, 1e-3f);
+                vec(glm::vec4(frame.fog_start, frame.fog_end, 1.0f / range, 0));
+                break;
+            }
+            case Semantic::FogDensity: vec(glm::vec4(frame.fog_density, 0, 0, 0)); break;
+            case Semantic::SceneAmbient: vec(glm::vec4(frame.ambient, 1)); break;
+            // No light: far away and black, so the shaders' divisions stay finite.
+            case Semantic::LightPositionObject:
+                vec(world_inverse() * glm::vec4(light ? light->position : glm::vec3(0, 0, 1e5f), 1));
+                break;
+            case Semantic::LightPositionWorld: vec(glm::vec4(light ? light->position : glm::vec3(0, 0, 1e5f), 1)); break;
+            case Semantic::LightAttenuation: vec(glm::vec4(light ? light->attenuation : glm::vec3(1, 0, 0), 0)); break;
+            case Semantic::LightDiffuse: vec(light ? light->diffuse : glm::vec4(0)); break;
+            case Semantic::LightAmbient: vec(light ? light->ambient : glm::vec4(0)); break;
+            case Semantic::LightSpecular: vec(light ? light->specular : glm::vec4(0)); break;
+            case Semantic::IrradianceA: vec(probe().a[s.light]); break;
+            case Semantic::IrradianceB: vec(probe().b[s.light]); break;
+            case Semantic::IrradianceC: vec(probe().c); break;
+            case Semantic::IrradiancePeakDirection: vec(probe().peak_direction); break;
+            case Semantic::IrradiancePeakIntensity: vec(probe().peak_intensity); break;
+            case Semantic::Zero: vec(glm::vec4(0)); break;
+        }
+        write_uniform(block, s.offset, s.type, v, n);
+    }
+};
 
 std::vector<uint8_t> read_binary(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
@@ -62,6 +174,36 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
 
     Image white{1, 1, {255, 255, 255, 255}};
     white_ = *upload_texture(white);
+
+    // 1x1 white cube map for samplerCube uniforms without a texture.
+    SDL_GPUTextureCreateInfo ci{};
+    ci.type = SDL_GPU_TEXTURETYPE_CUBE;
+    ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    ci.width = ci.height = 1;
+    ci.layer_count_or_depth = 6;
+    ci.num_levels = 1;
+    white_cube_.texture = SDL_CreateGPUTexture(device_, &ci);
+    if (!white_cube_.texture) fail("cube texture");
+    SDL_GPUTransferBufferCreateInfo tbi{};
+    tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbi.size = 4;
+    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(device_, &tbi);
+    std::memset(SDL_MapGPUTransferBuffer(device_, tb, false), 255, 4);
+    SDL_UnmapGPUTransferBuffer(device_, tb);
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    for (uint32_t face = 0; face < 6; ++face) {
+        SDL_GPUTextureTransferInfo src{tb, 0, 1, 1};
+        SDL_GPUTextureRegion dst{};
+        dst.texture = white_cube_.texture;
+        dst.layer = face;
+        dst.w = dst.h = dst.d = 1;
+        SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    }
+    SDL_EndGPUCopyPass(copy);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(device_, tb);
 }
 
 Renderer::~Renderer() {
@@ -72,6 +214,12 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUBuffer(device_, m->indices);
     }
     for (auto& t : textures_) SDL_ReleaseGPUTexture(device_, t->texture);
+    SDL_ReleaseGPUTexture(device_, white_cube_.texture);
+    for (auto& [key, p] : material_pipelines_) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    for (auto& p : programs_) {
+        SDL_ReleaseGPUShader(device_, p->vertex);
+        SDL_ReleaseGPUShader(device_, p->fragment);
+    }
     for (auto& [fmt, p] : pipelines_) {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.opaque);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blend);
@@ -100,6 +248,78 @@ SDL_GPUShader* Renderer::load_shader(const std::string& path, SDL_GPUShaderStage
     SDL_GPUShader* s = SDL_CreateGPUShader(device_, &ci);
     if (!s) fail("SDL_CreateGPUShader " + path);
     return s;
+}
+
+SDL_GPUShader* Renderer::create_shader(const std::vector<uint32_t>& spirv, SDL_GPUShaderStage stage, uint32_t samplers,
+                                      uint32_t uniforms) {
+    SDL_GPUShaderCreateInfo ci{};
+    ci.code_size = spirv.size() * 4;
+    ci.code = reinterpret_cast<const Uint8*>(spirv.data());
+    ci.entrypoint = "main";
+    ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+    ci.stage = stage;
+    ci.num_samplers = samplers;
+    ci.num_uniform_buffers = uniforms;
+    return SDL_CreateGPUShader(device_, &ci);
+}
+
+const GpuProgram* Renderer::create_program(const CompiledProgram& c) {
+    auto p = std::make_unique<GpuProgram>();
+    p->vertex_iface = c.vertex;
+    p->fragment_iface = c.fragment;
+    p->skinned = c.skinned;
+    p->vertex = create_shader(c.vertex_spirv, SDL_GPU_SHADERSTAGE_VERTEX, uint32_t(c.vertex.samplers.size()),
+                              c.skinned ? 2 : 1);
+    p->fragment = create_shader(c.fragment_spirv, SDL_GPU_SHADERSTAGE_FRAGMENT, uint32_t(c.fragment.samplers.size()), 1);
+    if (!p->vertex || !p->fragment) {
+        if (p->vertex) SDL_ReleaseGPUShader(device_, p->vertex);
+        if (p->fragment) SDL_ReleaseGPUShader(device_, p->fragment);
+        throw std::runtime_error(std::string("SDL_CreateGPUShader: ") + SDL_GetError());
+    }
+    programs_.push_back(std::move(p));
+    return programs_.back().get();
+}
+
+SDL_GPUGraphicsPipeline* Renderer::material_pipeline(const GpuMaterial& m, SDL_GPUTextureFormat format) {
+    char key[64];
+    std::snprintf(key, sizeof key, "%p/%08x/%d", static_cast<const void*>(m.program), m.state.key(), int(format));
+    if (auto it = material_pipelines_.find(key); it != material_pipelines_.end()) return it->second;
+
+    SDL_GPUVertexBufferDescription vb{};
+    vb.slot = 0;
+    vb.pitch = sizeof(Vertex);
+    vb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = format;
+    if (m.state.blend) {
+        ct.blend_state.enable_blend = true;
+        ct.blend_state.src_color_blendfactor = blend_factor(m.state.src_color);
+        ct.blend_state.dst_color_blendfactor = blend_factor(m.state.dst_color);
+        ct.blend_state.src_alpha_blendfactor = blend_factor(m.state.src_alpha);
+        ct.blend_state.dst_alpha_blendfactor = blend_factor(m.state.dst_alpha);
+        ct.blend_state.color_blend_op = ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    }
+    SDL_GPUGraphicsPipelineCreateInfo pi{};
+    pi.vertex_shader = m.program->vertex;
+    pi.fragment_shader = m.program->fragment;
+    pi.vertex_input_state.vertex_buffer_descriptions = &vb;
+    pi.vertex_input_state.num_vertex_buffers = 1;
+    pi.vertex_input_state.vertex_attributes = kAllAttributes;
+    pi.vertex_input_state.num_vertex_attributes = uint32_t(std::size(kAllAttributes));
+    pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    pi.rasterizer_state.cull_mode = m.state.cull ? SDL_GPU_CULLMODE_BACK : SDL_GPU_CULLMODE_NONE;
+    pi.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;   // as in GL
+    pi.depth_stencil_state.enable_depth_test = m.state.depth_test;
+    pi.depth_stencil_state.enable_depth_write = m.state.depth_write;
+    pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    pi.target_info.color_target_descriptions = &ct;
+    pi.target_info.num_color_targets = 1;
+    pi.target_info.depth_stencil_format = kDepthFormat;
+    pi.target_info.has_depth_stencil_target = true;
+    SDL_GPUGraphicsPipeline* p = SDL_CreateGPUGraphicsPipeline(device_, &pi);
+    if (!p) fail("SDL_CreateGPUGraphicsPipeline (" + m.name + ")");
+    return material_pipelines_[key] = p;
 }
 
 const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) {
@@ -290,16 +510,61 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
 
     // Opaque first, then translucent back to front.
     std::vector<const DrawItem*> opaque, blended;
-    for (const auto& it : items)
-        if (it.visible) (it.blend ? blended : opaque).push_back(&it);
+    for (const auto& it : items) {
+        if (!it.visible || !it.model->vertices) continue;
+        const bool blend = it.material ? it.material->state.blend : it.blend;
+        (blend ? blended : opaque).push_back(&it);
+    }
     std::sort(blended.begin(), blended.end(), [&](const DrawItem* a, const DrawItem* b) {
         return glm::distance(a->center, frame.camera) > glm::distance(b->center, frame.camera);
     });
 
     const GpuModel* bound = nullptr;
     SDL_GPUGraphicsPipeline* bound_pipe = nullptr;
+    std::vector<uint8_t> vertex_block, fragment_block;
+    std::vector<SDL_GPUTextureSamplerBinding> samplers;
+    auto draw_material = [&](const DrawItem& it) {
+        const GpuMaterial& m = *it.material;
+        SDL_GPUGraphicsPipeline* pipe = material_pipeline(m, format);
+        if (pipe != bound_pipe) {
+            SDL_BindGPUGraphicsPipeline(pass, pipe);
+            bound_pipe = pipe;
+        }
+        if (it.model != bound) {
+            SDL_GPUBufferBinding vb{it.model->vertices, 0};
+            SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+            SDL_GPUBufferBinding ib{it.model->indices, 0};
+            SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+            bound = it.model;
+        }
+        DrawContext ctx{frame, it.world, view_proj, it.irradiance};
+        vertex_block = m.vertex_uniforms;
+        for (const SemanticSlot& s : m.vertex_semantics) ctx.write(vertex_block, s);
+        fragment_block = m.fragment_uniforms;
+        for (const SemanticSlot& s : m.fragment_semantics) ctx.write(fragment_block, s);
+        SDL_PushGPUVertexUniformData(cmd, 0, vertex_block.data(), uint32_t(vertex_block.size()));
+        if (m.program->skinned) {
+            static const auto kIdentity = [] {
+                std::array<glm::mat4, kMaxJoints> a;
+                a.fill(glm::mat4(1));
+                return a;
+            }();
+            SDL_PushGPUVertexUniformData(cmd, 1, it.joints ? it.joints : kIdentity.data(), sizeof(glm::mat4) * kMaxJoints);
+        }
+        SDL_PushGPUFragmentUniformData(cmd, 0, fragment_block.data(), uint32_t(fragment_block.size()));
+        auto bind = [&](const std::vector<const GpuTexture*>& textures, bool vertex) {
+            if (textures.empty()) return;
+            samplers.clear();
+            for (const GpuTexture* t : textures) samplers.push_back({t->texture, sampler_});
+            if (vertex) SDL_BindGPUVertexSamplers(pass, 0, samplers.data(), uint32_t(samplers.size()));
+            else SDL_BindGPUFragmentSamplers(pass, 0, samplers.data(), uint32_t(samplers.size()));
+        };
+        bind(m.vertex_textures, true);
+        bind(m.fragment_textures, false);
+        SDL_DrawGPUIndexedPrimitives(pass, it.range.index_count, 1, it.range.first_index, it.range.vertex_offset, 0);
+    };
     auto draw = [&](const DrawItem& it, SDL_GPUGraphicsPipeline* pipe) {
-        if (!it.model->vertices) return;
+        if (it.material) return draw_material(it);
         if (it.joints) pipe = pipe == pipes.opaque ? pipes.opaque_skinned : pipes.blend_skinned;
         if (pipe != bound_pipe) {
             SDL_BindGPUGraphicsPipeline(pass, pipe);
