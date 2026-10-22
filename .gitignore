@@ -1,0 +1,18 @@
+# Game files: copyrighted, never committed. Players supply their own copy.
+*.zip
+*.ipa
+*.apk
+*.gla
+
+# Working data: extracted assets, decompiled code, conversions, Ghidra project,
+# reference checkouts (Irrlicht). All regenerable from the tools.
+work/
+
+# Build output
+engine/build/
+build/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
