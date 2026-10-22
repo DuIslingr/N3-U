@@ -24,7 +24,7 @@ struct SceneStats {
     size_t collision_objects = 0, collision_triangles = 0, missing_collision = 0;
     size_t animated = 0, missing_animations = 0;
     size_t lod_hidden = 0;    // draws hidden because another level of detail shows
-    size_t irradiance_volumes = 0;
+    size_t irradiance_volumes = 0, lights = 0, skyboxes = 0;
     double load_seconds = 0;
 };
 
@@ -51,6 +51,11 @@ public:
     bool game_shaders() const { return game_shaders_; }
     const MaterialStats& material_stats() const { return materials_->stats(); }
     const ShaderCompiler& shader_compiler() const { return materials_->compiler(); }
+
+    // Show the skybox with this id (the level's SetSkybox script call). False if none has it.
+    bool set_skybox(int id);
+    // Dynamic lights (level light objects and lights inside placed models), world space.
+    const std::vector<PointLight>& lights() const { return lights_; }
 
     // Fog from the level properties (CComponentLevelProperties).
     glm::vec4 fog_color{0, 0, 0, 1};
@@ -93,6 +98,7 @@ private:
         const AnimationLibrary* library = nullptr;
         AnimClip clip;
         float speed = 1, time = 0;                     // seconds into the clip
+        bool loop = true;                              // false: play once and hold the last frame (skyboxes)
         std::vector<const std::vector<AnimTrack>*> tracks;   // per node, or null
         std::vector<glm::mat4> world;                  // per node
         std::vector<std::array<glm::mat4, kMaxJoints>> palettes;   // per skin
@@ -101,6 +107,15 @@ private:
             int node, skin;
         };
         std::vector<Draw> draws;
+        // Animated material parameters, per model material, and the tracks feeding them.
+        std::vector<std::vector<ParamOverride>> overrides;
+        struct ValueBinding {
+            const ValueTrack* track;
+            int material = -1, slot = -1;   // material parameter: overrides[material][slot]
+            int light = -1;                  // light colour: index into Scene::lights_
+            float intensity = 1;
+        };
+        std::vector<ValueBinding> values;
     };
 
     // A placed model with distance-dependent LOD sets.
@@ -119,7 +134,10 @@ private:
     const LoadedModel* model(const std::string& name);
     static void build_lod_sets(LoadedModel& lm);
     const GpuTexture* texture(const std::string& image_name);
-    void add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p = nullptr);
+    // Returns the instance's index into instances_.
+    size_t add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p = nullptr, bool sky = false);
+    void load_skyboxes();
+    void compute_object_lighting();
     const AnimationLibrary* animation(const std::string& name);
     void pose(AnimatedInstance& a);
     void select_lods(LodInstance& li, const glm::vec3& camera);
@@ -132,7 +150,26 @@ private:
     std::vector<DrawItem> draws_;
     std::vector<const GpuMaterial*> draw_materials_;   // per draw: its game-shader material (or null)
     std::vector<IrradianceVolume> irradiance_;
-    std::deque<IrradianceParams> probes_;               // per placed instance
+
+    // Placed instances: their draws and lighting.
+    struct Instance {
+        size_t first_draw = 0, draw_count = 0;
+        ObjectLighting lighting;
+    };
+    std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
+    struct Skybox {
+        int id = 0;
+        size_t instance = 0;
+    };
+    std::vector<Skybox> skyboxes_;
+    // Lights; model lights follow their node (animated instances move them).
+    struct LightSource {
+        const AnimatedInstance* anim = nullptr;
+        int node = -1;
+        glm::vec3 position{0};
+    };
+    std::vector<PointLight> lights_;
+    std::vector<LightSource> light_sources_;
     std::unique_ptr<MaterialSystem> materials_;
     bool game_shaders_ = true;
     CollisionWorld collision_;

@@ -57,7 +57,8 @@ const GpuProgram* MaterialSystem::program(const EffectPass& pass, bool skinned) 
 
 void MaterialSystem::fill_stage(const Effect& fx, const EffectPass& pass, const Material& m, const ShaderInterface& iface,
                                 std::vector<uint8_t>& block, std::vector<SemanticSlot>& slots,
-                                std::vector<const GpuTexture*>& textures) {
+                                std::vector<const GpuTexture*>& textures, std::vector<GpuMaterial::ParamField>& fields,
+                                bool fragment) {
     auto material_value = [&](const std::string& name) -> const MaterialParam* {
         for (const MaterialParam& p : m.params)
             if (p.name == name) return &p;
@@ -86,7 +87,13 @@ void MaterialSystem::fill_stage(const Effect& fx, const EffectPass& pass, const 
             slots.push_back({u.offset, u.type, u.array, sem, light});
             continue;
         }
-        if (const EffectParam* ep = bound_param(u.name)) {
+        const EffectParam* ep = bound_param(u.name);
+        Semantic over;
+        if (object_override_for(ep ? ep->name : u.name, over)) {
+            slots.push_back({u.offset, u.type, u.array, over, 0});   // per-object value, when there is one
+        }
+        fields.push_back({ep ? ep->name : u.name, fragment, u});
+        if (ep) {
             const MaterialParam* mp = material_value(ep->name);
             write(u, mp && !mp->value.empty() ? mp->value : ep->value);
             continue;
@@ -128,9 +135,10 @@ const GpuMaterial* MaterialSystem::get(const Material& m, bool skinned) {
             gm.program = prog;
             gm.state = pass.state;
             gm.name = fx->id + "/" + tech->name;
-            fill_stage(*fx, pass, m, prog->vertex_iface, gm.vertex_uniforms, gm.vertex_semantics, gm.vertex_textures);
+            fill_stage(*fx, pass, m, prog->vertex_iface, gm.vertex_uniforms, gm.vertex_semantics, gm.vertex_textures,
+                       gm.param_fields, false);
             fill_stage(*fx, pass, m, prog->fragment_iface, gm.fragment_uniforms, gm.fragment_semantics,
-                       gm.fragment_textures);
+                       gm.fragment_textures, gm.param_fields, true);
             result = &gm;
             ++stats_.materials;
         }

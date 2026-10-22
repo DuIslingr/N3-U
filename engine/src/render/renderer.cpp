@@ -74,13 +74,36 @@ struct DrawContext {
     const FrameParams& frame;
     glm::mat4 world{1};
     glm::mat4 view_proj{1};
-    const IrradianceParams* irradiance = nullptr;
+    const ObjectLighting* lighting = nullptr;
+    glm::vec3 center{0};                        // draw bounds centre (world)
+    int lights[2] = {-2, -2};                   // Light0/Light1: indices into frame.lights, -1 none, -2 not chosen yet
+
+    // The game's driver lights for an object: the nearest non-fake lights in range.
+    const PointLight* light(int n) {
+        if (lights[0] == -2) {
+            lights[0] = lights[1] = -1;
+            float best[2] = {0, 0};
+            for (size_t i = 0; i < frame.lights.size(); ++i) {
+                const PointLight& l = frame.lights[i];
+                if (l.fake || glm::vec3(l.diffuse) == glm::vec3(0)) continue;
+                const float d = glm::distance(l.position, center);
+                if (d > l.radius) continue;
+                if (lights[0] < 0 || d < best[0]) {
+                    lights[1] = lights[0], best[1] = best[0];
+                    lights[0] = int(i), best[0] = d;
+                } else if (lights[1] < 0 || d < best[1]) {
+                    lights[1] = int(i), best[1] = d;
+                }
+            }
+        }
+        return n < 2 && lights[n] >= 0 ? &frame.lights[size_t(lights[n])] : nullptr;
+    }
     bool have_inverse = false;
     glm::mat4 inverse{1};
 
     const IrradianceParams& probe() const {
         static const IrradianceParams kDefault = irradiance_parameters(sample_irradiance({}, glm::vec3(0)));
-        return irradiance ? *irradiance : kDefault;
+        return lighting ? lighting->probe : kDefault;
     }
 
     const glm::mat4& world_inverse() {
@@ -96,7 +119,8 @@ struct DrawContext {
             std::memcpy(v, glm::value_ptr(x), sizeof x);
             n = 4;
         };
-        const PointLight* light = size_t(s.light) < frame.lights.size() ? &frame.lights[s.light] : nullptr;
+        const PointLight* light = nullptr;
+        if (s.semantic >= Semantic::LightPositionObject && s.semantic <= Semantic::LightSpecular) light = this->light(s.light);
         switch (s.semantic) {
             case Semantic::WorldViewProjection: mat(view_proj * world); break;
             case Semantic::World: mat(world); break;
@@ -138,6 +162,48 @@ struct DrawContext {
             case Semantic::IrradiancePeakDirection: vec(probe().peak_direction); break;
             case Semantic::IrradiancePeakIntensity: vec(probe().peak_intensity); break;
             case Semantic::Zero: vec(glm::vec4(0)); break;
+            // Per-object overrides: leave the material's value when there is nothing to say.
+            case Semantic::SpecDirection:
+                if (!lighting) return;
+                vec(world_inverse() * glm::vec4(glm::vec3(lighting->probe.peak_direction), 0));
+                break;
+            case Semantic::SpecColor:
+                if (!lighting) return;
+                vec(glm::vec4(glm::vec3(lighting->probe.peak_intensity) * 3.0f, 1));
+                break;
+            case Semantic::RimFactor: {
+                if (!lighting) return;
+                // CNovaSceneManager::s_RimDistance*: the rim fades in with camera distance; its
+                // range moves out with the probe's specular brightness.
+                const glm::vec3 spec = glm::vec3(lighting->probe.peak_intensity) * 3.0f;
+                const float lum = glm::dot(spec, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+                float lo = 3.6835f, hi = 30.5273f;
+                if (spec != glm::vec3(0)) lo = 0.0f + lum * (lo - 0.0f), hi = 20.5273f + lum * (hi - 20.5273f);
+                const float d = glm::distance(lighting->center, frame.camera);
+                const float k = d > hi ? 1.0f : (std::max(d, lo) - lo) / std::max(hi - lo, 1e-3f);
+                vec(glm::vec4(k, k, k, 0));
+                break;
+            }
+            case Semantic::L0PositionObject:
+                if (!lighting || !lighting->has_light) return;
+                vec(world_inverse() * glm::vec4(lighting->l0_position, 1));
+                break;
+            case Semantic::L0PositionWorld:
+                if (!lighting || !lighting->has_light) return;
+                vec(glm::vec4(lighting->l0_position, 1));
+                break;
+            case Semantic::L0Color:
+                if (!lighting || !lighting->has_light) return;
+                vec(lighting->l0_color);
+                break;
+            case Semantic::L0Attenuation:
+                if (!lighting || !lighting->has_light) return;
+                vec(glm::vec4(lighting->l0_attenuation, 0));
+                break;
+            case Semantic::L0Scale:
+                if (!lighting || !lighting->has_light) return;
+                vec(glm::vec4(lighting->l0_scale, 0));
+                break;
         }
         write_uniform(block, s.offset, s.type, v, n);
     }
@@ -508,13 +574,17 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     mu.fog = frame.fog;
     mu.camera = glm::vec4(frame.camera, 1);
 
-    // Opaque first, then translucent back to front.
-    std::vector<const DrawItem*> opaque, blended;
+    // Sky first, then opaque, then translucent back to front.
+    std::vector<const DrawItem*> opaque, blended, sky;
     for (const auto& it : items) {
         if (!it.visible || !it.model->vertices) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
-        (blend ? blended : opaque).push_back(&it);
+        if (it.sky) sky.push_back(&it);
+        else (blend ? blended : opaque).push_back(&it);
     }
+    std::stable_partition(sky.begin(), sky.end(), [](const DrawItem* it) {
+        return !(it->material ? it->material->state.blend : it->blend);
+    });
     std::sort(blended.begin(), blended.end(), [&](const DrawItem* a, const DrawItem* b) {
         return glm::distance(a->center, frame.camera) > glm::distance(b->center, frame.camera);
     });
@@ -537,11 +607,26 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
             SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
             bound = it.model;
         }
-        DrawContext ctx{frame, it.world, view_proj, it.irradiance};
+        DrawContext ctx{frame, it.world, view_proj, it.lighting, it.center};
         vertex_block = m.vertex_uniforms;
         for (const SemanticSlot& s : m.vertex_semantics) ctx.write(vertex_block, s);
         fragment_block = m.fragment_uniforms;
         for (const SemanticSlot& s : m.fragment_semantics) ctx.write(fragment_block, s);
+        if (it.overrides) {
+            for (const ParamOverride& o : *it.overrides) {
+                for (const GpuMaterial::ParamField& pf : m.param_fields) {
+                    if (pf.param != o.param) continue;
+                    uint32_t size = 0, align = 0;
+                    if (!std140_type(pf.field.type, size, align)) continue;
+                    // Write each animated component (scalar or vector fields only).
+                    for (int c = 0; c < o.count; ++c) {
+                        const uint32_t at = pf.field.offset + 4 * uint32_t(o.first + c);
+                        if (4 * uint32_t(o.first + c) >= size || pf.field.type.rfind("mat", 0) == 0) continue;
+                        write_uniform(pf.fragment ? fragment_block : vertex_block, at, "float", &o.value[c], 1);
+                    }
+                }
+            }
+        }
         SDL_PushGPUVertexUniformData(cmd, 0, vertex_block.data(), uint32_t(vertex_block.size()));
         if (m.program->skinned) {
             static const auto kIdentity = [] {
@@ -589,6 +674,21 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
         SDL_BindGPUFragmentSamplers(pass, 0, tex, 2);
         SDL_DrawGPUIndexedPrimitives(pass, it.range.index_count, 1, it.range.first_index, it.range.vertex_offset, 0);
     };
+    if (!sky.empty()) {
+        // CCustomSkyBoxSceneNode::renderInternal: each sky mesh at its own transform plus the
+        // camera position, with the depth range squeezed to 0.999999 (behind everything else).
+        SDL_GPUViewport vp{0, 0, float(w), float(h), 0.999999f, 0.999999f};
+        SDL_SetGPUViewport(pass, &vp);
+        for (const DrawItem* it : sky) {
+            DrawItem moved = *it;
+            moved.world[3] += glm::vec4(frame.camera, 0);
+            const bool blend = it->material ? it->material->state.blend : it->blend;
+            draw(moved, blend ? pipes.blend : pipes.opaque);
+        }
+        vp.min_depth = 0;
+        vp.max_depth = 1;
+        SDL_SetGPUViewport(pass, &vp);
+    }
     for (const DrawItem* it : opaque) draw(*it, pipes.opaque);
     for (const DrawItem* it : blended) draw(*it, pipes.blend);
     SDL_EndGPURenderPass(pass);

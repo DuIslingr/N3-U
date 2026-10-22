@@ -24,6 +24,7 @@ constexpr int kCompBase = 0x00;       // CComponentBase: id, position, rotation 
 constexpr int kCompMesh = 0x01;       // CComponentMesh: model name, int, 11 flags
 constexpr int kCompAnimation = 0x0C;  // CAnimationComponent: s(animation file) s(default clip) f(speed) ...
 constexpr int kCompCollision = 0x19;  // CCollisionComponent: c c c c c s(collision model) [s i] i(triangles)
+constexpr int kCompLight = 0x88;      // CLightComponent: c c c c (RGBA) f(intensity) f(radius) i i f c(fake)
 
 struct Transform {
     int id = 0;
@@ -89,5 +90,24 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
 std::vector<Placement> collision_placements(const Level& level, const Gol& gol);
 
 Transform transform_from_values(const Value& v, size_t first = 0);
+
+// Skybox records (level type 0x3D): the model, the id scripts pass to SetSkybox, and
+// whether it is shown when the level starts.
+struct SkyboxRef {
+    std::string model;
+    int id = 0;
+    bool initial = false;
+};
+std::vector<SkyboxRef> level_skyboxes(const Level& level);
+
+// Objects with a light component (CLightComponent::Load).
+struct LevelLight {
+    std::string object;
+    glm::vec3 position{0};
+    glm::vec4 color{1};       // RGBA, bytes in that order
+    float intensity = 1, radius = 1;
+    bool fake = false;        // registered with its zone as a "fake light"
+};
+std::vector<LevelLight> level_lights(const Level& level, const Gol& gol);
 
 }  // namespace nova

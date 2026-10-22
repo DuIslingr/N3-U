@@ -32,11 +32,16 @@ enum class Semantic : uint8_t {
     LightPositionObject, LightPositionWorld, LightAttenuation, LightDiffuse, LightAmbient, LightSpecular,
     IrradianceA, IrradianceB, IrradianceC, IrradiancePeakDirection, IrradiancePeakIntensity,   // `light`: channel
     Zero,
+    // Material parameters the game overwrites per object (CNovaSceneManager::UpdateLights);
+    // without lighting data the material's own value stays.
+    SpecDirection, SpecColor, RimFactor, L0PositionObject, L0PositionWorld, L0Color, L0Attenuation, L0Scale,
 };
 
 // Recognise a uniform name as an engine semantic; `light` gets the light index (or the
 // colour channel of an irradiance coefficient).
 bool semantic_for(const std::string& uniform, Semantic& semantic, int& light);
+// Material parameters the engine overrides per object (see Semantic::SpecDirection...).
+bool object_override_for(const std::string& param, Semantic& semantic);
 
 struct SemanticSlot {
     uint32_t offset;
@@ -52,6 +57,13 @@ struct GpuMaterial {
     std::vector<uint8_t> vertex_uniforms, fragment_uniforms;   // material values filled in
     std::vector<SemanticSlot> vertex_semantics, fragment_semantics;
     std::vector<const GpuTexture*> vertex_textures, fragment_textures;   // per sampler binding
+    // Uniform fields fed by each effect parameter, for per-object (animated) values.
+    struct ParamField {
+        std::string param;
+        bool fragment = false;
+        UniformField field;
+    };
+    std::vector<ParamField> param_fields;
     std::string name;                                          // effect/technique, for diagnostics
 };
 

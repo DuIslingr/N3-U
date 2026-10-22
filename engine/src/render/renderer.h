@@ -47,7 +47,27 @@ struct DrawItem {
     const glm::mat4* joints = nullptr;          // skinned: kMaxJoints palette (object space: placement^-1 * world * inverse bind)
     bool visible = true;                        // false for LOD levels not currently shown
     const GpuMaterial* material = nullptr;      // game shader; null: built-in shader with diffuse/lightmap
-    const IrradianceParams* irradiance = nullptr;   // light probe for the ird_* uniforms (default light if null)
+    const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
+    bool sky = false;                           // skybox: drawn first, around the camera, at the far depth
+    const std::vector<struct ParamOverride>* overrides = nullptr;   // animated material parameters
+};
+
+// An animated material parameter value for one object: components [first, first + count).
+struct ParamOverride {
+    std::string param;
+    int first = 0, count = 0;
+    glm::vec4 value{0};
+};
+
+// Per-object lighting the game computes in CNovaSceneManager::UpdateLights.
+struct ObjectLighting {
+    IrradianceParams probe;                     // ird_* uniforms; SpecDirection/SpecColor from its peak
+    glm::vec3 center{0};                        // world bounds centre, for RimFactor
+    bool has_light = false;                     // L0_*: nearest light (blended with the next when inside both)
+    glm::vec3 l0_position{0};                   // world
+    glm::vec4 l0_color{0};                      // colour * intensity
+    glm::vec3 l0_attenuation{0};                // (falloff start, 1 / falloff length, 0)
+    glm::vec3 l0_scale{1};                      // 1 / light node scale
 };
 
 // A dynamic point light, as the game's shaders see it (Light<n>... uniforms).
@@ -55,6 +75,8 @@ struct PointLight {
     glm::vec3 position{0};
     glm::vec3 attenuation{1, 0, 0};             // the shaders use [1] as 1/range
     glm::vec4 diffuse{0}, ambient{0}, specular{0};
+    float radius = 0;                           // affects objects closer than this
+    bool fake = false;                          // zone "fake light": specular (L0_*) only
 };
 
 struct FrameParams {

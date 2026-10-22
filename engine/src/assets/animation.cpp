@@ -106,45 +106,76 @@ AnimationLibrary load_animation(const Bytes& raw) {
         }
     }
 
-    bool any = false;
-    for (uint32_t a : b.array(b.root, kAnimations)) {
-        const uint32_t channel = b.ptr(a + 0x10), sampler = b.ptr(a + 0x08);
-        if (!channel || !sampler) continue;
-        ChannelInfo info;
-        if (!channel_info(b.u32(channel + 4), info)) continue;
-        uint32_t s[8];
-        for (int k = 0; k < 8; ++k) s[k] = b.u32(sampler + 4 * k);
-        if (s[4] != 6) continue;   // only float values occur in the game data
+    // Keys of a sampler across all segments: times (ms) and `comps` values per key,
+    // floats (value type 6) or bytes scaled to 0..1 (type 1).
+    auto read_keys = [&](const uint32_t s[8], std::vector<float>& times, std::vector<float>& values) {
         size_t tsize;
         float tscale;
         switch (s[1]) {
             case 1: tsize = 1; tscale = 1000.0f / 30.0f; break;
             case 3: tsize = 2; tscale = 1000.0f / 30.0f; break;
             case 4: tsize = 4; tscale = 1.0f; break;
-            default: continue;
+            default: return;
         }
+        if (s[4] != 6 && s[4] != 1) return;
+        const uint32_t vstride = s[7] >> 16, voff = s[7] & 0xFFFF, comps = s[5];
+        for (const Segment& seg : segments) {
+            if (std::max(s[3], s[6]) >= seg.buffers.size()) continue;
+            const auto [tb, tlen] = seg.buffers[s[3]];
+            const uint32_t vb = seg.buffers[s[6]].first;
+            for (size_t k = 0; k < tlen / tsize; ++k) {
+                const size_t at = tb + k * tsize;
+                float t;
+                if (tsize == 1) t = float(read_le<uint8_t>(*data, at)) * tscale;
+                else if (tsize == 2) t = float(read_le<uint16_t>(*data, at)) * tscale;
+                else t = float(read_le<int32_t>(*data, at)) * tscale;
+                if (!times.empty() && t <= times.back()) continue;   // segments repeat their boundary key
+                times.push_back(t);
+                for (uint32_t c = 0; c < comps; ++c) {
+                    const size_t v = vb + voff + k * vstride;
+                    values.push_back(s[4] == 6 ? read_le<float>(*data, v + 4 * c) : float(read_le<uint8_t>(*data, v + c)) / 255.0f);
+                }
+            }
+        }
+    };
+
+    bool any = false;
+    auto extend_timeline = [&](const std::vector<float>& times) {
+        if (!any || times.front() < lib.timeline_start) lib.timeline_start = times.front();
+        if (!any || times.back() > lib.timeline_end) lib.timeline_end = times.back();
+        any = true;
+    };
+    for (uint32_t a : b.array(b.root, kAnimations)) {
+        const uint32_t channel = b.ptr(a + 0x10), sampler = b.ptr(a + 0x08);
+        if (!channel || !sampler) continue;
+        uint32_t s[8];
+        for (int k = 0; k < 8; ++k) s[k] = b.u32(sampler + 4 * k);
+        const uint32_t ctype = b.u32(channel + 4);
+        if (ctype == 114 || ctype == 19) {
+            ValueTrack vt;
+            vt.light = ctype == 19;
+            vt.target = b.cstr(channel);
+            if (!vt.light) {
+                vt.param = b.cstr(channel + 8);
+                const uint32_t mask = b.u32(channel + 0xC);
+                while (vt.first < 3 && !(mask & (1u << vt.first))) ++vt.first;
+            }
+            vt.stride = int(s[5]);
+            read_keys(s, vt.times, vt.values);
+            if (vt.times.empty() || vt.stride <= 0) continue;
+            extend_timeline(vt.times);
+            lib.values.push_back(std::move(vt));
+            continue;
+        }
+        ChannelInfo info;
+        if (!channel_info(ctype, info)) continue;
+        if (s[4] != 6) continue;   // transforms are always floats
         AnimTrack tr;
         tr.property = info.property;
         tr.component = info.component;
         tr.axis_angle = info.axis_angle;
         tr.stride = int(s[5]);
-        const uint32_t vstride = s[7] >> 16, voff = s[7] & 0xFFFF;
-        for (const Segment& seg : segments) {
-            if (std::max(s[3], s[6]) >= seg.buffers.size()) continue;
-            const auto [tb, tlen] = seg.buffers[s[3]];
-            const uint32_t vb = seg.buffers[s[6]].first;
-            const size_t n = tlen / tsize;
-            for (size_t k = 0; k < n; ++k) {
-                float t;
-                const size_t at = tb + k * tsize;
-                if (tsize == 1) t = float(read_le<uint8_t>(*data, at)) * tscale;
-                else if (tsize == 2) t = float(read_le<uint16_t>(*data, at)) * tscale;
-                else t = float(read_le<int32_t>(*data, at)) * tscale;
-                if (!tr.times.empty() && t <= tr.times.back()) continue;   // segments repeat their boundary key
-                tr.times.push_back(t);
-                for (int c = 0; c < tr.stride; ++c) tr.values.push_back(read_le<float>(*data, vb + voff + k * vstride + 4 * c));
-            }
-        }
+        read_keys(s, tr.times, tr.values);
         if (tr.times.empty()) continue;
         if (const uint32_t dp = b.ptr(a + 0x18); dp && b.ptr(dp + 8)) {
             const uint32_t v = b.ptr(dp + 8);
@@ -164,9 +195,7 @@ AnimationLibrary load_animation(const Bytes& raw) {
                 }
             }
         }
-        if (!any || tr.times.front() < lib.timeline_start) lib.timeline_start = tr.times.front();
-        if (!any || tr.times.back() > lib.timeline_end) lib.timeline_end = tr.times.back();
-        any = true;
+        extend_timeline(tr.times);
         lib.tracks[b.cstr(channel)].push_back(std::move(tr));
     }
     return lib;
@@ -206,6 +235,16 @@ void sample_tracks(const std::vector<AnimTrack>& tracks, float t, NodePose& pose
                 break;
             }
         }
+    }
+}
+
+void sample_value(const ValueTrack& track, float t, float* out) {
+    size_t i;
+    float f;
+    locate(track.times, t, i, f);
+    for (int c = 0; c < track.stride; ++c) {
+        const float a = track.values[i * size_t(track.stride) + size_t(c)];
+        out[c] = f == 0 ? a : a + (track.values[(i + 1) * size_t(track.stride) + size_t(c)] - a) * f;
     }
 }
 

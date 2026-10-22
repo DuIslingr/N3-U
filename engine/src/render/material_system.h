@@ -42,7 +42,8 @@ private:
     const std::string* source(const std::string& name);
     void fill_stage(const Effect& fx, const EffectPass& pass, const Material& m, const ShaderInterface& iface,
                     std::vector<uint8_t>& block, std::vector<SemanticSlot>& slots,
-                    std::vector<const GpuTexture*>& textures);
+                    std::vector<const GpuTexture*>& textures, std::vector<GpuMaterial::ParamField>& fields,
+                    bool fragment);
 
     const Vfs& vfs_;
     Renderer& renderer_;

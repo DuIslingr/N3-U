@@ -7,6 +7,10 @@ the animation_track interpreters in the engine):
     +0x00 id ("Bip01-node-translation")
     +0x08 SSampler*      +0x10 SChannel*      +0x18 SDefaults* (optional)
 * SChannel: +0x00 target node id, +0x04 channel type (see CHANNEL_*).
+  Other channel types: 114 material parameter (+0x00 material id, +0x08 parameter
+  name, +0x0C mask of the components written, e.g. 8 = w), 19 light colour (RGB
+  bytes, target = light id), 24 node visibility, 115/116 UV offset U/V,
+  117/118 texture matrix rotation/scale, 18 morph weights, 14/16 camera fov/near.
 * SSampler (u32s): +0x04 key time type (1 = u8 frames, 3 = u16 frames at 30 fps,
   4 = i32 ms), +0x0c time buffer index, +0x10 value type (6 = float),
   +0x14 components, +0x18 value buffer index, +0x1c stride << 16 | offset.

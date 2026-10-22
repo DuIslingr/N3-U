@@ -25,7 +25,7 @@ struct Vertex {
     glm::vec2 uv2{0};
     glm::vec3 tangent{0};
     glm::vec3 binormal{0};
-    uint32_t color = 0xFF000000;     // RGBA8, R in the low byte; (0,0,0,1) like a GL attribute left unset
+    uint32_t color = 0xFFFFFFFF;     // RGBA8, R in the low byte; white when the mesh has none (sky spheres need it)
     uint32_t joints = 0;             // 4 x u8 joint indices (skinned meshes)
     uint32_t weights = 0x000000FF;   // 4 x unorm8 weights, summing to 255
 };
@@ -69,6 +69,15 @@ struct Material {
     bool vertex_color = false;       // effect multiplies by vertex colour
 };
 
+// A light from the model's light library (glitch::collada::SLight).
+struct ModelLight {
+    std::string id;
+    int type = 0;                    // 0 ambient, 1 point, 2 spot
+    glm::vec4 color{1};              // RGBA
+    float intensity = 1;
+    float falloff_start = 0, falloff_end = 0;
+};
+
 struct ModelNode {
     std::string id, name, sid;
     glm::vec3 translation{0};
@@ -77,12 +86,14 @@ struct ModelNode {
     std::string properties;          // max user properties, e.g. "lod_dist=30"
     std::vector<int> children;
     std::vector<int> meshes;         // indices into Model::meshes drawn at this node
+    std::vector<int> lights;         // indices into Model::lights placed at this node
 };
 
 struct Model {
     std::vector<Mesh> meshes;
     std::vector<Skin> skins;
     std::vector<Material> materials;
+    std::vector<ModelLight> lights;
     std::vector<ModelNode> nodes;
     std::vector<int> roots;
 };

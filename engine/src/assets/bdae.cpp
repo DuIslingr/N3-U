@@ -13,6 +13,7 @@ namespace nova {
 namespace {
 
 // Root (glitch::collada::SCollada) collections: (count offset, pointer offset, stride).
+constexpr Coll kLights{0x60, 0x64, 0x30};
 constexpr Coll kImages{0x68, 0x6C, 0x10};
 constexpr Coll kMaterials{0x78, 0x7C, 0x24};
 constexpr Coll kGeometries{0x84, 0x88, 0x10};
@@ -27,6 +28,7 @@ constexpr Coll kSubmeshes{0x38, 0x3C, 0x38};
 constexpr uint32_t kGeometryMesh = 0;
 constexpr uint32_t kInstanceController = 2;
 constexpr uint32_t kInstanceGeometry = 3;
+constexpr uint32_t kInstanceLight = 4;
 
 // Submesh attribute slots (SMeshBuffer +0x0c..): position, normal, colour, texcoords 0-3,
 // tangents 0-3, binormals 0-3.
@@ -45,6 +47,7 @@ public:
 
     Model run() {
         load_images();
+        load_lights();
         load_materials();
         index_geometries();
         index_controllers();
@@ -68,6 +71,21 @@ public:
 private:
     void load_images() {
         for (uint32_t o : b.array(b.root, kImages)) images.push_back(b.cstr(o + 8));
+    }
+
+    // SLight: +0 id, +8 type, +0xC SColor (ARGB), +0x10 intensity, +0x24/+0x28 falloff start/end.
+    void load_lights() {
+        for (uint32_t o : b.array(b.root, kLights)) {
+            ModelLight l;
+            l.id = b.cstr(o);
+            l.type = int(b.u32(o + 8));
+            const uint32_t c = b.u32(o + 0xC);
+            l.color = glm::vec4((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, c >> 24) / 255.0f;
+            l.intensity = b.f32(o + 0x10);
+            l.falloff_start = b.f32(o + 0x24);
+            l.falloff_end = b.f32(o + 0x28);
+            model.lights.push_back(l);
+        }
     }
 
     void load_materials() {
@@ -289,6 +307,11 @@ private:
             std::string url = b.cstr(ip + 4);
             if (!url.empty() && url[0] == '#') url.erase(0, 1);
             int m = -1;
+            if (type == kInstanceLight) {
+                for (size_t li = 0; li < model.lights.size(); ++li)
+                    if (model.lights[li].id == url) node.lights.push_back(int(li));
+                continue;
+            }
             if (type == kInstanceGeometry) {
                 m = mesh_for(url);
             } else if (type == kInstanceController) {

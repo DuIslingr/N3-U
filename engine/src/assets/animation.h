@@ -27,6 +27,18 @@ struct AnimTrack {
     bool has_defaults = false;
 };
 
+// Animated values other than node transforms: material parameters (channel 114:
+// target material id, parameter name, mask of the components written) and light
+// colours (channel 19: target light id, RGB bytes).
+struct ValueTrack {
+    bool light = false;
+    std::string target, param;
+    int first = 0;                    // first component written (lowest bit of the channel's mask)
+    int stride = 0;                   // components per key
+    std::vector<float> times;         // ms
+    std::vector<float> values;
+};
+
 struct AnimClip {
     std::string name;
     float start = 0, end = 0;         // ms
@@ -35,6 +47,7 @@ struct AnimClip {
 struct AnimationLibrary {
     std::vector<AnimClip> clips;
     std::unordered_map<std::string, std::vector<AnimTrack>> tracks;   // by target node id
+    std::vector<ValueTrack> values;
     float timeline_start = 0, timeline_end = 0;
 
     const AnimClip* clip(const std::string& name) const;
@@ -49,5 +62,7 @@ struct NodePose {
     glm::vec3 scale;
 };
 void sample_tracks(const std::vector<AnimTrack>& tracks, float t, NodePose& pose);
+// A value track at time `t` (ms): writes `track.stride` floats.
+void sample_value(const ValueTrack& track, float t, float* out);
 
 }  // namespace nova

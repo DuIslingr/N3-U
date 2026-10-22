@@ -162,6 +162,16 @@ int cmd_anim(const std::string& dir, const std::string& file, const std::vector<
     const AnimationLibrary lib = load_animation(vfs.read(file));
     std::printf("%zu animated nodes, %zu clips, timeline %.1f-%.1f ms\n", lib.tracks.size(), lib.clips.size(),
                 lib.timeline_start, lib.timeline_end);
+    for (const ValueTrack& vt : lib.values) {
+        for (float t : times) {
+            float v[16] = {};
+            sample_value(vt, t, v);
+            std::printf("%s %s%s first %d %.1f:", vt.light ? "light" : "material", vt.target.c_str(),
+                        vt.light ? "" : ("/" + vt.param).c_str(), vt.first, t);
+            for (int c = 0; c < vt.stride && c < 16; ++c) std::printf(" %.4f", v[c]);
+            std::printf("\n");
+        }
+    }
     std::vector<std::string> names;
     for (const auto& [n, t] : lib.tracks) names.push_back(n);
     std::sort(names.begin(), names.end());

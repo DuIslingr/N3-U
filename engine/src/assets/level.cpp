@@ -118,7 +118,10 @@ const std::unordered_map<int, std::pair<const char*, Reader>>& level_types() {
              o.base = read_base(st);
              o.fields = st.spec("i i c f f i c c c c");
          }}},
-        {0x3D, {"skybox", [](DictStream& st, LevelObject& o) { o.model = st.spec("s i c")[0].s; }}},
+        {0x3D, {"skybox", [](DictStream& st, LevelObject& o) {
+             o.fields = st.spec("s i c");
+             o.model = o.fields[0].s;
+         }}},
         {0x3E, {"zone", [](DictStream& st, LevelObject& o) {
              o.base = read_base(st);
              o.fields = st.spec("i c c c c c f f f [c c c c c f f]");
@@ -341,6 +344,38 @@ std::vector<Placement> collision_placements(const Level& level, const Gol& gol) 
             p.object = o.name;
             out.push_back(std::move(p));
         }
+    }
+    return out;
+}
+
+std::vector<SkyboxRef> level_skyboxes(const Level& level) {
+    std::vector<SkyboxRef> out;
+    for (const auto& o : level.objects) {
+        if (o.kind != "skybox" || o.fields.size() < 3) continue;
+        out.push_back({o.fields[0].s, o.fields[1].i, o.fields[2].i != 0});
+    }
+    return out;
+}
+
+std::vector<LevelLight> level_lights(const Level& level, const Gol& gol) {
+    std::vector<LevelLight> out;
+    for (const auto& o : level.objects) {
+        if (o.kind != "object") continue;
+        auto g = gol.find(o.type);
+        if (g == gol.end()) continue;
+        const Value* v = nullptr;
+        if (auto it = o.components.find(kCompLight); it != o.components.end()) v = &it->second;
+        else v = resolved_template(g->second, gol, kCompLight);
+        auto tf = object_transform(o, g->second, gol);
+        if (!v || v->size() < 10 || !tf) continue;
+        LevelLight l;
+        l.object = o.name;
+        l.position = tf->position;
+        for (int k = 0; k < 4; ++k) l.color[k] = float(uint8_t((*v)[size_t(k)].i)) / 255.0f;
+        l.intensity = (*v)[4].as_float();
+        l.radius = (*v)[5].as_float();
+        l.fake = (*v)[9].i != 0;
+        out.push_back(l);
     }
     return out;
 }

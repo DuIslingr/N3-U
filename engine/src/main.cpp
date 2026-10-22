@@ -7,6 +7,7 @@
 //
 //   nova3 ... --builtin-shaders                                  draw with the fallback shader, not the game's
 //   nova3 ... --screenshot OUT.bmp --bench N                      also time N offscreen frames
+//   nova3 ... --skybox ID                                          start with another of the level's skyboxes
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
 // (Space/Ctrl then move up/down), G to switch game/built-in shaders, Esc to quit.
@@ -41,6 +42,7 @@ struct Options {
     std::string focus;        // object type name (substring), optionally #index
     bool builtin_shaders = false;
     int bench = 0;
+    int skybox = -1;          // show this skybox id (as the level script's SetSkybox would)
     int width = 1600, height = 900;
 };
 
@@ -60,6 +62,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--focus") o.focus = next();
         else if (a == "--builtin-shaders") o.builtin_shaders = true;
         else if (a == "--bench") o.bench = std::stoi(next());
+        else if (a == "--skybox") o.skybox = std::stoi(next());
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -167,6 +170,7 @@ int main(int argc, char** argv) {
             Scene scene(vfs, renderer, gol);
             scene.load_level(opt.level);
             if (opt.builtin_shaders) scene.set_game_shaders(false);
+            if (opt.skybox >= 0 && !scene.set_skybox(opt.skybox)) throw std::runtime_error("no skybox with that id");
             const SceneStats& st = scene.stats();
             const MaterialStats& ms = scene.material_stats();
             std::printf("materials: %zu with game shaders, %zu fallback; %zu programs (%zu failed), %zu effects missing; "
@@ -181,14 +185,15 @@ int main(int argc, char** argv) {
                 f.fog_end = scene.fog_end;
                 f.fog_density = scene.fog_density;
                 f.time = clock;
+                f.lights = scene.lights();
                 return f;
             };
             std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, "
                         "%zu collision objects (%zu triangles, %zu missing), %zu animated (%zu animations missing), "
-                        "%zu draws hidden by LOD, %zu irradiance volumes, loaded in %.2fs\n",
+                        "%zu draws hidden by LOD, %zu irradiance volumes, %zu lights, %zu skyboxes, loaded in %.2fs\n",
                         opt.level.c_str(), st.placements, st.models, st.missing_models, st.textures,
                         st.missing_textures, st.draws, st.collision_objects, st.collision_triangles,
-                        st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.irradiance_volumes, st.load_seconds);
+                        st.missing_collision, st.animated, st.missing_animations, st.lod_hidden, st.irradiance_volumes, st.lights, st.skyboxes, st.load_seconds);
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             constexpr float kPhysicsStep = 1.0f / 120.0f;

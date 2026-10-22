@@ -180,7 +180,9 @@ glm::mat4 local_matrix(const glm::vec3& t, const glm::quat& r, const glm::vec3& 
 }
 }  // namespace
 
-void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p) {
+size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p, bool sky) {
+    Instance& inst = instances_.emplace_back();
+    inst.first_draw = draws_.size();
     // Animated if it has an animation clip or any skinned mesh (skins need a joint palette).
     const AnimationLibrary* lib = p && !p->anim_file.empty() ? animation(p->anim_file) : nullptr;
     std::unique_ptr<AnimatedInstance> anim;
@@ -189,6 +191,8 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
         anim->model = &m;
         anim->placement = placement;
         anim->placement_inverse = glm::inverse(placement);
+        anim->loop = !sky;
+        anim->overrides.resize(m.cpu.materials.size());
         anim->library = lib;
         anim->world.assign(m.cpu.nodes.size(), glm::mat4(1));
         anim->palettes.resize(m.cpu.skins.size());
@@ -200,13 +204,18 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
             for (size_t n = 0; n < m.cpu.nodes.size(); ++n) {
                 if (auto it = lib->tracks.find(m.cpu.nodes[n].id); it != lib->tracks.end()) anim->tracks[n] = &it->second;
             }
+            for (const ValueTrack& vt : lib->values) {
+                if (vt.light) continue;   // bound when the light is placed below
+                for (size_t mi = 0; mi < m.cpu.materials.size(); ++mi) {
+                    if (m.cpu.materials[mi].id != vt.target) continue;
+                    anim->overrides[mi].push_back({vt.param, vt.first, std::min(vt.stride, 4 - vt.first), glm::vec4(0)});
+                    anim->values.push_back({&vt, int(mi), int(anim->overrides[mi].size()) - 1, -1, 1});
+                }
+            }
             // Offset each object into its loop so identical enemies don't move in lockstep.
             anim->time = float((p->transform.id * 2654435761u) % 10007u) / 1000.0f;
         }
     }
-
-    probes_.push_back(irradiance_parameters(sample_irradiance(irradiance_, glm::vec3(placement[3]))));
-    const IrradianceParams* probe = &probes_.back();
 
     LodInstance lods;
     lods.model = &m;
@@ -227,6 +236,25 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
         // Collision proxies for the physics engine ("r=0.75" etc. in their properties).
         if (node.name.rfind("PhysicsShape", 0) == 0) continue;
         const glm::mat4 world = v.parent * local_matrix(node.translation, node.rotation, node.scale);
+        // Point and spot lights (CCustomColladaLightSceneNode); a black light is switched off.
+        for (int li : node.lights) {
+            const ModelLight& ml = m.cpu.lights[size_t(li)];
+            const ValueTrack* colour = nullptr;
+            if (anim && anim->library) {
+                for (const ValueTrack& vt : anim->library->values)
+                    if (vt.light && vt.target == ml.id) colour = &vt;
+            }
+            if (sky || (ml.type != 1 && ml.type != 2) || ml.falloff_end <= 0) continue;
+            if (glm::vec3(ml.color) == glm::vec3(0) && !colour) continue;   // black and never lit
+            if (colour) anim->values.push_back({colour, -1, -1, int(lights_.size()), ml.intensity});
+            PointLight pl;
+            pl.position = glm::vec3(world[3]);
+            pl.diffuse = ml.color * ml.intensity;
+            pl.attenuation = {ml.falloff_start, ml.falloff_end > ml.falloff_start ? 1.0f / (ml.falloff_end - ml.falloff_start) : 0.0f, 0};
+            pl.radius = ml.falloff_end;
+            lights_.push_back(pl);
+            light_sources_.push_back({anim.get(), ni, pl.position});
+        }
         if (!m.lod_sets.empty()) {
             lods.node_pos[ni] = glm::vec3(world[3]);
             if (m.lod_set[ni] >= 0) v.lod_nodes.push_back(ni);
@@ -252,7 +280,10 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
                 d.center = glm::vec3(world * glm::vec4(c / float(std::max<size_t>(verts.size(), 1)), 1));
                 const GpuMaterial* gm = range.material >= 0 ? materials_->get(m.cpu.materials[range.material], skin >= 0) : nullptr;
                 d.material = game_shaders_ ? gm : nullptr;
-                d.irradiance = probe;
+                d.lighting = &inst.lighting;
+                d.sky = sky;
+                if (anim && range.material >= 0 && !anim->overrides[size_t(range.material)].empty())
+                    d.overrides = &anim->overrides[size_t(range.material)];
                 draw_materials_.push_back(gm);
                 if (anim) anim->draws.push_back({draws_.size(), ni, skin});
                 if (!v.lod_nodes.empty()) lods.draws.push_back({draws_.size(), v.lod_nodes});
@@ -273,6 +304,86 @@ void Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const
         bool fixed = true;
         for (const auto& set : m.lod_sets) fixed = fixed && set.fixed;
         if (!fixed) lod_instances_.push_back(std::move(lods));
+    }
+    inst.draw_count = draws_.size() - inst.first_draw;
+    return instances_.size() - 1;
+}
+
+void Scene::load_skyboxes() {
+    // Every skybox is loaded; the one flagged for the start (or the only one) is shown.
+    const auto refs = level_skyboxes(level_);
+    int initial = refs.size() == 1 ? refs.front().id : -1;
+    for (const SkyboxRef& r : refs) {
+        if (r.initial && initial < 0) initial = r.id;
+        const LoadedModel* lm = model(r.model);
+        if (!lm) continue;
+        // Skyboxes can carry their own animation (Boreas' sandstorm); play its timeline.
+        Placement p;
+        p.model = r.model;
+        p.object = "skybox";
+        const std::string key = to_lower(r.model);
+        if (!animations_.count(key)) {
+            std::unique_ptr<AnimationLibrary> lib;
+            try {
+                lib = std::make_unique<AnimationLibrary>(load_animation(vfs_.read(vfs_.find(key).front())));
+            } catch (const std::exception&) {
+            }
+            if (lib && lib->tracks.empty() && lib->values.empty()) lib.reset();
+            animations_[key] = std::move(lib);
+        }
+        if (animations_[key]) p.anim_file = r.model;
+        skyboxes_.push_back({r.id, add_instance(*lm, glm::mat4(1), &p, true)});
+    }
+    stats_.skyboxes = skyboxes_.size();
+    if (!set_skybox(initial)) set_skybox(skyboxes_.empty() ? -1 : skyboxes_.front().id);
+}
+
+bool Scene::set_skybox(int id) {
+    bool found = false;
+    for (const Skybox& s : skyboxes_) {
+        const Instance& inst = instances_[s.instance];
+        found = found || s.id == id;
+        for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].visible = s.id == id;
+    }
+    return found;
+}
+
+// CNovaSceneManager::UpdateLights, per instance: the light probe at the bounds centre, and
+// the nearest light (measured from the edge of its range), blended with the next one
+// when the object is inside both.
+void Scene::compute_object_lighting() {
+    for (Instance& inst : instances_) {
+        if (!inst.draw_count) continue;
+        glm::vec3 center(0);
+        for (size_t i = 0; i < inst.draw_count; ++i) center += draws_[inst.first_draw + i].center;
+        center /= float(inst.draw_count);
+        ObjectLighting& L = inst.lighting;
+        L.center = center;
+        L.probe = irradiance_parameters(sample_irradiance(irradiance_, center));
+        int best = -1, second = -1;
+        float best_d = 0, second_d = 0;
+        for (size_t i = 0; i < lights_.size(); ++i) {
+            const float d = glm::distance(center, lights_[i].position) - lights_[i].radius;
+            if (best < 0 || d < best_d) {
+                second = best, second_d = best_d;
+                best = int(i), best_d = d;
+            } else if (second < 0 || d < second_d) {
+                second = int(i), second_d = d;
+            }
+        }
+        L.has_light = best >= 0;
+        if (!L.has_light) continue;
+        const PointLight& a = lights_[size_t(best)];
+        L.l0_position = a.position;
+        L.l0_color = a.diffuse;
+        L.l0_attenuation = a.attenuation;
+        L.l0_scale = glm::vec3(1);
+        if (second >= 0 && second_d < 0 && best_d < 0) {
+            const PointLight& b = lights_[size_t(second)];
+            const float t = best_d / (second_d + best_d);
+            L.l0_position = t * a.position + (1 - t) * b.position;
+            L.l0_color = a.diffuse + (1 - t) * (b.diffuse - a.diffuse);
+        }
     }
 }
 
@@ -313,7 +424,8 @@ void Scene::pose(AnimatedInstance& a) {
     float t = 0;
     if (a.library) {
         const float len = a.clip.end - a.clip.start;
-        t = a.clip.start + (len > 0 ? std::fmod(a.time * 1000.0f, len) : 0.0f);
+        const float ms = a.time * 1000.0f;
+        t = a.clip.start + (len <= 0 ? 0.0f : a.loop ? std::fmod(ms, len) : std::min(ms, len));
     }
     for (size_t n = 0; n < m.cpu.nodes.size(); ++n) {   // parents come before children
         const ModelNode& node = m.cpu.nodes[n];
@@ -321,6 +433,19 @@ void Scene::pose(AnimatedInstance& a) {
         if (a.tracks[n]) sample_tracks(*a.tracks[n], t, p);
         const glm::mat4 parent = m.parent[n] < 0 ? a.placement : a.world[m.parent[n]];
         a.world[n] = parent * local_matrix(p.translation, p.rotation, p.scale);
+    }
+    float v[16];
+    for (const auto& vb : a.values) {
+        if (vb.track->stride > 16) continue;
+        sample_value(*vb.track, t, v);
+        if (vb.material >= 0) {
+            ParamOverride& o = a.overrides[size_t(vb.material)][size_t(vb.slot)];
+            for (int c = 0; c < o.count; ++c) o.value[c] = v[c];
+        } else if (vb.light >= 0) {
+            // CCustomColladaLightSceneNode: a black light is switched off.
+            const glm::vec3 rgb(v[0], vb.track->stride > 1 ? v[1] : v[0], vb.track->stride > 2 ? v[2] : v[0]);
+            lights_[size_t(vb.light)].diffuse = glm::vec4(rgb, 1) * vb.intensity;
+        }
     }
     for (size_t s = 0; s < m.cpu.skins.size(); ++s) {
         const Skin& sk = m.cpu.skins[s];
@@ -348,6 +473,10 @@ void Scene::update(float dt, const glm::vec3& camera) {
         pose(*a);
     }
     for (LodInstance& li : lod_instances_) select_lods(li, camera);
+    for (size_t i = 0; i < light_sources_.size(); ++i) {
+        const LightSource& s = light_sources_[i];
+        if (s.anim) lights_[i].position = glm::vec3(s.anim->world[size_t(s.node)][3]);
+    }
 }
 
 void Scene::build_collision() {
@@ -391,7 +520,6 @@ void Scene::load_level(const std::string& lvc_name) {
     }
     draws_.clear();
     draw_materials_.clear();
-    probes_.clear();
     irradiance_.clear();
     // Irradiance volumes belong to level objects: <level>_<object id>.irr, relative to the object.
     const std::string stem = lvc_name.substr(0, lvc_name.rfind('.'));
@@ -409,12 +537,28 @@ void Scene::load_level(const std::string& lvc_name) {
     stats_.irradiance_volumes = irradiance_.size();
     animated_.clear();
     lod_instances_.clear();
+    instances_.clear();
+    skyboxes_.clear();
+    lights_.clear();
+    light_sources_.clear();
+    for (const LevelLight& l : level_lights(level_, gol_)) {
+        // CLightComponent::Load: attenuation (1, 1 / radius, 0).
+        PointLight pl;
+        pl.position = l.position;
+        pl.diffuse = l.color * l.intensity;
+        pl.attenuation = {1, l.radius > 0 ? 1.0f / l.radius : 0.0f, 0};
+        pl.radius = l.radius;
+        pl.fake = l.fake;
+        lights_.push_back(pl);
+        light_sources_.push_back({nullptr, -1, pl.position});
+    }
     for (const Placement& p : model_placements(level_, gol_)) {
-        const std::string m = to_lower(p.model);
-        if (m.find("sky") != std::string::npos || m.find("_sun") != std::string::npos) continue;   // skyboxes later
         ++stats_.placements;
         if (const LoadedModel* lm = model(p.model)) add_instance(*lm, placement_matrix(p.transform), &p);
     }
+    load_skyboxes();
+    compute_object_lighting();
+    stats_.lights = lights_.size();
     stats_.draws = draws_.size();
     stats_.lod_hidden = 0;
     for (const DrawItem& d : draws_) stats_.lod_hidden += !d.visible;

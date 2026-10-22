@@ -64,6 +64,19 @@ bool semantic_for(const std::string& uniform, Semantic& semantic, int& light) {
     return true;
 }
 
+bool object_override_for(const std::string& param, Semantic& semantic) {
+    using S = Semantic;
+    static const std::unordered_map<std::string, Semantic> kParams = {
+        {"SpecDirection", S::SpecDirection}, {"SpecColor", S::SpecColor}, {"RimFactor", S::RimFactor},
+        {"L0_Pos", S::L0PositionObject}, {"L0_PosW", S::L0PositionWorld}, {"L0_Color", S::L0Color},
+        {"L0_Att", S::L0Attenuation}, {"L0_LScale", S::L0Scale},
+    };
+    auto it = kParams.find(param);
+    if (it == kParams.end()) return false;
+    semantic = it->second;
+    return true;
+}
+
 void write_uniform(std::vector<uint8_t>& block, uint32_t offset, const std::string& type, const float* v, size_t n) {
     auto put = [&](uint32_t at, const void* src, size_t bytes) {
         if (at + bytes <= block.size()) std::memcpy(block.data() + at, src, bytes);
