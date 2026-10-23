@@ -155,6 +155,14 @@ const Scene::LoadedModel* Scene::model(const std::string& name) {
         }
     }
     build_lod_sets(lm);
+    for (const Mesh& mesh : lm.cpu.meshes) {
+        auto& per_prim = lm.bounds.emplace_back();
+        for (const Primitive& prim : mesh.primitives) {
+            glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+            for (const Vertex& v : prim.vertices) lo = glm::min(lo, v.position), hi = glm::max(hi, v.position);
+            per_prim.emplace_back(lo, hi);
+        }
+    }
     ++stats_.models;
     return &lm;
 }
@@ -183,6 +191,9 @@ glm::mat4 local_matrix(const glm::vec3& t, const glm::quat& r, const glm::vec3& 
 size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p, bool sky) {
     Instance& inst = instances_.emplace_back();
     inst.first_draw = draws_.size();
+    glm::vec3 bounds_min(std::numeric_limits<float>::max()), bounds_max(-std::numeric_limits<float>::max());
+    glm::vec3 local_min = bounds_min, local_max = bounds_max;
+    const glm::mat4 to_local = glm::inverse(placement);
     // Animated if it has an animation clip or any skinned mesh (skins need a joint palette).
     const AnimationLibrary* lib = p && !p->anim_file.empty() ? animation(p->anim_file) : nullptr;
     std::unique_ptr<AnimatedInstance> anim;
@@ -283,6 +294,18 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                 glm::vec3 c(0);
                 for (const auto& v : verts) c += v.position;
                 d.center = glm::vec3(world * glm::vec4(c / float(std::max<size_t>(verts.size(), 1)), 1));
+                const auto [lo, hi] = m.bounds[size_t(mesh)][pi];
+                if (lo.x <= hi.x) {
+                    for (int k = 0; k < 8; ++k) {
+                        const glm::vec3 corner((k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z);
+                        const glm::vec3 w = glm::vec3(world * glm::vec4(corner, 1));
+                        bounds_min = glm::min(bounds_min, w);
+                        bounds_max = glm::max(bounds_max, w);
+                        const glm::vec3 l = glm::vec3(to_local * glm::vec4(w, 1));
+                        local_min = glm::min(local_min, l);
+                        local_max = glm::max(local_max, l);
+                    }
+                }
                 const GpuMaterial* gm = range.material >= 0 ? materials_->get(m.cpu.materials[range.material], skin >= 0) : nullptr;
                 d.material = game_shaders_ ? gm : nullptr;
                 d.lighting = &inst.lighting;
@@ -312,6 +335,14 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         if (!fixed) lod_instances_.push_back(std::move(lods));
     }
     inst.draw_count = draws_.size() - inst.first_draw;
+    if (bounds_min.x <= bounds_max.x) {
+        inst.world_min = bounds_min, inst.world_max = bounds_max;
+        inst.local_min = local_min, inst.local_max = local_max;
+    }
+    if (p && !sky) {
+        inst.zone = zones_.object_zone(p->object_index);
+        if (bounds_min.x <= bounds_max.x) zones_.grow(p->object_index, bounds_min, bounds_max);
+    }
     return instances_.size() - 1;
 }
 
@@ -522,9 +553,13 @@ void Scene::build_collision() {
     stats_.collision_triangles = collision_.triangle_count();
 }
 
-void Scene::load_level(const std::string& lvc_name) {
+void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
+    keep_section(level_, section_mask);
+    level_name_ = lvc_name;
+    section_ = section_mask;
+    stats_ = SceneStats{};
     for (const LevelObject& o : level_.objects) {
         if (o.kind != "level_properties" || o.fields.size() < 8) continue;
         // i, then fog colour as an SColor's bytes (B, G, R, A), fog near, fog far, density.
@@ -555,6 +590,7 @@ void Scene::load_level(const std::string& lvc_name) {
     lod_instances_.clear();
     instances_.clear();
     skyboxes_.clear();
+    zones_.build(level_, gol_);
     lights_.clear();
     light_sources_.clear();
     for (const LevelLight& l : level_lights(level_, gol_)) {
@@ -572,6 +608,24 @@ void Scene::load_level(const std::string& lvc_name) {
     for (const Placement& p : model_placements(level_, gol_)) {
         ++stats_.placements;
         if (const LoadedModel* lm = model(p.model)) object_instances_[p.object_index] = add_instance(*lm, placement_matrix(p.transform), &p);
+    }
+    // Doors with a zone link are portals between the two zones (CDoorAIComponent::
+    // LoadZonesLink): a quad at the centre of the door's bounds, standing up (+90 deg about
+    // X), as wide as the door and 0.3 m taller; it is open while the door is.
+    for (size_t i = 0; i < level_.objects.size(); ++i) {
+        const LevelObject& o = level_.objects[i];
+        auto link = o.components.find(0x72);
+        auto inst = object_instances_.find(i);
+        if (link == o.components.end() || link->second.size() < 2 || inst == object_instances_.end() || !o.base) continue;
+        const int a = link->second[0].i, b = link->second[1].i;
+        if (a == -1 || b == -1) continue;
+        const Instance& in = instances_[inst->second];
+        if (in.world_min.x > in.world_max.x) continue;
+        Transform t = *o.base;
+        t.position = (in.world_min + in.world_max) * 0.5f - glm::vec3(0, 0, 0.15f);
+        t.rotation.x += 90.0f;
+        const float width = in.local_max.x - in.local_min.x, height = in.local_max.z + 0.3f - in.local_min.z;
+        zones_.add_door_portal(i, a, b, placement_matrix(t), width, height);
     }
     load_skyboxes();
     compute_object_lighting();
@@ -655,6 +709,14 @@ size_t Scene::hide_models(const std::string& substring) {
         ++n;
     }
     return n;
+}
+
+void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj) {
+    zones_.update(camera, view_proj);
+    for (const Instance& inst : instances_) {
+        const bool hidden = !zones_.visible(inst.zone);
+        for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].zone_hidden = hidden;
+    }
 }
 
 }  // namespace nova

@@ -52,6 +52,7 @@ struct NavMesh {
 
 struct LevelObject {
     size_t offset = 0;
+    size_t content_end = 0;    // zones / meta zones: end of the records the game skips with them
     int type = 0;
     std::string kind;          // "object", "zone", "nav_mesh", "spawn_point", ...
     std::string name;          // object type name from gol.bin
@@ -70,6 +71,12 @@ struct Level {
 
 Gol load_gol(const Bytes& data);
 Level load_level(const Bytes& data, const Gol& gol);
+
+// Levels are split into sections (bit masks on zone and meta zone records). The game
+// loads one section at a time (LoadLevelSections reloads with another) and skips every
+// zone whose mask misses it, with all the objects up to the next zone record. Keep only
+// what the section `section_mask` loads.
+void keep_section(Level& level, uint32_t section_mask);
 
 // Components including inherited ones (parents first, the type's own entries win).
 std::vector<std::pair<int, int>> resolved_components(const GolType& type, const Gol& gol);

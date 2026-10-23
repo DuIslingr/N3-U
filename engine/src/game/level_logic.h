@@ -32,8 +32,9 @@ public:
     LevelLogic(Scene& scene, Player& player, const Gol& gol);
 
     // Load the scripts and objects of the scene's current level and run its start
-    // scripts. Call after Scene::load_level and spawning the player.
-    void start();
+    // scripts. Call after Scene::load_level and spawning the player. `keep_player`:
+    // a section reload, where the player stays put and the start spawn's script does not run.
+    void start(bool keep_player = false);
     // Advance scripts, triggers and doors by `dt` seconds.
     void update(float dt);
     // The player pressed "use": interact with the nearest usable object, if any.
@@ -50,6 +51,11 @@ public:
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function
     bool level_ended = false;        // EndLevel() was called
+    bool fog_locked = false;         // Fog_SetLock: zone changes keep the current fog
+    // LoadLevelSections(n): the level should reload with section bit n (0: none pending).
+    // The caller reloads the scene and calls start(true).
+    uint32_t pending_section = 0;
+
 
     struct Stats {
         size_t chunks = 0, chunk_errors = 0, objects = 0, triggers = 0, doors = 0, interactive = 0;
@@ -89,7 +95,7 @@ public:
     void show(Object& o, bool on);
     void set_door(Object& o, bool open_now);
     void message(const std::string& text, float seconds);
-    void teleport_player(const glm::vec3& feet, float yaw);
+    void teleport_player(const Object& spawn);
     void start_script(const std::string& function, int owner);
     void send_event_later(const std::string& event, float seconds, int id = -1);
     void fade_fog(int what, glm::vec4 target, float seconds);   // 0 colour, 1 near, 2 far, 3 density
@@ -122,6 +128,10 @@ private:
     } fog_[4];
     std::deque<Message> messages_;
     int properties_id_ = -1, start_spawn_id_ = -1;
+    int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
+    glm::vec4 level_fog_color_{0};
+    float level_fog_start_ = 0, level_fog_end_ = 0, level_fog_density_ = 0;
+    void update_zone_fog();
     Stats stats_;
 };
 

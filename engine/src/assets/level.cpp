@@ -126,7 +126,8 @@ const std::unordered_map<int, std::pair<const char*, Reader>>& level_types() {
              o.base = read_base(st);
              o.fields = st.spec("i c c c c c f f f [c c c c c f f]");
              o.model = st.s();
-             st.i();
+             const int32_t size = st.i();   // bytes of this zone's records (CLevel skips them)
+             o.content_end = st.pos + size_t(std::max(size, 0));
          }}},
         {0x6C, {"spawn_point", [](DictStream& st, LevelObject& o) {
              o.base = read_base(st);
@@ -145,7 +146,8 @@ const std::unordered_map<int, std::pair<const char*, Reader>>& level_types() {
              o.base = read_base(st);
              o.fields = st.spec("[i] i");
              o.model = st.s();
-             st.i();
+             const int32_t size = st.i();
+             o.content_end = st.pos + size_t(std::max(size, 0));
          }}},
         {0xBC1, {"occluder", [](DictStream& st, LevelObject& o) {
              o.base = read_base(st);
@@ -383,6 +385,29 @@ std::vector<LevelLight> level_lights(const Level& level, const Gol& gol) {
         out.push_back(l);
     }
     return out;
+}
+
+void keep_section(Level& level, uint32_t section_mask) {
+    // CLevel: a zone (or meta zone) whose mask misses the section is skipped together
+    // with the records that follow it, `content_end` bytes into the file.
+    std::vector<LevelObject> kept;
+    kept.reserve(level.objects.size());
+    size_t skip_until = 0;
+    for (LevelObject& o : level.objects) {
+        if (o.offset < skip_until) continue;
+        if (o.kind == "zone" || o.kind == "meta_zone") {
+            // Zone: the mask is its first field; meta zone: the int after the zone list.
+            uint32_t mask = 0xFFFFFFFF;
+            if (o.kind == "zone" && o.fields.size() >= 1) mask = uint32_t(o.fields[0].i);
+            if (o.kind == "meta_zone" && o.fields.size() >= 2) mask = uint32_t(o.fields[1].i);
+            if ((mask & section_mask) == 0) {
+                skip_until = o.content_end;
+                continue;
+            }
+        }
+        kept.push_back(std::move(o));
+    }
+    level.objects = std::move(kept);
 }
 
 }  // namespace nova

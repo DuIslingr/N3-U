@@ -13,10 +13,14 @@
 //   nova3 ... --spawn-at ID|X,Y,Z,YAW                              start at a level object, spawn point, waypoint or position
 //   nova3 ... --exec "LUA"                                         run a script snippet once the level has started
 //   nova3 ... --hide-models SUBSTR                                 (debugging) hide placements whose model matches
+//   nova3 ... --no-zones                                           draw every zone (no portal culling)
+//   nova3 ... --section N                                          load level section N (as LoadLevelSections)
+//   nova3 ... --screenshot OUT.bmp --trace-zones                   print the zones, portals and what is visible
 //   nova3 ... --screenshot OUT.bmp --run SECONDS                    run the level logic (standing still) first
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
-// (Space/Ctrl then move up/down), E to use, G to switch game/built-in shaders, Esc to quit.
+// (Space/Ctrl then move up/down), E to use, G to switch game/built-in shaders, Z to toggle
+// zone culling, Esc to quit.
 // The data directory is the game's own files folder (the .gla archives).
 #include <chrono>
 #include <cstdio>
@@ -56,6 +60,9 @@ struct Options {
     std::string spawn_at;
     std::vector<std::string> exec;
     std::vector<std::string> hide_models;
+    bool zones = true;
+    int section = 1;
+    bool trace_zones = false;
     int width = 1600, height = 900;
 };
 
@@ -82,6 +89,9 @@ Options parse(int argc, char** argv) {
         else if (a == "--spawn-at") o.spawn_at = next();
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--hide-models") o.hide_models.push_back(next());
+        else if (a == "--no-zones") o.zones = false;
+        else if (a == "--section") o.section = std::stoi(next());
+        else if (a == "--trace-zones") o.trace_zones = true;
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -187,8 +197,9 @@ int main(int argc, char** argv) {
         {
             Renderer renderer(window, shader_dir);
             Scene scene(vfs, renderer, gol);
-            scene.load_level(opt.level);
+            scene.load_level(opt.level, 1u << (std::max(opt.section, 1) - 1));
             if (opt.builtin_shaders) scene.set_game_shaders(false);
+            scene.zones().enabled = opt.zones;
             if (opt.skybox >= 0 && !scene.set_skybox(opt.skybox)) throw std::runtime_error("no skybox with that id");
             const SceneStats& st = scene.stats();
             const MaterialStats& ms = scene.material_stats();
@@ -221,6 +232,7 @@ int main(int argc, char** argv) {
                 if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
                 std::printf("[script] %s\n", line.c_str());
             };
+            std::printf("zones: %zu zones, %zu portals\n", scene.zones().zones().size(), scene.zones().portals().size());
             if (opt.scripts) {
                 logic.start();
                 const auto& ls = logic.stats();
@@ -241,7 +253,17 @@ int main(int argc, char** argv) {
             for (const std::string& h : opt.hide_models) std::printf("hid %zu placements of *%s*\n", scene.hide_models(h), h.c_str());
             // Level logic at a fixed step, so triggers and doors see every position.
             auto step_logic = [&](float dt) {
-                if (opt.scripts) logic.update(dt);
+                if (!opt.scripts) return;
+                logic.update(dt);
+                if (logic.pending_section) {   // LoadLevelSections: reload, keep the player
+                    const uint32_t section = logic.pending_section;
+                    const glm::vec3 feet = player.center - glm::vec3(0, 0, player.radius.z);
+                    const float yaw = player.yaw;
+                    std::printf("[script] loading level section mask %u\n", section);
+                    scene.load_level(opt.level, section);
+                    player.spawn(feet, yaw);
+                    logic.start(true);
+                }
             };
             constexpr float kPhysicsStep = 1.0f / 120.0f;
 
@@ -263,6 +285,13 @@ int main(int argc, char** argv) {
                     in.forward = i * kPhysicsStep >= 1.0f ? 1.0f : 0.0f;
                     player.update(scene.collision(), in, kPhysicsStep);
                     step_logic(kPhysicsStep);
+                    {   // zone tracking follows the walker
+                        Camera eye = cam;
+                        eye.position = player.eye();
+                        eye.yaw = player.yaw;
+                        const FrameParams wf = frame(eye, opt.width, opt.height);
+                        scene.cull(wf.camera, wf.proj * wf.view);
+                    }
                     travelled += glm::length(glm::vec2(player.center - last));
                     last = player.center;
                     if (i % 60 == 0) {
@@ -281,19 +310,44 @@ int main(int argc, char** argv) {
                     player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     scene.update(kPhysicsStep, cam.position);
+                    Camera eye = cam;
+                    if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw;
+                    const FrameParams rf = frame(eye, opt.width, opt.height);
+                    scene.cull(rf.camera, rf.proj * rf.view);
                 }
                 if (opt.run > 0 && !opt.have_eye && opt.focus.empty()) {
                     cam.position = player.eye();
                     cam.yaw = player.yaw;
                 }
                 scene.update(opt.time, cam.position);
-                const Image img = renderer.render_to_image(scene.draws(), frame(cam, opt.width, opt.height), opt.width, opt.height);
+                const FrameParams shot = frame(cam, opt.width, opt.height);
+                scene.cull(shot.camera, shot.proj * shot.view);
+                if (opt.trace_zones) {
+                    const ZoneSystem& z = scene.zones();
+                    std::printf("camera %.1f %.1f %.1f zone %d (id %d); visible:", shot.camera.x, shot.camera.y, shot.camera.z,
+                                z.current(), z.current() >= 0 ? z.zones()[size_t(z.current())].id : -1);
+                    for (size_t i = 0; i < z.zones().size(); ++i)
+                        if (z.visible(int(i))) std::printf(" %d", z.zones()[i].id);
+                    std::printf("\n");
+                    for (const auto& pt : z.portals())
+                        std::printf("  portal %d zones %d-%d %s center (%.1f %.1f %.1f)%s\n", pt.id, z.zones()[size_t(pt.zone[0])].id,
+                                    z.zones()[size_t(pt.zone[1])].id, pt.enabled ? "open" : "closed", pt.center.x, pt.center.y,
+                                    pt.center.z, pt.door != std::numeric_limits<size_t>::max() ? " (door)" : "");
+                    for (size_t i = 0; i < z.zones().size(); ++i) {
+                        const auto& zz = z.zones()[i];
+                        std::printf("  zone %zu id %d bounds (%.0f %.0f %.0f)-(%.0f %.0f %.0f) portals %zu children %zu\n", i, zz.id,
+                                    zz.min.x, zz.min.y, zz.min.z, zz.max.x, zz.max.y, zz.max.z, zz.portals.size(), zz.children.size());
+                    }
+                }
+                const Image img = renderer.render_to_image(scene.draws(), shot, opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
                 if (opt.bench > 0) {
                     const auto t0 = std::chrono::steady_clock::now();
                     for (int i = 0; i < opt.bench; ++i) {
                         scene.update(1.0f / 60.0f, cam.position);
-                        renderer.render_to_image(scene.draws(), frame(cam, opt.width, opt.height), opt.width, opt.height);
+                        const FrameParams bf = frame(cam, opt.width, opt.height);
+                        scene.cull(bf.camera, bf.proj * bf.view);
+                        renderer.render_to_image(scene.draws(), bf, opt.width, opt.height);
                     }
                     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                     std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
@@ -315,6 +369,7 @@ int main(int argc, char** argv) {
                             if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
                         }
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Z && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
                         }
@@ -356,7 +411,9 @@ int main(int argc, char** argv) {
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     clock += dt;
-                    renderer.render_to_window(scene.draws(), frame(cam, w, h));
+                    const FrameParams f = frame(cam, w, h);
+                    scene.cull(f.camera, f.proj * f.view);
+                    renderer.render_to_window(scene.draws(), f);
                 }
             }
         }

@@ -48,6 +48,7 @@ struct DrawItem {
     bool visible = true;                        // false for LOD levels not currently shown
     bool hidden = false;                        // switched off by game logic (disabled or hidden object)
     bool anim_hidden = false;                   // under a node an animation has made invisible
+    bool zone_hidden = false;                   // its zone cannot be seen from the camera's zone
     const GpuMaterial* material = nullptr;      // game shader; null: built-in shader with diffuse/lightmap
     const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
     bool sky = false;                           // skybox: drawn first, around the camera, at the far depth

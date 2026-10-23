@@ -194,7 +194,21 @@ int api_fog_value(lua_State* L) {   // Fog_SetNear/Far/Density(value, ms)
     return 0;
 }
 int api_teleport_player(lua_State* L) {   // TeleportPlayerToZone(spawn point id)
-    if (auto* o = obj(L, 1)) ctx(L).teleport_player(o->position, o->yaw);
+    if (auto* o = obj(L, 1)) ctx(L).teleport_player(*o);
+    return 0;
+}
+template <bool On>
+int api_portal(lua_State* L) {   // EnablePortal / DisablePortal(id): CZonePortal +8
+    ctx(L).scene.zones().set_portal_enabled(int(lua_tointeger(L, 1)), On);
+    return 0;
+}
+int api_fog_lock(lua_State* L) {   // Fog_SetLock(bool): zones stop changing the fog
+    ctx(L).fog_locked = lua_toboolean(L, 1);
+    return 0;
+}
+int api_load_level_sections(lua_State* L) {   // LoadLevelSections(n, effect): reload with section n
+    const lua_Integer n = lua_tointeger(L, 1);
+    if (n >= 1 && n <= 32 && !(ctx(L).scene.section() & (1u << (n - 1)))) ctx(L).pending_section = 1u << (n - 1);
     return 0;
 }
 int api_end_level(lua_State* L) {
@@ -295,7 +309,10 @@ const Entry kImplemented[] = {
     // Accepted without effect: saving, persistence of state the engine does not have yet.
     {"SaveGame", api_return_now},
     {"ShowProgressSavedMessage", api_return_now},
-    {"Fog_SetLock", api_return_now},
+    {"Fog_SetLock", api_fog_lock},
+    {"EnablePortal", api_portal<true>},
+    {"LoadLevelSections", api_load_level_sections},
+    {"DisablePortal", api_portal<false>},
     {"SetInvulnerable", api_return_now},
 };
 

@@ -143,7 +143,7 @@ void LevelLogic::load_objects() {
     stats_.objects = objects_.size();
 }
 
-void LevelLogic::start() {
+void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
     objects_.clear();
     triggers_.clear();
@@ -152,6 +152,13 @@ void LevelLogic::start() {
     messages_.clear();
     stats_ = {};
     level_ended = false;
+    pending_section = 0;
+    fog_locked = false;
+    fog_zone_ = -2;
+    level_fog_color_ = scene.fog_color;
+    level_fog_start_ = scene.fog_start;
+    level_fog_end_ = scene.fog_end;
+    level_fog_density_ = scene.fog_density;
     load_objects();
     // Apply the starting state: hidden objects are disabled; doors start closed.
     for (auto& [id, o] : objects_) {
@@ -162,8 +169,12 @@ void LevelLogic::start() {
         }
         if (o.door >= 0) scene.play_clip(o.index, "closed", true);
     }
+    // The camera's zone is looked up by position on the first frame (CZonesManager::
+    // UpdateVisibility); only teleports set it. A section reload (LoadLevelSections) puts
+    // the player back where it was; the level's start script runs again, the spawn's does not.
+    scene.zones().force_zone(ZoneSystem::kNone);
     if (properties_id_ >= 0) start_script("Obj" + std::to_string(properties_id_) + "_OnEnter", properties_id_);
-    if (start_spawn_id_ >= 0) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
+    if (start_spawn_id_ >= 0 && !keep_player) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
 }
 
 void LevelLogic::start_script(const std::string& function, int owner) {
@@ -191,7 +202,10 @@ void LevelLogic::message(const std::string& text, float seconds) {
     log("message: " + text);
 }
 
-void LevelLogic::teleport_player(const glm::vec3& feet, float yaw) { player.spawn(feet, yaw); }
+void LevelLogic::teleport_player(const Object& spawn) {
+    player.spawn(spawn.position, spawn.yaw);
+    if (spawn.index != std::numeric_limits<size_t>::max()) scene.zones().force_zone(scene.zones().object_zone(spawn.index));
+}
 
 void LevelLogic::send_event_later(const std::string& event, float seconds, int id) {
     delayed_.push_back({event, id, seconds});
@@ -209,6 +223,26 @@ void LevelLogic::fade_fog(int what, glm::vec4 target, float seconds) {
     f.elapsed = 0;
     f.duration = std::max(seconds, 0.0f);
     f.active = true;
+}
+
+// CLevelFog::UpdateFromZones: the camera's zone sets the fog (its own, or the level's),
+// unless a script has locked it.
+void LevelLogic::update_zone_fog() {
+    const int zone = scene.zones().current();
+    if (zone == fog_zone_ || fog_locked) return;
+    const bool first = fog_zone_ == -2;
+    fog_zone_ = zone;
+    glm::vec4 color = level_fog_color_;
+    float start = level_fog_start_, end = level_fog_end_, density = level_fog_density_;
+    if (zone >= 0) {
+        const ZoneSystem::Fog& f = scene.zones().zones()[size_t(zone)].fog;
+        if (f.override) color = f.color, start = f.start, end = f.end, density = f.density;
+    }
+    const float seconds = first ? 0.0f : 1.0f;
+    fade_fog(0, color, seconds);
+    fade_fog(1, glm::vec4(start), seconds);
+    fade_fog(2, glm::vec4(end), seconds);
+    fade_fog(3, glm::vec4(density), seconds);
 }
 
 void LevelLogic::update_fog(float dt) {
@@ -296,6 +330,7 @@ void LevelLogic::update_doors(float) {
 void LevelLogic::set_door(Object& o, bool open_now) {
     Door& d = doors_[size_t(o.door)];
     if (trace) log((open_now ? "open door " : "close door ") + std::to_string(o.id));
+    scene.zones().set_door_open(o.index, open_now);   // a door is a portal while it is open
     if (open_now) {
         if (d.state == Door::State::Open || d.state == Door::State::Opening) return;
         d.state = Door::State::Opening;
@@ -356,6 +391,7 @@ void LevelLogic::update(float dt) {
     while (!messages_.empty() && messages_.front().seconds_left <= 0) messages_.pop_front();
     update_triggers();
     update_doors(dt);
+    update_zone_fog();
     update_fog(dt);
     runtime_.update(dt * 1000.0f);
 }

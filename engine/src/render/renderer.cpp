@@ -577,7 +577,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     // Sky first, then opaque, then translucent back to front.
     std::vector<const DrawItem*> opaque, blended, sky;
     for (const auto& it : items) {
-        if (!it.visible || it.hidden || it.anim_hidden || !it.model->vertices) continue;
+        if (!it.visible || it.hidden || it.anim_hidden || it.zone_hidden || !it.model->vertices) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
         if (it.sky) sky.push_back(&it);
         else (blend ? blended : opaque).push_back(&it);

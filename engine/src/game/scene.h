@@ -13,6 +13,7 @@
 #include "assets/irradiance.h"
 #include "assets/level.h"
 #include "game/physics.h"
+#include "game/zones.h"
 #include "core/vfs.h"
 #include "render/material_system.h"
 #include "render/renderer.h"
@@ -32,7 +33,10 @@ class Scene {
 public:
     Scene(const Vfs& vfs, Renderer& renderer, const Gol& gol);
 
-    void load_level(const std::string& lvc_name);
+    // Load a level with the given section (bit mask; the game starts with section 1).
+    void load_level(const std::string& lvc_name, uint32_t section_mask = 1);
+    const std::string& level_name() const { return level_name_; }
+    uint32_t section() const { return section_; }
     // Advance animations by `dt` seconds and update the draw items they drive, then
     // pick each model's level of detail for a camera at `camera`.
     void update(float dt, const glm::vec3& camera);
@@ -40,6 +44,11 @@ public:
     const std::vector<DrawItem>& draws() const { return draws_; }
     const Level& level() const { return level_; }
     const CollisionWorld& collision() const { return collision_; }
+
+    // Zone/portal visibility for a camera: hides objects in zones it cannot see.
+    void cull(const glm::vec3& camera, const glm::mat4& view_proj);
+    ZoneSystem& zones() { return zones_; }
+    const ZoneSystem& zones() const { return zones_; }
 
     // Level objects (by index into level().objects), for game logic.
     void set_object_visible(size_t object, bool visible);
@@ -83,6 +92,7 @@ private:
         std::vector<MaterialTextures> materials;
         std::vector<int> parent;                       // per node, -1 for roots (parents come first)
         std::vector<std::vector<int>> joint_nodes;     // per skin, per joint: node index or -1
+        std::vector<std::vector<std::pair<glm::vec3, glm::vec3>>> bounds;   // per mesh, per primitive (local)
 
         // Levels of detail (the game's CColladaRootLODSceneNode): nodes named <set>LOD<n>
         // or <set>LODD; one level of each set is shown, chosen by camera distance.
@@ -165,6 +175,8 @@ private:
         size_t first_draw = 0, draw_count = 0;
         ObjectLighting lighting;
         struct AnimatedInstance* anim = nullptr;
+        int zone = ZoneSystem::kNone;
+        glm::vec3 world_min{0}, world_max{0}, local_min{0}, local_max{0};   // bounds (local: placement space)
     };
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
@@ -184,6 +196,9 @@ private:
     std::unique_ptr<MaterialSystem> materials_;
     bool game_shaders_ = true;
     CollisionWorld collision_;
+    ZoneSystem zones_;
+    std::string level_name_;
+    uint32_t section_ = 1;
     std::vector<std::unique_ptr<AnimatedInstance>> animated_;
     std::vector<LodInstance> lod_instances_;
     std::unordered_map<std::string, std::unique_ptr<AnimationLibrary>> animations_;   // by lowercase name
