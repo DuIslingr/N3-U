@@ -1337,6 +1337,7 @@ const Entry kImplemented[] = {
     {"StartFlashEffect", api_start_flash},
     {"PlayerStartCrystalInteract", api_ignore},   // empty in the game too
     {"SetZNear", api_ignore},                     // reads its argument and does nothing
+    {"HackTurret", api_ignore},                   // Therrius 2 calls it on turrets the level does not have
     {"AddObjective", api_add_objective},
     {"GameObject_Material_SetTechnique", api_material_technique},
     {"GameObject_Material_SetParameterFloat", api_material_float},
