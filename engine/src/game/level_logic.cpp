@@ -327,6 +327,8 @@ void LevelLogic::update_doors(float) {
                 if (d.forced_open || (near && !locked)) set_door(o, true);
                 break;
             case Door::State::Opening:
+                // Half open: walkable, and no longer hides what is behind it.
+                if (scene.clip_progress(o.index) >= 0.5f) scene.set_object_collision(o.index, false);
                 if (scene.clip_finished(o.index)) {
                     d.state = Door::State::Open;
                     scene.set_object_collision(o.index, false);
@@ -356,7 +358,7 @@ void LevelLogic::set_door(Object& o, bool open_now) {
     if (open_now) {
         if (d.state == Door::State::Open || d.state == Door::State::Opening) return;
         d.state = Door::State::Opening;
-        // Its collision (which also hides what is behind it from view rays) goes when it is open.
+        // Its collision (which also hides what is behind it from view rays) goes once half open.
         if (!scene.play_clip(o.index, "opening", false)) {
             d.state = Door::State::Open;
             scene.set_object_collision(o.index, false);

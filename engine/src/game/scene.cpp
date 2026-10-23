@@ -820,6 +820,13 @@ size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float ya
     return index;
 }
 
+float Scene::clip_progress(size_t object) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a) return 1;
+    const float len = a->clip.end - a->clip.start;
+    return len <= 0 ? 1.0f : std::clamp(a->time * 1000.0f / len, 0.0f, 1.0f);
+}
+
 const Scene::AnimatedInstance* Scene::object_anim(size_t object) const {
     auto it = object_instances_.find(object);
     return it == object_instances_.end() ? nullptr : instances_[it->second].anim;

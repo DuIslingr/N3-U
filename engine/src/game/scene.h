@@ -59,6 +59,8 @@ public:
     bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false);
     // The object's current clip has played through (never true for looping clips).
     bool clip_finished(size_t object) const;
+    // How far the object's current clip has played, 0..1 (1 if none).
+    float clip_progress(size_t object) const;
 
     // Create an object of a gol type at runtime (spawn managers); it starts hidden.
     // Returns its index into level().objects.
