@@ -285,6 +285,11 @@ public:
     const Gol& gol;
     ScriptRuntime runtime_;
     std::unordered_map<int, Object> objects_;
+    // The waypoint after `id` on its path (-1 if none).
+    int next_waypoint(int id) const {
+        auto it = waypoint_next_.find(id);
+        return it == waypoint_next_.end() ? -1 : it->second;
+    }
     std::vector<Trigger> triggers_;
     std::vector<Door> doors_;
     std::unordered_set<std::string> warned_;   // unimplemented API functions already reported

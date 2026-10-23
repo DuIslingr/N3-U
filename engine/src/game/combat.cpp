@@ -715,6 +715,34 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
         NpcGoal g;
         g.kind = NpcGoal::Kind::Move, g.pos = wp->position, g.run = true, g.id = -1;
         if (t->goals.size() < 16) t->goals.push_back(g);
+    } else if (order == "jump" || order == "jump_at" || order == "AI_JumpSpecial") {   // a leap to the waypoint
+        const LevelLogic::Object* wp = logic_.object(arg);
+        if (!wp) return false;
+        NpcGoal g;
+        g.kind = NpcGoal::Kind::Jump, g.pos = wp->position, g.id = -1;
+        if (t->goals.size() < 16) t->goals.push_back(g);
+    } else if (order == "walk" || order == "patrol") {
+        // Walking to the waypoint; patrols carry on along its path's following waypoints.
+        int wp_id = arg;
+        for (int k = 0; k < 16 && wp_id > 0 && t->goals.size() < 16; ++k) {
+            const LevelLogic::Object* wp = logic_.object(wp_id);
+            if (!wp) break;
+            NpcGoal g;
+            g.kind = NpcGoal::Kind::Move, g.pos = wp->position, g.run = false, g.id = -1;
+            t->goals.push_back(g);
+            if (order == "walk") break;
+            wp_id = logic_.next_waypoint(wp_id);
+            if (wp_id == arg) break;   // a loop: once round
+        }
+    } else if (order == "set_target") {   // 0: the player
+        return lock_target(npc, arg, true);
+    } else if (order == "take_cover") {
+        t->hold = false, t->choose_timer = 0;
+    } else if (order == "cloack" || order == "decloack" || order == "uncloack") {
+        // Cloaked: unseen and not a target (the original's cloak shader is not ported).
+        const bool cloak = order == "cloack";
+        scene_.set_object_visible(t->object, !cloak);
+        t->invulnerable = cloak;
     } else if (order == "use_machinegun") {
         // Behind the gun, holding there, firing longer bursts.
         const LevelLogic::Object* gun = logic_.object(arg);
