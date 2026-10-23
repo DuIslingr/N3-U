@@ -236,7 +236,7 @@ CollisionWorld::MoveResult CollisionWorld::move(const glm::vec3& position, const
     return r;
 }
 
-bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_z) const {
+bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_z, uint32_t* owner) const {
     std::vector<uint32_t> cand;
     candidates(from - glm::vec3(0.01f, 0.01f, max_dist), from + glm::vec3(0.01f, 0.01f, 0), cand);
     bool any = false;
@@ -255,6 +255,7 @@ bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_
         if (z <= from.z && z >= best) {
             best = z;
             any = true;
+            if (owner) *owner = t.owner;
         }
     }
     hit_z = best;

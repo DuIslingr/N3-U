@@ -43,7 +43,8 @@ public:
                     const glm::vec3& gravity, float sliding = 0.0005f) const;
 
     // Nearest hit of a downward ray from `from`, within `max_dist`; returns false if none.
-    bool ray_down(const glm::vec3& from, float max_dist, float& hit_z) const;
+    // `owner` (if given) receives the hit triangle's owner.
+    bool ray_down(const glm::vec3& from, float max_dist, float& hit_z, uint32_t* owner = nullptr) const;
     // Owners of triangles with a vertex within `radius` of `p` (diagnostics).
     std::vector<uint32_t> owners_near(const glm::vec3& p, float radius) const;
     // First hit along the segment from -> to, as a fraction of its length; false if none.

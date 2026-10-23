@@ -256,7 +256,7 @@ void ZoneSystem::reach(int zone, const Frustum& frustum, int via, const glm::vec
     }
 }
 
-void ZoneSystem::update(const glm::vec3& camera, const glm::mat4& view_proj) {
+void ZoneSystem::update(const glm::vec3& camera, const glm::mat4& view_proj, int floor_zone) {
     culling_ = false;
     if (!enabled || zones_.empty()) {
         visible_.assign(zones_.size(), 1);
@@ -288,6 +288,9 @@ void ZoneSystem::update(const glm::vec3& camera, const glm::mat4& view_proj) {
         current_ = zone_at(camera);
     }
     if (current_ == kNone) current_ = zone_at(camera);
+    // Standing on a zone's own geometry settles it: portal quads don't always cover the
+    // whole way through, and zone bounds overlap.
+    if (floor_zone != kNone && size_t(floor_zone) < zones_.size() && !zones_[size_t(floor_zone)].meta) current_ = floor_zone;
     last_camera_ = camera;
     have_camera_ = true;
 

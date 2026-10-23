@@ -23,6 +23,8 @@
 // zone culling, Esc to quit.
 // The data directory is the game's own files folder (the .gla archives).
 #include <chrono>
+#include <cstring>
+#include <random>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -34,6 +36,7 @@
 
 #include "core/vfs.h"
 #include "game/combat.h"
+#include "game/navmesh.h"
 #include "game/player.h"
 #include "game/level_logic.h"
 #include "game/scene.h"
@@ -52,6 +55,7 @@ struct Options {
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
+    int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
     float time = 0;           // advance animations by this many seconds before a screenshot
     bool have_eye = false;
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
@@ -101,6 +105,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--combat-test") o.combat_test = std::stof(next());
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
+        else if (a == "--audit") o.audit = std::stoi(next());
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -161,7 +166,9 @@ struct Camera {
     FrameParams frame(int w, int h) const {
         FrameParams f;
         f.view = glm::lookAt(position, position + forward(), {0, 0, 1});
-        f.proj = glm::perspectiveRH_ZO(glm::radians(65.0f), float(w) / float(std::max(h, 1)), 0.05f, 8000.0f);
+        // Reversed depth (near -> 1, far -> 0) spreads the float depth buffer's precision
+        // evenly; near and far are swapped on purpose.
+        f.proj = glm::perspectiveRH_ZO(glm::radians(65.0f), float(w) / float(std::max(h, 1)), 8000.0f, 0.05f);
         f.camera = position;
         return f;
     }
@@ -292,6 +299,93 @@ int main(int argc, char** argv) {
             if (!opt.focus.empty() && !focus_camera(scene, gol, opt.focus, cam.position, cam.yaw, cam.pitch))
                 throw std::runtime_error("no placement matching " + opt.focus);
 
+            if (opt.audit > 0) {
+                // Walk random paths on the nav mesh like a player would (zone tracking follows
+                // portal crossings) and, every 2 m, render with zone culling on and off. Views
+                // where culling hides what is really in view are saved for inspection.
+                Navigation nav;
+                nav.build(scene.level());
+                std::mt19937 rng(7);
+                const std::string dir = "work/engine_test/audit";
+                SDL_CreateDirectory(dir.c_str());
+                int bad = 0, samples = 0, flips = 0, steps_since_change = 0;
+                const int w = 320, h = 180;
+                // Holes: with no sky and a magenta clear colour, pixels that show nothing with
+                // culling on but geometry with it off.
+                scene.set_skybox(-999999);
+                auto magenta = [](const Image& img, size_t i) {
+                    return img.rgba[i] > 240 && img.rgba[i + 1] < 15 && img.rgba[i + 2] > 240;
+                };
+                auto diff = [&](const Image& a, const Image& b) {
+                    size_t n = 0;
+                    for (size_t i = 0; i < a.rgba.size(); i += 4) n += magenta(a, i) && !magenta(b, i);
+                    return float(n) / float(a.rgba.size() / 4);
+                };
+                for (int pi = 0; pi < opt.audit && !nav.empty(); ++pi) {
+                    std::vector<glm::vec3> path;
+                    glm::vec3 a, b;
+                    int ta = -1, tb = -1;
+                    for (int tries = 0; tries < 50; ++tries) {
+                        ta = int(std::uniform_int_distribution<size_t>(0, nav.triangle_count() - 1)(rng));
+                        tb = int(std::uniform_int_distribution<size_t>(0, nav.triangle_count() - 1)(rng));
+                        a = nav.center(ta), b = nav.center(tb);
+                        if (glm::distance(a, b) > 15 && nav.find_path(ta, a, tb, b, path)) break;
+                        path.clear();
+                    }
+                    if (path.empty()) continue;
+                    path.insert(path.begin(), a);
+                    float since = 2;
+                    Camera eye;
+                    for (size_t k = 0; k + 1 < path.size(); ++k) {
+                        const glm::vec3 p0 = path[k], p1 = path[k + 1];
+                        const float len = glm::distance(p0, p1);
+                        const glm::vec3 dir3 = len > 0 ? (p1 - p0) / len : glm::vec3(0, 1, 0);
+                        for (float t = 0; t < len; t += 0.25f) {
+                            eye.position = p0 + dir3 * t + glm::vec3(0, 0, 1.65f);
+                            eye.yaw = glm::degrees(std::atan2(-dir3.x, dir3.y));
+                            FrameParams f = frame(eye, w, h);
+                            f.clear = {1, 0, 1, 1};
+                            scene.cull(f.camera, f.proj * f.view);
+                            {   // zone flips: A -> B -> A within a few steps
+                                static std::vector<int> recent;
+                                const int z = scene.zones().current();
+                                if (recent.empty() || recent.back() != z) {
+                                    if (recent.size() >= 2 && recent[recent.size() - 2] == z && steps_since_change < 8) ++flips;
+                                    recent.push_back(z);
+                                    steps_since_change = 0;
+                                }
+                                ++steps_since_change;
+                            }
+                            if ((since += 0.25f) < 2) continue;
+                            since = 0;
+                            ++samples;
+                            const Image on = renderer.render_to_image(scene.draws(), f, w, h);
+                            scene.zones().enabled = false;
+                            scene.cull(f.camera, f.proj * f.view);
+                            const Image off = renderer.render_to_image(scene.draws(), f, w, h);
+                            scene.zones().enabled = true;
+                            scene.cull(f.camera, f.proj * f.view);
+                            const float d = diff(on, off);
+                            if (d < 0.01f) continue;
+                            ++bad;
+                            const int z = scene.zones().current();
+                            char name[256];
+                            std::snprintf(name, sizeof name, "%s/%03d_%.0f_%.0f_%.0f_y%.0f_zone%d_%.0fpct.bmp", dir.c_str(), bad,
+                                          eye.position.x, eye.position.y, eye.position.z, eye.yaw,
+                                          z >= 0 ? scene.zones().zones()[size_t(z)].id : -1, d * 100);
+                            Image both{w * 2, h, std::vector<uint8_t>(size_t(w) * 2 * h * 4)};
+                            for (int y = 0; y < h; ++y) {
+                                std::memcpy(&both.rgba[(size_t(y) * w * 2) * 4], &on.rgba[size_t(y) * w * 4], size_t(w) * 4);
+                                std::memcpy(&both.rgba[(size_t(y) * w * 2 + w) * 4], &off.rgba[size_t(y) * w * 4], size_t(w) * 4);
+                            }
+                            save_bmp(both, name);
+                            std::printf("audit: %s\n", name);
+                        }
+                    }
+                }
+                std::printf("audit: %d of %d views have holes from zone culling; %d quick zone flips\n", bad, samples, flips);
+                return 0;
+            }
             if (opt.walk_test > 0) {
                 // Settle for a second, then walk forward; report the path.
                 const glm::vec3 start = player.center;

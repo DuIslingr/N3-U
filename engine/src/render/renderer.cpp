@@ -386,7 +386,7 @@ SDL_GPUGraphicsPipeline* Renderer::material_pipeline(const GpuMaterial& m, SDL_G
     pi.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;   // as in GL
     pi.depth_stencil_state.enable_depth_test = m.state.depth_test;
     pi.depth_stencil_state.enable_depth_write = m.state.depth_write;
-    pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
     pi.target_info.color_target_descriptions = &ct;
     pi.target_info.num_color_targets = 1;
     pi.target_info.depth_stencil_format = kDepthFormat;
@@ -438,7 +438,7 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
         pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;   // TODO: match the game's winding and cull
         pi.depth_stencil_state.enable_depth_test = true;
         pi.depth_stencil_state.enable_depth_write = !blend;
-        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
         pi.target_info.color_target_descriptions = &ct;
         pi.target_info.num_color_targets = 1;
         pi.target_info.depth_stencil_format = kDepthFormat;
@@ -479,7 +479,7 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
         pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
         pi.depth_stencil_state.enable_depth_test = additive;
         pi.depth_stencil_state.enable_depth_write = false;
-        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
         pi.target_info.color_target_descriptions = &ct;
         pi.target_info.num_color_targets = 1;
         pi.target_info.depth_stencil_format = kDepthFormat;
@@ -611,7 +611,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
-    depth.clear_depth = 1.0f;
+    depth.clear_depth = 0.0f;   // reversed depth: near 1, far 0
     depth.load_op = SDL_GPU_LOADOP_CLEAR;
     depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
     depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
@@ -728,8 +728,9 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     };
     if (!sky.empty()) {
         // CCustomSkyBoxSceneNode::renderInternal: each sky mesh at its own transform plus the
-        // camera position, with the depth range squeezed to 0.999999 (behind everything else).
-        SDL_GPUViewport vp{0, 0, float(w), float(h), 0.999999f, 0.999999f};
+        // camera position, with the depth range squeezed to 0.999999 (behind everything else;
+        // with reversed depth that is just above 0).
+        SDL_GPUViewport vp{0, 0, float(w), float(h), 0.000001f, 0.000001f};
         SDL_SetGPUViewport(pass, &vp);
         for (const DrawItem* it : sky) {
             DrawItem moved = *it;

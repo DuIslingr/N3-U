@@ -903,7 +903,11 @@ size_t Scene::hide_models(const std::string& substring) {
 }
 
 void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj) {
-    zones_.update(camera, view_proj);
+    int floor_zone = ZoneSystem::kNone;
+    float floor_z = 0;
+    uint32_t owner = 0;
+    if (collision_.ray_down(camera, 8.0f, floor_z, &owner)) floor_zone = zones_.object_zone(owner);
+    zones_.update(camera, view_proj, floor_zone);
     for (const Instance& inst : instances_) {
         if (inst.draw_count && draws_[inst.first_draw].sky) continue;
         const bool hidden = !zones_.box_visible(inst.zone, inst.world_min, inst.world_max);

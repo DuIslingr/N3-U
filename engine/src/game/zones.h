@@ -64,7 +64,9 @@ public:
     int object_zone(size_t object) const { return object < object_zone_.size() ? object_zone_[object] : kNone; }
 
     // Track the camera and compute the visible zones.
-    void update(const glm::vec3& camera, const glm::mat4& view_proj);
+    // `floor_zone`: the zone of the object under the camera (kNone if unknown). A real
+    // (non-meta) zone there decides the camera's zone; otherwise portal crossings do.
+    void update(const glm::vec3& camera, const glm::mat4& view_proj, int floor_zone = kNone);
     bool visible(int zone) const { return zone == kNone || (size_t(zone) < visible_.size() && visible_[size_t(zone)]); }
     // An object's bounds seen through one of the frustums its zone was reached by (CZone
     // keeps them); global objects are tested against the camera's frustum.

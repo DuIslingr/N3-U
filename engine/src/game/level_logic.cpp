@@ -335,6 +335,7 @@ void LevelLogic::update_doors(float) {
                 if (scene.clip_finished(o.index)) {
                     d.state = Door::State::Closed;
                     scene.play_clip(o.index, "closed", true);
+                    scene.zones().set_door_open(o.index, false);
                 }
                 break;
         }
@@ -344,7 +345,8 @@ void LevelLogic::update_doors(float) {
 void LevelLogic::set_door(Object& o, bool open_now) {
     Door& d = doors_[size_t(o.door)];
     if (trace) log((open_now ? "open door " : "close door ") + std::to_string(o.id));
-    scene.zones().set_door_open(o.index, open_now);   // a door is a portal while it is open
+    // A door is an open portal from the moment it starts opening until it has fully closed.
+    if (open_now) scene.zones().set_door_open(o.index, true);
     if (open_now) {
         if (d.state == Door::State::Open || d.state == Door::State::Opening) return;
         d.state = Door::State::Opening;
@@ -358,6 +360,7 @@ void LevelLogic::set_door(Object& o, bool open_now) {
         if (!scene.play_clip(o.index, "opening", false, true)) {
             d.state = Door::State::Closed;
             scene.play_clip(o.index, "closed", true);
+            scene.zones().set_door_open(o.index, false);
         }
         if (o.visible) scene.set_object_collision(o.index, true);
     }

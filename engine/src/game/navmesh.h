@@ -20,6 +20,7 @@ public:
     void build(const Level& level);
     bool empty() const { return tris_.empty(); }
     size_t triangle_count() const { return tris_.size(); }
+    glm::vec3 center(int tri) const { return tris_[size_t(tri)].center; }
 
     // The triangle containing `p` in XY whose surface is closest in height (within
     // `max_dz`), or -1.
