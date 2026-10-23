@@ -261,6 +261,10 @@ public:
     bool cinematic_mode = false;     // StartCinematic .. EndCinematic
     // PlayerLookTo(waypoint, ms): turn the player's view to a point.
     void player_look_to(const glm::vec3& at, float seconds);
+    void ramp_param(size_t object, const std::string& param, float from, float to, float seconds) {
+        std::erase_if(param_ramps_, [&](const ParamRamp& r) { return r.object == object && r.param == param; });
+        param_ramps_.push_back({object, param, from, to, std::max(seconds, 1e-3f), 0});
+    }
     // PostEffect_HeatHazeStart(ms, object) / Stop(ms) (CLevel::UpdatePostEffect_HeatHaze):
     // the haze grows over ms; with an object, it is strongest while the player faces it.
     void heat_haze(bool start, float ms, int object = -1) {
@@ -405,6 +409,14 @@ private:
     bool fading_ = false, fade_in_ = true;
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
+    // GameObject_Material_SetParameterAnimatedFloat: a parameter run from one value to
+    // another over a time (CMaterialComponent::Update).
+    struct ParamRamp {
+        size_t object = 0;
+        std::string param;
+        float from = 0, to = 0, seconds = 1, elapsed = 0;
+    };
+    std::vector<ParamRamp> param_ramps_;
     struct HeatHaze {
         float now = 0, max = 0;   // ms grown, ms to grow
         bool stopping = true;

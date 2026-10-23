@@ -270,6 +270,7 @@ void LevelLogic::start(bool keep_player) {
         const uint32_t version = post.grading_version;
         post = PostParams{}, post.grading_version = version + 1, post_fades_.clear();
         heat_ = HeatHaze{};
+        param_ramps_.clear();
         grading_.dirty = true;
     }
     if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
@@ -1146,6 +1147,11 @@ void LevelLogic::update_heat_haze(float dt) {
 }
 
 void LevelLogic::update(float dt) {
+    for (ParamRamp& r : param_ramps_) {
+        r.elapsed = std::min(r.elapsed + dt, r.seconds);
+        scene.set_object_param(r.object, r.param, glm::vec4(r.from + (r.to - r.from) * r.elapsed / r.seconds), 1);
+    }
+    std::erase_if(param_ramps_, [](const ParamRamp& r) { return r.elapsed >= r.seconds; });
     update_grading(dt);
     update_heat_haze(dt);
     update_vehicles(dt);

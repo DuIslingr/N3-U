@@ -393,6 +393,30 @@ int api_npc_super_speed(lua_State* L) {
     if (c.combat) c.combat->npc_order(int(lua_tointeger(L, 1)), "teleport", int(lua_tointeger(L, 2)), true);
     return 0;
 }
+// GameObject_Material_*(object, material, ...): CMaterialComponent's per-object material
+// changes. Parameters apply to the object's materials that have them.
+int api_material_technique(lua_State* L) {   // (object, material, technique)
+    if (LevelLogic::Object* o = obj(L, 1)) {
+        const bool ok = ctx(L).scene.set_object_technique(o->index, str_arg(L, 2), str_arg(L, 3));
+        if (ctx(L).trace) ctx(L).log("technique " + str_arg(L, 2) + " -> " + str_arg(L, 3) + (ok ? "" : " (failed)"));
+    }
+    return 0;
+}
+int api_material_float(lua_State* L) {   // (object, material, param, value)
+    if (LevelLogic::Object* o = obj(L, 1)) ctx(L).scene.set_object_param(o->index, str_arg(L, 3), glm::vec4(float(lua_tonumber(L, 4))), 1);
+    return 0;
+}
+int api_material_vector3(lua_State* L) {   // (object, material, param, x, y, z)
+    if (LevelLogic::Object* o = obj(L, 1))
+        ctx(L).scene.set_object_param(o->index, str_arg(L, 3),
+                                      glm::vec4(float(lua_tonumber(L, 4)), float(lua_tonumber(L, 5)), float(lua_tonumber(L, 6)), 0), 3);
+    return 0;
+}
+int api_material_animated_float(lua_State* L) {   // (object, material, param, from, to, ms)
+    if (LevelLogic::Object* o = obj(L, 1))
+        ctx(L).ramp_param(o->index, str_arg(L, 3), float(lua_tonumber(L, 4)), float(lua_tonumber(L, 5)), float(lua_tonumber(L, 6)) / 1000.0f);
+    return 0;
+}
 int api_heat_haze_start(lua_State* L) {   // PostEffect_HeatHazeStart(ms, object)
     ctx(L).heat_haze(true, float(lua_tointeger(L, 1)), lua_isnumber(L, 2) ? int(lua_tointeger(L, 2)) : -1);
     return 0;
@@ -1142,6 +1166,10 @@ const Entry kImplemented[] = {
     {"PlayerLookTo", api_player_look_to},
     {"PlayerLookToDirection", api_player_look_to_direction},
     {"AddObjective", api_add_objective},
+    {"GameObject_Material_SetTechnique", api_material_technique},
+    {"GameObject_Material_SetParameterFloat", api_material_float},
+    {"GameObject_Material_SetParameterVector3", api_material_vector3},
+    {"GameObject_Material_SetParameterAnimatedFloat", api_material_animated_float},
     {"SetAttractionDirection", api_set_attraction},
     {"Vehicle_Deactivate", api_vehicle_deactivate},
     {"NPCSuperSpeedToWaypoint", api_npc_super_speed},

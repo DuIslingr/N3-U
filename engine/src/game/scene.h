@@ -96,6 +96,9 @@ public:
     bool set_object_lightmap(size_t object, const std::string& texture);
     // A material parameter of every draw of the object (SetFogZColor), first `count` components.
     void set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count);
+    // GameObject_Material_SetTechnique: draw the object's `material` with another technique
+    // of its effect (false if it has no such material or technique).
+    bool set_object_technique(size_t object, const std::string& material, const std::string& technique);
     // Draw the object as the first-person view model (in front of the world, no zone).
     void set_object_viewmodel(size_t object);
     std::vector<std::string> node_names(size_t object) const;
@@ -143,6 +146,8 @@ public:
     struct DrawInfo {
         std::string name;
         glm::vec3 min{0}, max{0};
+        const Material* source = nullptr;   // the model's material, for technique switches
+        bool skinned = false;
     };
     const std::vector<DrawInfo>& draw_info() const { return draw_info_; }
 
@@ -294,6 +299,7 @@ private:
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
     std::unordered_set<size_t> moving_;                   // objects moved by move_object
     std::deque<GpuMaterial> material_copies_;              // materials with a swapped lightmap
+    std::deque<Material> material_variants_;               // model materials with another technique
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
     void light_instance(Instance& inst, const glm::vec3& center);
     struct Skybox {

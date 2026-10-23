@@ -374,6 +374,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                     }
                 }
                 const GpuMaterial* gm = range.material >= 0 ? materials_->get(m.cpu.materials[range.material], skin >= 0) : nullptr;
+                if (range.material >= 0) info.source = &m.cpu.materials[range.material], info.skinned = skin >= 0;
                 d.material = game_shaders_ ? gm : nullptr;
                 d.lighting = &inst.lighting;
                 d.sky = sky;
@@ -1208,6 +1209,32 @@ bool Scene::set_object_lightmap(size_t object, const std::string& name) {
         }
         d.lightmap = lm;
         any = true;
+    }
+    return any;
+}
+
+bool Scene::set_object_technique(size_t object, const std::string& material, const std::string& technique) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !game_shaders_) return false;
+    const Instance& inst = instances_[it->second];
+    bool any = false;
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count; ++i) {
+        const DrawInfo& info = draw_info_[i];
+        if (!info.source || info.source->id != material) continue;
+        const Material* variant = info.source;
+        if (info.source->technique != technique) {
+            auto v = std::find_if(material_variants_.begin(), material_variants_.end(), [&](const Material& m) {
+                return m.id == material && m.effect == info.source->effect && m.technique == technique && m.diffuse == info.source->diffuse &&
+                       m.lightmap == info.source->lightmap;
+            });
+            if (v == material_variants_.end()) {
+                material_variants_.push_back(*info.source);
+                material_variants_.back().technique = technique;
+                v = material_variants_.end() - 1;
+            }
+            variant = &*v;
+        }
+        if (const GpuMaterial* gm = materials_->get(*variant, info.skinned)) draws_[i].material = gm, any = true;
     }
     return any;
 }
