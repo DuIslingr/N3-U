@@ -239,6 +239,11 @@ private:
     std::vector<std::unique_ptr<AnimatedInstance>> animated_;
     std::vector<LodInstance> lod_instances_;
     std::vector<DistanceFade> fades_;
+    struct Corona {
+        size_t draw;
+        float fade;                                 // ms, 0..200
+    };
+    std::vector<Corona> coronas_;
     std::deque<std::vector<ParamOverride>> fade_values_;   // overrides of fading draws on static instances
     std::unordered_map<std::string, std::unique_ptr<AnimationLibrary>> animations_;   // by lowercase name
     std::unordered_map<std::string, LoadedModel> models_;            // by lowercase file name

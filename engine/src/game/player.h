@@ -25,6 +25,8 @@ public:
     float yaw = 0, pitch = 0;       // degrees; yaw 0 looks along +Y, positive turns left
     float vertical_speed = 0;
     bool on_ground = false;
+    // Wedged (pushing but hardly moving): move by Irrlicht's one-sided rule for a while.
+    float stuck_time = 0, escape_time = 0;
 
     // Place the player standing on the floor at `feet`.
     void spawn(const glm::vec3& feet, float yaw_deg);

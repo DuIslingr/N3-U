@@ -11,6 +11,7 @@ void Player::spawn(const glm::vec3& feet, float yaw_deg) {
     pitch = 0;
     vertical_speed = 0;
     on_ground = false;
+    stuck_time = escape_time = 0;
 }
 
 glm::vec3 Player::view_forward() const {
@@ -37,7 +38,13 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
     const bool rising = vertical_speed > 0;
     if (on_ground && !rising) vertical.z = std::min(vertical.z, -step_snap);   // stay on stairs and slopes
 
-    const auto r = world.move(center, radius, step, vertical);
+    const auto r = world.move(center, radius, step, vertical, 0.0005f, escape_time > 0);
+    // Stuck detection: asked to move, but went less than a fifth of the way.
+    const float wanted = glm::length(glm::vec2(step)), moved = glm::length(glm::vec2(r.position - center));
+    if (wanted > 1e-4f && moved < wanted * 0.2f) stuck_time += dt;
+    else stuck_time = std::max(stuck_time - dt, 0.0f);
+    escape_time = std::max(escape_time - dt, 0.0f);
+    if (stuck_time > 0.6f) escape_time = 0.5f, stuck_time = 0;
     if (rising) {
         // A rising sweep that hits something is a ceiling, not a floor.
         if (!r.falling) vertical_speed = 0;

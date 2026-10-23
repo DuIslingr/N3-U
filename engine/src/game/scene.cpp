@@ -578,6 +578,19 @@ void Scene::update(float dt, const glm::vec3& camera) {
         pose(*a);
     }
     for (LodInstance& li : lod_instances_) select_lods(li, camera);
+    // CCoronasControllerNode: a ray from the camera to each corona; seen, it fades in
+    // over 200 ms, blocked it fades out four times faster.
+    for (Corona& c : coronas_) {
+        DrawItem& d = draws_[c.draw];
+        bool seen = d.visible && !d.hidden && !d.anim_hidden && !d.zone_hidden;
+        if (seen) {
+            const glm::vec3 to = d.center + glm::normalize(camera - d.center) * 0.3f;
+            float t = 1;
+            seen = glm::distance(camera, d.center) < 0.3f || !collision_.raycast(camera, to, t);
+        }
+        c.fade = std::clamp(c.fade + (seen ? 1.0f : -4.0f) * dt * 1000.0f, 0.0f, 200.0f);
+        d.occluded = c.fade <= 0;
+    }
     for (DistanceFade& f : fades_) {
         if (f.anim) {
             const glm::mat4& w = f.anim->world[size_t(f.node)];
@@ -705,6 +718,10 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     }
     load_skyboxes();
     compute_object_lighting();
+    // Coronas: additive sprites drawn without depth testing (CCoronasControllerNode).
+    coronas_.clear();
+    for (size_t i = 0; i < draws_.size(); ++i)
+        if (draws_[i].material && !draws_[i].material->state.depth_test && !draws_[i].sky) coronas_.push_back({i, 0.0f});
     stats_.lights = lights_.size();
     stats_.draws = draws_.size();
     stats_.lod_hidden = 0;

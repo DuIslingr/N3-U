@@ -329,6 +329,7 @@ void LevelLogic::update_doors(float) {
             case Door::State::Opening:
                 if (scene.clip_finished(o.index)) {
                     d.state = Door::State::Open;
+                    scene.set_object_collision(o.index, false);
                     const bool ok = scene.play_clip(o.index, "open", true);
                     if (trace) log("door " + std::to_string(id) + " open" + (ok ? "" : " (no clip)"));
                 }
@@ -355,8 +356,11 @@ void LevelLogic::set_door(Object& o, bool open_now) {
     if (open_now) {
         if (d.state == Door::State::Open || d.state == Door::State::Opening) return;
         d.state = Door::State::Opening;
-        if (!scene.play_clip(o.index, "opening", false)) d.state = Door::State::Open;
-        scene.set_object_collision(o.index, false);
+        // Its collision (which also hides what is behind it from view rays) goes when it is open.
+        if (!scene.play_clip(o.index, "opening", false)) {
+            d.state = Door::State::Open;
+            scene.set_object_collision(o.index, false);
+        }
     } else {
         if (d.state == Door::State::Closed || d.state == Door::State::Closing) return;
         // There is no closing clip: "opening" plays backwards. Collision returns at once,

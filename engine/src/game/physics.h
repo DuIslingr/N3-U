@@ -39,8 +39,9 @@ public:
     };
     // Move an ellipsoid (centre `position`, radii `radius`) by `velocity`, sliding along
     // what it touches, then by `gravity` (both are displacements for this step).
+    // `one_sided`: the movement passes through triangles it meets from behind.
     MoveResult move(const glm::vec3& position, const glm::vec3& radius, const glm::vec3& velocity,
-                    const glm::vec3& gravity, float sliding = 0.0005f) const;
+                    const glm::vec3& gravity, float sliding = 0.0005f, bool one_sided = false) const;
 
     // Nearest hit of a downward ray from `from`, within `max_dist`; returns false if none.
     // `owner` (if given) receives the hit triangle's owner.

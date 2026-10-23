@@ -42,6 +42,7 @@ struct CollisionWorld::Data {
     glm::vec3 intersection;
     float sliding = 0.0005f;
     int hits = 0;
+    bool one_sided = false;               // only front faces block (Irrlicht's rule)
     std::vector<uint32_t> cand;
 };
 
@@ -117,8 +118,12 @@ glm::vec3 CollisionWorld::collide(int depth, Data& d, const glm::vec3& pos, cons
         const float nlen = glm::length(n);
         if (nlen < 1e-12f) continue;
         n /= nlen;
-        // Two-sided: test the side facing the movement (Irrlicht only tests front faces).
-        if (glm::dot(n, d.normalized_velocity) > 0) n = -n;
+        // Two-sided: test the side facing the movement. Irrlicht only tests front faces
+        // (normal against the movement); escaping a trap uses that rule.
+        if (glm::dot(n, d.normalized_velocity) > 0) {
+            if (d.one_sided) continue;
+            n = -n;
+        }
         const float plane_d = -glm::dot(n, A);
 
         float t0, t1;
@@ -219,12 +224,14 @@ glm::vec3 CollisionWorld::collide(int depth, Data& d, const glm::vec3& pos, cons
 }
 
 CollisionWorld::MoveResult CollisionWorld::move(const glm::vec3& position, const glm::vec3& radius, const glm::vec3& velocity,
-                                                const glm::vec3& gravity, float sliding) const {
+                                                const glm::vec3& gravity, float sliding, bool one_sided) const {
     Data d;
     d.eradius = radius;
     d.sliding = sliding;
     MoveResult r;
+    d.one_sided = one_sided;
     glm::vec3 p = collide(0, d, position / radius, velocity / radius);
+    d.one_sided = false;   // the gravity sweep keeps floors solid
     r.hit = d.hits > 0;
     r.falling = false;
     if (gravity != glm::vec3(0)) {
