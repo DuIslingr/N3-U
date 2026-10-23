@@ -56,6 +56,7 @@ public:
     struct Message {
         std::string id, text;        // the script's id, and its text (or the id when untranslated)
         float seconds_left = 0;
+        std::string speaker;         // voice-over lines: who speaks ("Kal" for VO_KAL_...)
     };
     StringTable strings;             // MAIN and the level's table (English)
     InputScheme input = default_input_scheme();   // prompts are worded for it
@@ -320,6 +321,7 @@ private:
     bool dialog_active_ = false;
     int dialog_voice_ = -1;
     float dialog_wait_ = 0;
+    std::string dialog_line_;   // the line being spoken
     void update_dialog(float dt);
     // Paths: waypoint chains (each waypoint's next) and CPathComponent objects (id -> first waypoint).
     std::unordered_map<int, int> waypoint_next_, path_first_;

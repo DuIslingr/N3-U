@@ -501,6 +501,7 @@ int main(int argc, char** argv) {
             };
             TextRenderer menu_title(vfs, renderer, "Days.ttf", std::max(20.0f, float(opt.height) * 0.06f));
             TextRenderer objective_text(vfs, renderer, "Days.ttf", std::max(13.0f, float(opt.height) * 0.026f));
+            TextRenderer dialogue(vfs, renderer, "Days.ttf", std::max(13.0f, float(opt.height) * 0.024f));
             // HUD_StartFrost / HUD_StopFrost: the frost spreads or melts over time.
             uint32_t frost_serial = 0;
             auto update_frost = [&](float dt) {
@@ -520,6 +521,7 @@ int main(int argc, char** argv) {
                     subtitles.set_size(std::max(16.0f, float(h) * 0.032f));
                     menu_title.set_size(std::max(20.0f, float(h) * 0.06f));
                     objective_text.set_size(std::max(13.0f, float(h) * 0.026f));
+                    dialogue.set_size(std::max(13.0f, float(h) * 0.024f));
                 }
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
@@ -573,7 +575,14 @@ int main(int argc, char** argv) {
                     const float a = std::clamp(m.seconds_left / 0.4f, 0.0f, 1.0f);
                     if (m.text.find('^') != std::string::npos)   // touch prompts: button glyphs inline
                         hud.draw_prompt(hud_sprites, subtitles, m.text, {float(w) * 0.5f, float(h) * 0.8f}, {1, 1, 1, a});
-                    else {   // from 80% down, raised as needed to keep every line on screen
+                    else if (!m.speaker.empty()) {   // dialogue: "Name: line", left-aligned low on the screen
+                        const std::string name = m.speaker + ": ";
+                        const float x = float(w) * 0.082f, nw = dialogue.measure(name, w).x;
+                        const int wrap = int(float(w) * 0.84f - nw);
+                        const float y = std::min(float(h) * 0.8f, float(h) * 0.97f - dialogue.measure(m.text, wrap).y);
+                        dialogue.draw(hud_sprites, name, {x, y}, w, {1.0f, 0.62f, 0.15f, a}, {0.0f, 0.0f});
+                        dialogue.draw(hud_sprites, m.text, {x + nw, y}, wrap, {1, 1, 1, a}, {0.0f, 0.0f});
+                    } else {   // from 80% down, raised as needed to keep every line on screen
                         const int wrap = int(float(w) * 0.7f);
                         const float y = std::min(float(h) * 0.8f, float(h) * 0.97f - subtitles.measure(m.text, wrap).y);
                         subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, y}, wrap, {1, 1, 1, a});

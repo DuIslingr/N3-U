@@ -377,7 +377,21 @@ void LevelLogic::message(const std::string& id, float seconds) {
             text.replace(at, end - at + 1, key);
         }
     }
-    messages_.push_back({id, text, seconds});
+    // Voice-over lines name their speaker: VO_<code>_..., the code standing for one of
+    // MAIN's STR_NAME_* entries (inferred from the ids and the reference footage).
+    std::string speaker;
+    if (id.rfind("VO_", 0) == 0) {
+        static const std::pair<const char*, const char*> kSpeakers[] = {
+            {"KAL", "NAME_KAL"},         {"YEL", "NAME_YELENA"},  {"RUF", "NAME_RUFUS"},    {"MAZ", "NAME_MAZRAH"},
+            {"BEC", "NAME_BECKER"},      {"PRO", "NAME_PROMETHEUS"}, {"CHA", "NAME_CHAO"},  {"WIL", "NAME_WILCOX"},
+            {"THU", "NAME_BOREAS_THUG"}, {"BOR", "NAME_BOREAS_THUG"}, {"BOSS", "NAME_THUG_BOSS"}, {"VOL", "NAME_VOLTERITE"},
+            {"OVE", "NAME_OVERSEER"}};
+        const size_t end = id.find('_', 3);
+        const std::string code = id.substr(3, end == std::string::npos ? std::string::npos : end - 3);
+        for (const auto& [c, name] : kSpeakers)
+            if (code == c) speaker = strings.find(name);
+    }
+    messages_.push_back({id, text, seconds, speaker});
     while (messages_.size() > 8) messages_.pop_front();
     log("message: " + id + (text != id ? " \"" + text + "\"" : ""));
 }
@@ -920,7 +934,11 @@ void LevelLogic::dialog(const std::vector<std::string>& lines) {
 
 void LevelLogic::update_dialog(float dt) {
     if (!dialog_active_) return;
-    if (dialog_voice_ >= 0 && audio && audio->playing(dialog_voice_)) return;
+    if (dialog_voice_ >= 0 && audio && audio->playing(dialog_voice_)) {
+        // The line's subtitle stays while its voice lasts.
+        if (!messages_.empty() && messages_.back().id == dialog_line_) messages_.back().seconds_left = std::max(messages_.back().seconds_left, 0.5f);
+        return;
+    }
     dialog_voice_ = -1;
     if ((dialog_wait_ -= dt) > 0) return;
     if (dialog_.empty()) {
@@ -930,6 +948,7 @@ void LevelLogic::update_dialog(float dt) {
     }
     const std::string line = dialog_.front();
     dialog_.pop_front();
+    dialog_line_ = line;
     dialog_voice_ = audio ? audio->play(line) : -1;
     // Without a voice the line stays up for a few seconds; after one, a short pause.
     dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : 3.0f;
