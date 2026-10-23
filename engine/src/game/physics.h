@@ -49,7 +49,10 @@ public:
     // Owners of triangles with a vertex within `radius` of `p` (diagnostics).
     std::vector<uint32_t> owners_near(const glm::vec3& p, float radius) const;
     // First hit along the segment from -> to, as a fraction of its length; false if none.
-    bool raycast(const glm::vec3& from, const glm::vec3& to, float& t) const;
+    // `material` / `normal` (if given) receive the hit triangle's material byte and its
+    // unit normal facing the ray's start.
+    bool raycast(const glm::vec3& from, const glm::vec3& to, float& t, uint8_t* material = nullptr,
+                 glm::vec3* normal = nullptr) const;
 
 private:
     struct Data;

@@ -274,7 +274,7 @@ bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_
     return any;
 }
 
-bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& t) const {
+bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& t, uint8_t* material, glm::vec3* normal) const {
     std::vector<uint32_t> cand;
     candidates(glm::min(from, to), glm::max(from, to), cand);
     const glm::vec3 dir = to - from;
@@ -298,6 +298,11 @@ bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& 
         if (h >= 0 && h < t) {
             t = h;
             any = true;
+            if (material) *material = tri.material;
+            if (normal) {
+                const glm::vec3 n = glm::normalize(glm::cross(e1, e2));
+                *normal = glm::dot(n, dir) > 0 ? -n : n;
+            }
         }
     }
     return any;

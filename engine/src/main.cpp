@@ -34,6 +34,7 @@
 #include <SDL3/SDL_main.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "audio/audio.h"
 #include "core/vfs.h"
 #include "game/combat.h"
 #include "game/navmesh.h"
@@ -50,6 +51,9 @@ struct Options {
     std::string data = "work/data";
     std::string level = "Ship_01.lvc";
     std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
+    bool sound_check = false;           // decode every sound in the sound table and exit
+    bool mute = false;
+    std::string sound_render;           // headless: mix the run's sounds into this WAV file
     std::string screenshot;
     float walk_test = 0;
     bool log_player = false;    // print the player's state every second (interactive)
@@ -99,6 +103,9 @@ Options parse(int argc, char** argv) {
         else if (a == "--spawn-at") o.spawn_at = next();
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--effect") o.effects.push_back(next());
+        else if (a == "--sound-check") o.sound_check = true;
+        else if (a == "--mute") o.mute = true;
+        else if (a == "--sound-render") o.sound_render = next();
         else if (a == "--hide-models") o.hide_models.push_back(next());
         else if (a == "--no-zones") o.zones = false;
         else if (a == "--section") o.section = std::stoi(next());
@@ -176,6 +183,20 @@ struct Camera {
     }
 };
 
+// 16-bit stereo WAV from interleaved float samples.
+bool save_wav(const std::vector<float>& samples, int rate, const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const uint32_t data = uint32_t(samples.size() * 2);
+    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
+    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    std::fwrite("RIFF", 1, 4, f), u32(36 + data), std::fwrite("WAVEfmt ", 1, 8, f);
+    u32(16), u16(1), u16(2), u32(uint32_t(rate)), u32(uint32_t(rate) * 4), u16(4), u16(16);
+    std::fwrite("data", 1, 4, f), u32(data);
+    for (float x : samples) u16(uint16_t(int16_t(std::lround(std::clamp(x, -1.0f, 1.0f) * 32767.0f))));
+    return std::fclose(f) == 0;
+}
+
 bool save_bmp(const Image& img, const std::string& path) {
     SDL_Surface* s = SDL_CreateSurfaceFrom(img.width, img.height, SDL_PIXELFORMAT_ABGR8888,
                                            const_cast<uint8_t*>(img.rgba.data()), img.width * 4);
@@ -204,6 +225,15 @@ int main(int argc, char** argv) {
         Vfs vfs;
         if (vfs.mount_directory(opt.data) == 0) throw std::runtime_error("no .gla archives in " + opt.data);
         const Gol gol = load_gol(vfs.read("gol.bin"));
+        if (opt.sound_check) {
+            Audio audio(vfs, false);
+            const auto failed = audio.check_all();
+            size_t n = 0;
+            for (const SoundDef& sd : audio.table().sounds) n += sd.uid >= 0;
+            std::printf("sound table: %zu sounds, %zu events; %zu failed to decode\n", n, audio.table().events.size(), failed.size());
+            for (const std::string& f : failed) std::printf("  %s\n", f.c_str());
+            return failed.empty() ? 0 : 1;
+        }
 
         const bool headless = !opt.screenshot.empty();
         SDL_Window* window = nullptr;
@@ -250,6 +280,13 @@ int main(int argc, char** argv) {
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             LevelLogic logic(scene, player, gol);
+            std::unique_ptr<Audio> audio;
+            if ((!headless && !opt.mute) || !opt.sound_render.empty()) {
+                audio = std::make_unique<Audio>(vfs, opt.sound_render.empty());
+                if (audio->enabled()) logic.audio = audio.get();
+                audio->trace = !opt.sound_render.empty();
+            }
+            std::vector<float> rendered;   // --sound-render
             if (opt.scripts) post_params = &logic.post;
             logic.trace = opt.trace_scripts;
             logic.log = [&opt](const std::string& line) {
@@ -477,10 +514,22 @@ int main(int argc, char** argv) {
                         }
                     }
                     scene.update(kPhysicsStep, cam.position);
+                    if (logic.audio && !opt.sound_render.empty()) {
+                        logic.audio->set_listener(player.eye(), player.view_forward(), glm::vec3(0, 0, 1));
+                        const int frames = int(std::lround(double(t + kPhysicsStep) * logic.audio->rate())) -
+                                           int(std::lround(double(t) * logic.audio->rate()));
+                        const size_t at = rendered.size();
+                        rendered.resize(at + size_t(frames) * 2);
+                        logic.audio->render(rendered.data() + at, frames);
+                    }
                     Camera eye = cam;
                     if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw;
                     const FrameParams rf = frame(eye, opt.width, opt.height);
                     scene.cull(rf.camera, rf.proj * rf.view);
+                }
+                if (!opt.sound_render.empty() && logic.audio) {
+                    if (!save_wav(rendered, logic.audio->rate(), opt.sound_render)) throw std::runtime_error("cannot write " + opt.sound_render);
+                    std::printf("wrote %s (%.1f s of sound)\n", opt.sound_render.c_str(), double(rendered.size() / 2) / logic.audio->rate());
                 }
                 if (opt.list_actors && opt.scripts)
                     for (const std::string& line : combat.describe())
@@ -618,16 +667,17 @@ int main(int argc, char** argv) {
                         if (opt.log_player && (log_timer += dt) >= 1.0f) {
                             log_timer = 0;
                             std::printf("player (%.2f %.2f %.2f) yaw %.0f %s, input fwd %.0f right %.0f fire %d, zone %d, "
-                                        "health %.0f%s, shooting %s, ammo %d/%d, enemies %d, %.0f fps (worst %.1f ms)\n",
+                                        "health %.0f%s, shooting %s, ammo %d/%d, enemies %d, %.0f fps (worst %.1f ms), %zu sounds\n",
                                         player.center.x, player.center.y, player.center.z, player.yaw,
                                         player.on_ground ? "ground" : "air", in.forward, in.right, int(fire_held),
                                         scene.zones().current(), combat.player_health, combat.player_dead ? " (dead)" : "",
                                         combat.shoot_enabled ? "on" : "off", combat.ammo_in_clip(), combat.ammo_reserve(),
-                                        combat.enemies_alive(), fps_shown, worst_shown);
+                                        combat.enemies_alive(), fps_shown, worst_shown, logic.audio ? logic.audio->voice_count() : size_t(0));
                             std::fflush(stdout);
                         }
                     }
                     scene.update(dt, cam.position);
+                    if (logic.audio) logic.audio->set_listener(cam.position, cam.forward(), glm::vec3(0, 0, 1));
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     clock += dt;

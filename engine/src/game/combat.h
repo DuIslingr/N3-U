@@ -29,6 +29,13 @@ class Scene;
 class Player;
 class LevelLogic;
 
+// CProjectileComponent: what a hit looks and sounds like, by surface material (the
+// collision triangles' material byte).
+struct Impacts {
+    std::unordered_map<int, std::string> effects;
+    std::unordered_map<int, std::vector<std::string>> sounds;
+};
+
 struct WeaponDef {
     std::string name;
     int clip = 30, reserve = 210;      // reserve -1: unlimited
@@ -38,6 +45,10 @@ struct WeaponDef {
     float spread_step = 1.5f;          // degrees added per shot (recovers over time)
     // CProjectileComponent::GetDamage: `near` damage up to near_dist, `far` beyond far_dist.
     float damage_near = 2, damage_far = 1, near_dist = 30, far_dist = 30;
+    // Sounds (CComponentWeapon fire mode): one per shot, or a loop while firing and its end.
+    std::vector<std::string> shot_sounds;
+    std::string reload_sound, loop_sound, end_sound;
+    Impacts impacts;
 };
 
 struct CombatInput {
@@ -117,6 +128,10 @@ private:
         bool spawned = false;          // created by a spawn manager (its body is removed later)
         // CTargetableComponent: particle effects when hit and when killed, at a node.
         std::string hit_effect, hit_node, death_effect, death_node;
+        // CHealthComponent sounds; the NPC weapon's shot sounds (one per burst) and impacts.
+        std::vector<std::string> hurt_sounds, death_sounds, fire_sounds;
+        float hurt_sound_wait = 0;
+        Impacts bolt_impacts;
 
         enum class State { Idle, Chase, Attack, Melee, Hurt, Dying, Dead } state = State::Idle;
         bool aware = false;
@@ -191,6 +206,13 @@ private:
     void die(Target& t);
     // Start a particle effect at `at` with its +Z along `normal`; false if there is no such effect.
     bool effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal = {0, 0, 1});
+    void sound(const std::vector<std::string>& names, const glm::vec3* at);
+    void sound(const std::string& name, const glm::vec3* at) { if (!name.empty()) sound(std::vector<std::string>{name}, at); }
+    // A projectile hitting the level: the material's effect and sound.
+    void impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal);
+    int fire_loop_ = -1;                // the player's looping fire sound
+    std::vector<std::string> player_hurt_sounds_;
+    float player_hurt_wait_ = 0;
     void fire_player(const glm::vec3& eye, const glm::vec3& aim);
     void fire_bolt(Target& t);
     // Ray against targets: index and distance, -1 if none within `max_t`.

@@ -28,6 +28,7 @@ namespace nova {
 class Scene;
 class Player;
 class Combat;
+class Audio;
 
 class LevelLogic {
 public:
@@ -111,6 +112,9 @@ public:
     bool start_effect(Object& o, int index);
     void stop_effect(Object& o, int index);
     void message(const std::string& text, float seconds);
+    // ShowDialogMessage: voice-over lines in order (each shown while its voice plays);
+    // "MessageEnd" is sent after the last.
+    void dialog(const std::vector<std::string>& lines);
     void teleport_player(const Object& spawn);
     void start_script(const std::string& function, int owner);
     void send_event_later(const std::string& event, float seconds, int id = -1);
@@ -119,6 +123,7 @@ public:
     Scene& scene;
     Player& player;
     Combat* combat = nullptr;        // enemies and damage, if the game runs combat
+    Audio* audio = nullptr;          // sound, when there is a device
     std::vector<glm::vec3> actor_positions;   // moving actors (doors open for them too)
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
     PostParams post;
@@ -161,6 +166,17 @@ private:
     } fog_[4];
     std::deque<Message> messages_;
     int properties_id_ = -1, start_spawn_id_ = -1;
+    // Background music (level properties [41], an event of tracks), with a pause between
+    // tracks; it gives way while scripts play action music.
+    std::string music_event_;
+    float music_gap_min_ = 12, music_gap_max_ = 22, music_wait_ = 0;
+    int music_ = -1;
+    void update_music(float dt);
+    std::deque<std::string> dialog_;
+    bool dialog_active_ = false;
+    int dialog_voice_ = -1;
+    float dialog_wait_ = 0;
+    void update_dialog(float dt);
     int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
     glm::vec4 level_fog_color_{0};
     float level_fog_start_ = 0, level_fog_end_ = 0, level_fog_density_ = 0;

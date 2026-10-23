@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 
+#include "audio/audio.h"
 #include "game/level_logic.h"
 #include "game/player.h"
 #include "game/scene.h"
@@ -54,6 +55,28 @@ std::string str(const Value& v, size_t i) {
 // Effect names the targetable components use that the library spells differently.
 std::string effect_name(const std::string& name) {
     return name == "bloody_blood" ? "impact_blood_red" : name;
+}
+
+// gol sound lists: [[name], ...] or [[name, volume], ...].
+std::vector<std::string> sound_list(const Value& v) {
+    std::vector<std::string> out;
+    for (const Value& e : v.list) {
+        if (e.type == Value::String && !e.s.empty()) out.push_back(e.s);
+        else if (e.size() > 0 && e[0].type == Value::String && !e[0].s.empty()) out.push_back(e[0].s);
+    }
+    return out;
+}
+
+// CProjectileComponent [18] material -> effect, [20] material -> sounds.
+Impacts read_impacts(const Value& pr) {
+    Impacts im;
+    if (pr.size() > 18)
+        for (const Value& e : pr[18].list)
+            if (e.size() >= 2 && e[1].type == Value::String) im.effects[e[0].i] = e[1].s;
+    if (pr.size() > 20)
+        for (const Value& e : pr[20].list)
+            if (e.size() >= 2) im.sounds[e[0].i] = sound_list(e[1]);
+    return im;
 }
 
 float yaw_towards(const glm::vec3& from, const glm::vec3& to) {
@@ -129,6 +152,7 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
         if (type.name != "Player") continue;
         if (const Value* h = resolved_template(type, gol_, kCompHealth)) player_max_health = num(*h, 0, 150);
         if (const Value* b = resolved_template(type, gol_, 0x29)) {
+            if (b->size() > 5) player_hurt_sounds_ = sound_list((*b)[5]);
             regen_rate_ = num(*b, 1, 20);
             regen_pause_ = num(*b, 2, 3000) / 1000.0f;
         }
@@ -161,10 +185,15 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
             w.automatic = mode[2].i != 0;
             const int delay = mode[3].i;
             w.interval = delay > 0 ? delay / 1000.0f : 0.1f;
+            if (mode.size() > 18) {
+                w.shot_sounds = sound_list(mode[15]);
+                w.reload_sound = mode[16].s, w.loop_sound = mode[17].s, w.end_sound = mode[18].s;
+            }
             if (auto p = gol_.find(mode[1].i); p != gol_.end()) {
                 if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 4) {
                     w.damage_far = num(*pr, 1, 1), w.damage_near = num(*pr, 2, 2);
                     w.far_dist = num(*pr, 3, 30), w.near_dist = num(*pr, 4, 30);
+                    w.impacts = read_impacts(*pr);
                 }
             }
         }
@@ -238,6 +267,7 @@ void Combat::start() {
         t.pos = obj.position;
         t.yaw = obj.yaw;
         if (!obj.dead) obj.health = num(*health, 0, 10);   // CHealthComponent: max health
+        if (health->size() > 9) t.hurt_sounds = sound_list((*health)[6]), t.death_sounds = sound_list((*health)[9]);
         if (const Value* tg = component(o, kCompTargetable)) {
             t.hit_effect = effect_name(str(*tg, 12).empty() ? str(*tg, 8) : str(*tg, 12));
             t.hit_node = str(*tg, 13);
@@ -288,8 +318,10 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         const int weapon = (*npc)[1][0][0].i;
         if (auto w = gol_.find(weapon); w != gol_.end()) {
             if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
+                if (nw->size() > 22) t.fire_sounds = sound_list((*nw)[22]);
                 if (auto p = gol_.find((*nw)[0].i); p != gol_.end()) {
                     if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 8) {
+                        t.bolt_impacts = read_impacts(*pr);
                         t.ranged = true;
                         t.bolt_damage = num(*pr, 2, 3);
                         t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
@@ -569,6 +601,7 @@ void Combat::fire_bolt(Target& t) {
     std::normal_distribution<float> n(0.0f, 0.05f + 0.004f * dist);
     aim = glm::normalize(aim / std::max(dist, 0.01f) + glm::vec3(n(rng_), n(rng_), n(rng_) * 0.5f));
     bolts_.push_back({muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())});
+    if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
     ++stats_.enemy_shots;
 }
 
@@ -579,6 +612,10 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;
     damage_flash_ = std::min(damage_flash_ + amount / 30.0f + 0.15f, 1.0f);
+    if (player_hurt_wait_ <= 0) {
+        sound(player_hurt_sounds_, nullptr);
+        player_hurt_wait_ = 1.5f;
+    }
     if (player_health <= 0) {
         player_health = 0;
         player_dead = true;
@@ -597,6 +634,11 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
         die(t);
         return;
     }
+    if (t.hurt_sound_wait <= 0 && !t.hurt_sounds.empty()) {
+        const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.6f);
+        sound(t.hurt_sounds, &at);
+        t.hurt_sound_wait = 1.2f;
+    }
     // Flinch now and then.
     if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee &&
         std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f) {
@@ -605,6 +647,22 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
         t.hurt_cooldown = 2.5f;
         play(t, t.clip_hurt, false);
     }
+}
+
+void Combat::sound(const std::vector<std::string>& names, const glm::vec3* at) {
+    if (!logic_.audio || names.empty()) return;
+    Audio::Params p;
+    p.position = at;
+    logic_.audio->play_one_of(names, p);
+}
+
+void Combat::impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal) {
+    auto fx = im.effects.find(material);
+    if (fx == im.effects.end()) fx = im.effects.find(0);
+    if (fx == im.effects.end() || !effect(fx->second, at + normal * 0.02f, normal)) sparks_.push_back({at, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
+    auto sn = im.sounds.find(material);
+    if (sn == im.sounds.end()) sn = im.sounds.find(0);
+    if (sn != im.sounds.end()) sound(sn->second, &at);
 }
 
 bool Combat::effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal) {
@@ -625,6 +683,10 @@ void Combat::die(Target& t) {
     t.token = false;
     ++stats_.kills;
     log("killed " + t.type + " #" + std::to_string(t.id));
+    {
+        const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.6f);
+        sound(t.death_sounds, &at);
+    }
     if (t.actor && !t.clip_deaths.empty()) {
         t.state = Target::State::Dying;
         play(t, t.clip_deaths[std::uniform_int_distribution<size_t>(0, t.clip_deaths.size() - 1)(rng_)], false);
@@ -692,7 +754,9 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
 
     const float range = 300;
     float wall_t = 1;
-    const bool wall = scene_.collision().raycast(eye, eye + dir * range, wall_t);
+    uint8_t material = 0;
+    glm::vec3 normal(0, 0, 1);
+    const bool wall = scene_.collision().raycast(eye, eye + dir * range, wall_t, &material, &normal);
     float target_t = 0;
     glm::vec3 point;
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
@@ -711,8 +775,17 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
         apply_damage(t, dmg, true);
     } else if (wall) {
-        // The AR bullet's impact table picks by surface material; the ship is metal.
-        if (!effect("impact_metal_small", end - dir * 0.02f, -dir)) sparks_.push_back({end, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
+        impact(w.impacts, material, end, normal);
+    }
+    // Shot sounds: automatic weapons loop while the trigger is held.
+    if (!w.loop_sound.empty()) {
+        if (!logic_.audio || !logic_.audio->playing(fire_loop_)) {
+            Audio::Params p;
+            p.loop = 1;
+            fire_loop_ = logic_.audio ? logic_.audio->play(w.loop_sound, p) : -1;
+        }
+    } else {
+        sound(w.shot_sounds, nullptr);
     }
 }
 
@@ -721,6 +794,8 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     last_aim_ = aim;
     update_spawners(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
+    player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
+    for (Target& t : targets_) t.hurt_sound_wait = std::max(t.hurt_sound_wait - dt, 0.0f);
     logic_.actor_positions.clear();
     for (const Target& t : targets_)
         if (t.actor && t.mobile && t.aware && alive(t)) logic_.actor_positions.push_back(t.pos + glm::vec3(0, 0, 1));
@@ -765,7 +840,9 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         const glm::vec3 next = b.pos + b.vel * dt;
         b.life -= dt;
         float t = 1;
-        const bool wall = scene_.collision().raycast(b.pos, next, t);
+        uint8_t material = 0;
+        glm::vec3 normal(0, 0, 1);
+        const bool wall = scene_.collision().raycast(b.pos, next, t, &material, &normal);
         const glm::vec3 end = wall ? b.pos + (next - b.pos) * t : next;
         // Closest approach to the player along this step.
         const glm::vec3 pc = player_center();
@@ -777,7 +854,10 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             damage_player(b.damage, b.pos);
             b.life = 0;
         } else if (wall) {
-            if (!effect("impact_plasma", end, -b.vel)) sparks_.push_back({end, 0.15f, b.color});
+            if (b.owner >= 0 && size_t(b.owner) < targets_.size() && !targets_[size_t(b.owner)].bolt_impacts.effects.empty())
+                impact(targets_[size_t(b.owner)].bolt_impacts, material, end, normal);
+            else if (!effect("impact_plasma", end, normal))
+                sparks_.push_back({end, 0.15f, b.color});
             b.life = 0;
         }
         b.pos = end;
@@ -826,10 +906,19 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             if (reserve >= 0) reserve -= take;
         }
     } else if ((in.reload && clip < w.clip) || (clip <= 0 && in.fire)) {
-        if (reserve != 0) reload_left_ = w.reload_time;
+        if (reserve != 0) {
+            reload_left_ = w.reload_time;
+            sound(w.reload_sound, nullptr);
+        }
     } else if (in.fire && shoot_enabled && fire_cooldown_ <= 0 && clip > 0 && (w.automatic || !trigger_held_)) {
         fire_player(eye, aim);
         fire_cooldown_ = w.interval;
+    }
+    // The fire loop ends when the weapon stops firing (a short gap keeps it going).
+    if (fire_loop_ >= 0 && logic_.audio && (fire_cooldown_ <= 0 || reload_left_ > 0) && !(in.fire && clip > 0 && shoot_enabled)) {
+        logic_.audio->stop(fire_loop_, 30);
+        fire_loop_ = -1;
+        sound(w.end_sound, nullptr);
     }
     trigger_held_ = in.fire;
     float t_hit;
@@ -942,7 +1031,10 @@ void Combat::spawn(SpawnManager& m, size_t slot, const SpawnManager::Entry& e) {
     t.pos = point->position;
     t.yaw = yaw;
     t.spawned = true;
-    if (const Value* health = component(lo, kCompHealth)) o.health = num(*health, 0, 10);
+    if (const Value* health = component(lo, kCompHealth)) {
+        o.health = num(*health, 0, 10);
+        if (health->size() > 9) t.hurt_sounds = sound_list((*health)[6]), t.death_sounds = sound_list((*health)[9]);
+    }
     setup_actor(t, lo);
     t.aware = t.hostile;   // they come to fight
     targets_.push_back(std::move(t));

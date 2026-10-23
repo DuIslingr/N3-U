@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "audio/audio.h"
 #include "game/player.h"
 #include "game/scene.h"
 
@@ -66,6 +68,11 @@ void LevelLogic::load_objects() {
         obj.type = o.kind == "object" ? o.name : o.kind;
         if (o.kind == "level_properties" && !o.fields.list.empty()) {
             properties_id_ = o.fields[0].i;
+            if (o.fields.size() > 44 && o.fields[41].type == Value::String) {
+                music_event_ = o.fields[41].s;
+                while (!music_event_.empty() && music_event_.back() == ' ') music_event_.pop_back();
+                music_gap_min_ = o.fields[43].as_float(), music_gap_max_ = o.fields[44].as_float();
+            }
             continue;
         }
         if (o.kind == "waypoint" && o.fields.size() > 4) {
@@ -212,6 +219,9 @@ bool LevelLogic::set_post_var(const std::string& effect, const std::string& var,
 
 void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
+    if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
+    music_event_.clear();
+    dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
     if (!keep_player) post = PostParams{}, post_fades_.clear();
     objects_.clear();
     triggers_.clear();
@@ -477,7 +487,51 @@ bool LevelLogic::use() {
     return true;
 }
 
+void LevelLogic::dialog(const std::vector<std::string>& lines) {
+    for (const std::string& l : lines) dialog_.push_back(l);
+    dialog_active_ = true;
+}
+
+void LevelLogic::update_dialog(float dt) {
+    if (!dialog_active_) return;
+    if (dialog_voice_ >= 0 && audio && audio->playing(dialog_voice_)) return;
+    dialog_voice_ = -1;
+    if ((dialog_wait_ -= dt) > 0) return;
+    if (dialog_.empty()) {
+        dialog_active_ = false;
+        runtime_.send_event("MessageEnd");
+        return;
+    }
+    const std::string line = dialog_.front();
+    dialog_.pop_front();
+    dialog_voice_ = audio ? audio->play(line) : -1;
+    // Without a voice the line stays up for a few seconds; after one, a short pause.
+    dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : 3.0f;
+    message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
+}
+
+void LevelLogic::update_music(float dt) {
+    if (!audio || music_event_.empty()) return;
+    if (audio->event_playing("env_m_action")) {   // scripted action music has the floor
+        if (music_ >= 0) audio->stop(music_, 3000), music_ = -1;
+        music_wait_ = 4;
+        return;
+    }
+    if (music_ >= 0 && audio->playing(music_)) return;
+    if (music_ >= 0) {   // a track ended: a pause before the next
+        music_ = -1;
+        music_wait_ = music_gap_min_ + float(std::rand()) / float(RAND_MAX) * std::max(music_gap_max_ - music_gap_min_, 0.0f);
+    }
+    if ((music_wait_ -= dt) > 0) return;
+    Audio::Params p;
+    p.fade_in_ms = 2000;
+    music_ = audio->play_event(music_event_, p);
+    if (music_ < 0) music_wait_ = 30;
+}
+
 void LevelLogic::update(float dt) {
+    update_music(dt);
+    update_dialog(dt);
     // PostEffects::Update: variables move linearly to their targets.
     for (PostFade& f : post_fades_) {
         f.elapsed += dt;

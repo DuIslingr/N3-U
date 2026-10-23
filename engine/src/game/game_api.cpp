@@ -9,6 +9,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include "audio/audio.h"
 #include "game/combat.h"
 #include "game/level_logic.h"
 #include "game/player.h"
@@ -244,6 +245,83 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
+// --- sound (VoxSoundManager) ----------------------------------------------------------
+// The game passes a fade time (ms) to every Play; here it fades in loops and music only,
+// so one-shots keep their attack. Defaults as the game's: 4000 ms, StartMusic 0.
+
+Audio::Params sound_params(lua_State* L, const SoundDef* def, int loop_arg, int fade_arg, int fade_default) {
+    Audio::Params p;
+    p.loop = lua_toboolean(L, loop_arg) ? 1 : 0;
+    const float fade = lua_gettop(L) >= fade_arg ? float(lua_tointeger(L, fade_arg)) : float(fade_default);
+    if (p.loop || (def && def->group == 1)) p.fade_in_ms = fade;
+    return p;
+}
+
+float fade_arg(lua_State* L, int arg, int fallback) {
+    return lua_gettop(L) >= arg ? float(lua_tointeger(L, arg)) : float(fallback);
+}
+
+// StartSound(name, loop[, fade ms]).
+int api_start_sound(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (!c.audio) return 0;
+    const std::string name = str_arg(L, 1);
+    c.audio->play(name, sound_params(L, c.audio->table().sound(name), 2, 3, 4000));
+    return 0;
+}
+
+// StopSound(name[, fade ms]) / StopMusic(name[, fade ms]).
+int api_stop_sound(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.audio) c.audio->stop(str_arg(L, 1), fade_arg(L, 2, 4000));
+    return 0;
+}
+
+int api_stop_music(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.audio) c.audio->stop(str_arg(L, 1), fade_arg(L, 2, 0));
+    return 0;
+}
+
+// StartSoundAtWaypoint(name, waypoint, loop[, fade ms]): a 3D sound at the waypoint.
+int api_start_sound_at_waypoint(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (!c.audio) return 0;
+    const std::string name = str_arg(L, 1);
+    Audio::Params p = sound_params(L, c.audio->table().sound(name), 3, 4, 0);
+    const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 2)));
+    if (wp) p.position = &wp->position;
+    c.audio->play(name, p);
+    return 0;
+}
+
+// StartSoundFromEvent(event[, fade ms]) / StopSoundFromEvent(event[, fade ms]).
+int api_start_sound_from_event(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (!c.audio) return 0;
+    Audio::Params p;
+    p.fade_in_ms = fade_arg(L, 2, 4000);
+    c.audio->play_event(str_arg(L, 1), p);
+    return 0;
+}
+
+int api_stop_sound_from_event(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.audio) c.audio->stop(str_arg(L, 1), fade_arg(L, 2, 4000));
+    return 0;
+}
+
+// StartMusic(name, loop[, fade ms]): also the level's current music.
+int api_start_music(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (!c.audio) return 0;
+    std::string name = str_arg(L, 1);
+    while (!name.empty() && name.back() == ' ') name.pop_back();   // "overloading_reactor "
+    Audio::Params p = sound_params(L, c.audio->table().sound(name), 2, 3, 0);
+    c.audio->play(name, p);
+    return 0;
+}
+
 // Particle effects: StartEffect(id[, index]) / StopEffect(id[, index]); id 0 is the player.
 int api_start_effect(lua_State* L) {
     LevelLogic& g = ctx(L);
@@ -347,6 +425,15 @@ int api_show_message(lua_State* L) {
     c.send_event_later("MessageEnd", seconds);
     return 0;
 }
+// ShowDialogMessage(line, line, ..., flag): voice-over lines played in order.
+int api_show_dialog(lua_State* L) {
+    std::vector<std::string> lines;
+    for (int i = 1; i < lua_gettop(L); ++i)
+        if (lua_type(L, i) == LUA_TSTRING && lua_tostring(L, i)[0]) lines.push_back(lua_tostring(L, i));
+    ctx(L).dialog(lines);
+    return 0;
+}
+
 int api_objective(lua_State* L) {
     ctx(L).message("Objective: " + str_arg(L, 1), 5);
     return 0;
@@ -397,6 +484,13 @@ const Entry kImplemented[] = {
     {"GetNoEnemies", api_get_no_enemies},
     {"PostEffect_Enable", api_post_enable},
     {"StartEffect", api_start_effect},
+    {"StartSound", api_start_sound},
+    {"StopSound", api_stop_sound},
+    {"StartSoundAtWaypoint", api_start_sound_at_waypoint},
+    {"StartSoundFromEvent", api_start_sound_from_event},
+    {"StopSoundFromEvent", api_stop_sound_from_event},
+    {"StartMusic", api_start_music},
+    {"StopMusic", api_stop_music},
     {"StopEffect", api_stop_effect},
     {"PostEffect_SetVar", api_post_set_var},
     {"PostEffect_SetParam", api_post_set_param},
@@ -409,7 +503,7 @@ const Entry kImplemented[] = {
     {"GetRandom", api_get_random},
     {"ShowMessage", api_show_message},
     {"ShowMessageEx", api_show_message},
-    {"ShowDialogMessage", api_show_message},
+    {"ShowDialogMessage", api_show_dialog},
     {"AddObjective", api_objective},
     {"AddSecondaryObjective", api_objective},
     {"SetPrimaryObjective", api_objective},
