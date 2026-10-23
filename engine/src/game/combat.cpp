@@ -614,6 +614,41 @@ Combat::Target* Combat::find_target(int id) {
     return nullptr;
 }
 
+bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
+    Target* t = find_target(npc);
+    if (!t || !t->actor) return false;
+    if (order == "follow_mode") t->follow = flag;
+    else if (order == "lock_in_cover" || order == "locked_in_cover" || order == "imobile") t->hold = flag;
+    else if (order == "lock_ai") t->ai_locked = flag;
+    else if (order == "link_region") {
+        t->has_region = false;
+        const LevelLogic::Object* r = arg > 0 ? logic_.object(arg) : nullptr;
+        if (r && r->index < scene_.level().objects.size() && scene_.level().objects[r->index].base) {
+            // The region's box: its scale about its position (taken as half sizes).
+            const glm::vec3 half = glm::abs(scene_.level().objects[r->index].base->scale);
+            t->has_region = true, t->region_min = r->position - half, t->region_max = r->position + half;
+        }
+    } else if (order == "run" || order == "fly") {
+        const LevelLogic::Object* wp = logic_.object(arg);
+        if (!wp) return false;
+        NpcGoal g;
+        g.kind = NpcGoal::Kind::Move, g.pos = wp->position, g.run = true, g.id = -1;
+        if (t->goals.size() < 16) t->goals.push_back(g);
+    } else if (order == "use_machinegun") {
+        // Behind the gun, holding there, firing longer bursts.
+        const LevelLogic::Object* gun = logic_.object(arg);
+        if (!gun) return false;
+        const float y = glm::radians(gun->yaw);
+        t->pos = gun->position + glm::vec3(std::sin(y), -std::cos(y), 0) * 1.0f;
+        t->yaw = gun->yaw, t->hold = true, t->leaping = false;
+        t->burst = std::max(t->burst, 12), t->burst_pause = 0.8f, t->fire_range = std::max(t->fire_range, 60.0f);
+        scene_.set_object_pose(t->object, t->pos, t->yaw);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool Combat::lock_target(int npc, int target, bool on) {
     Target* t = find_target(npc);
     if (!t || !t->actor) return false;
@@ -876,6 +911,10 @@ void Combat::update_actor(Target& t, float dt) {
         run_goal(t, dt);
         return;
     }
+    if (t.ai_locked) {   // lock_ai: stands as it is
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
     if (t.attacks == 0 && t.locked < 0) return;
     if ((t.choose_timer -= dt) <= 0) t.choose_timer = 0.4f, t.enemy = choose_enemy(t);
     glm::vec3 target, chest;
@@ -891,7 +930,7 @@ void Combat::update_actor(Target& t, float dt) {
     } else {
         t.lost_sight += dt;
     }
-    if (t.mobile && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
+    if (t.mobile && !t.hold && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
             glm::vec3 to;
             const int tri = nav_.nearest(t.pos, 15.0f, to);
@@ -914,6 +953,13 @@ void Combat::update_actor(Target& t, float dt) {
     const bool idle = !t.aware || t.enemy == kNoEnemy || (!t.hostile && !sees && t.locked < 0);
     if (idle) {
         if (!t.hostile) {   // allies: leave whatever the scripts play alone, unless they were fighting
+            const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+            if (t.follow && !t.hold && t.mobile && glm::distance(glm::vec2(t.pos), glm::vec2(feet)) > 5.0f) {
+                t.state = S::Chase;   // follow_mode: keep up with the player
+                go_towards(t, feet, 3.0f, dt);
+                scene_.set_object_pose(t.object, t.pos, t.yaw);
+                return;
+            }
             if (t.state != S::Idle) t.state = S::Idle, play(t, t.clip_idle, true);
             return;
         }
@@ -985,35 +1031,43 @@ void Combat::update_actor(Target& t, float dt) {
             t.state = S::Attack, t.timer = 0;
             break;
         }
-        if (!t.mobile || nav_.empty() || t.tri < 0) {
+        if (!t.mobile || t.hold || nav_.empty() || t.tri < 0) {
             face(t, target, dt);
             play(t, t.clip_alert, true);
             break;
         }
-        t.repath -= dt;
-        const bool crossing = t.path_next < t.path_off_mesh.size() && t.path_off_mesh[t.path_next];
-        if (!crossing && (t.repath <= 0 || glm::distance(t.path_goal, target) > 2.0f)) {
-            t.repath = 0.5f;
-            glm::vec3 goal;
-            const int goal_tri = nav_.nearest(target + glm::vec3(0, 0, 0.3f), 4.0f, goal);
-            t.path.clear();
-            t.path_next = 0;
-            if (goal_tri >= 0 &&
-                nav_.find_path(t.tri, t.pos, goal_tri, goal, t.path, [this](int door) { return logic_.door_passable(door); },
-                               &t.path_off_mesh))
-                t.path_goal = target;
-        }
-        if (t.path_next < t.path.size() && dist > (t.ranged ? 1.5f : t.melee_range * 0.8f)) {
-            play(t, t.clip_run, true);
-            move_along_path(t, dt);
-        } else {
-            face(t, target, dt);
-            play(t, t.clip_alert, true);
-        }
+        // Within its region (link_region): as close to the enemy as the box allows.
+        glm::vec3 goal = target;
+        if (t.has_region) goal = glm::vec3(glm::clamp(glm::vec2(target), glm::vec2(t.region_min), glm::vec2(t.region_max)), target.z);
+        go_towards(t, goal, t.ranged ? 1.5f : t.melee_range * 0.8f, dt);
+        if (t.has_region && t.path_next >= t.path.size()) face(t, target, dt);
         break;
     }
     }
     scene_.set_object_pose(t.object, t.pos, t.yaw);
+}
+
+void Combat::go_towards(Target& t, const glm::vec3& target, float stop, float dt) {
+    t.repath -= dt;
+    const bool crossing = t.path_next < t.path_off_mesh.size() && t.path_off_mesh[t.path_next];
+    if (!crossing && (t.repath <= 0 || glm::distance(t.path_goal, target) > 2.0f)) {
+        t.repath = 0.5f;
+        glm::vec3 goal;
+        const int goal_tri = nav_.nearest(target + glm::vec3(0, 0, 0.3f), 4.0f, goal);
+        t.path.clear();
+        t.path_next = 0;
+        if (goal_tri >= 0 && t.tri >= 0 &&
+            nav_.find_path(t.tri, t.pos, goal_tri, goal, t.path, [this](int door) { return logic_.door_passable(door); },
+                           &t.path_off_mesh))
+            t.path_goal = target;
+    }
+    if (t.path_next < t.path.size() && glm::distance(glm::vec2(t.pos), glm::vec2(target)) > stop) {
+        play(t, t.clip_run, true);
+        move_along_path(t, dt);
+    } else {
+        face(t, target, dt);
+        play(t, t.hostile || t.aware ? t.clip_alert : t.clip_idle, true);
+    }
 }
 
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {

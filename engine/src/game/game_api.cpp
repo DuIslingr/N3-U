@@ -88,6 +88,12 @@ int api_send_event(lua_State* L) {
     if (c.trace) c.log("SendEvent " + std::to_string(id) + " " + name);
     c.runtime_.send_event(name, id);
     c.start_script("Obj" + std::to_string(id) + "_" + name, id);
+    // Orders to NPCs (CAIComponent::OnEvent): a waypoint/region/gun id or a flag after the name.
+    if (c.combat && lua_gettop(L) >= 2) {
+        const int arg = lua_isnumber(L, 3) ? int(lua_tointeger(L, 3)) : 0;
+        const bool flag = lua_gettop(L) < 3 || lua_toboolean(L, 3) != 0;
+        c.combat->npc_order(id, name, arg, flag);
+    }
     return 0;
 }
 

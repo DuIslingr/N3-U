@@ -118,6 +118,10 @@ public:
     float awareness_factor = 1;
     // LockTarget / IgnoreTarget (object ids; 0 is the player). False if `npc` is no actor.
     bool lock_target(int npc, int target, bool on);
+    // SendEvent orders to an NPC: follow_mode, lock_in_cover/locked_in_cover/imobile,
+    // lock_ai (bool); link_region (ai_region id, 0 none); run/fly (waypoint);
+    // use_machinegun (gun). False if `npc` is no actor or the event is not an order.
+    bool npc_order(int npc, const std::string& order, int arg, bool flag);
     bool ignore_target(int npc, int target, bool on);
     bool player_invulnerable = false;  // debugging (--god)
     float player_health = 150, player_max_health = 150;
@@ -200,7 +204,11 @@ private:
         int enemy = kNoEnemy;
         int locked = -1;               // object id; 0 the player; -1 none
         std::vector<int> ignored;      // object ids; 0 the player
-        float choose_timer = 0, awareness = 0;          // created by a spawn manager (its body is removed later)
+        float choose_timer = 0, awareness = 0;
+        // Script orders (SendEvent): follow the player, hold the position (cover, a
+        // mounted gun), AI off, keep within an ai_region box.
+        bool follow = false, hold = false, ai_locked = false, has_region = false;
+        glm::vec3 region_min{0}, region_max{0};          // created by a spawn manager (its body is removed later)
         // CTargetableComponent: particle effects when hit and when killed, at a node.
         std::string hit_effect, hit_node, death_effect, death_node;
         // CHealthComponent sounds; the NPC weapon's shot sounds (one per burst) and impacts.
@@ -276,6 +284,8 @@ private:
     void move_along_path(Target& t, float dt, float speed_scale = 1);
     void run_goal(Target& t, float dt);
     void path_to(Target& t, const glm::vec3& goal);
+    // Run along the nav mesh towards `goal` (repathing as it moves), stopping `stop` away.
+    void go_towards(Target& t, const glm::vec3& goal, float stop, float dt);
     void stay_on_mesh(Target& t);
     void face(Target& t, const glm::vec3& towards, float dt);
     static constexpr int kNoEnemy = -2;
