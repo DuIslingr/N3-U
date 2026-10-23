@@ -44,6 +44,40 @@ void Hud::start() {
         scene_.set_object_visible(frost_object_, false);
     }
     frost_ = frost_target_ = 0, frost_max = 1, frost_shown_ = false;
+    damage_ = scene_.spawn_model("hud_damage.bdae", true, "hud_damage.bdae", "hud_damage");
+    blood_ = scene_.spawn_model("hud_blood_2.bdae", true, "hud_blood_2.bdae", "hud_blood");
+    for (size_t o : {damage_, blood_})
+        if (o != size_t(-1)) scene_.set_object_visible(o, false);
+    damage_shown_ = blood_shown_ = blood_fading_ = false;
+}
+
+void Hud::damage_effect() {
+    if (damage_ == size_t(-1)) return;
+    scene_.play_clip(damage_, "hud_damage", false);
+    if (!damage_shown_) scene_.set_object_visible(damage_, true), damage_shown_ = true;
+}
+
+void Hud::show_blood(float fraction) {
+    if (blood_ == size_t(-1)) return;
+    // A quarter of the way into the first half of the clip, or its start under a quarter.
+    Scene::ClipState cs;
+    if (!scene_.play_clip(blood_, "hud_blood", false) || !scene_.clip_state(blood_, cs)) return;
+    scene_.set_clip_time(blood_, fraction < 0.25f ? 0.0f : std::max(cs.length - 1, 0.0f) * 0.5f * 0.25f / 1000.0f);
+    if (!blood_shown_) scene_.set_object_visible(blood_, true), blood_shown_ = true;
+    blood_fading_ = false;
+}
+
+void Hud::fade_blood() {
+    if (!blood_shown_ || blood_fading_) return;
+    scene_.set_clip_speed(blood_, 1);
+    blood_fading_ = true;
+}
+
+void Hud::update_effects(float) {
+    // Each goes once its clip has played through ("Finished": the effect stops).
+    if (damage_shown_ && scene_.clip_finished(damage_)) scene_.set_object_visible(damage_, false), damage_shown_ = false;
+    if (blood_fading_ && scene_.clip_finished(blood_))
+        scene_.set_object_visible(blood_, false), blood_shown_ = blood_fading_ = false;
 }
 
 void Hud::update_frost(float dt) {
@@ -389,6 +423,11 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& spri
     // CHud::Init: parts anchored to the screen, in pixels of a 480x320 screen scaled up.
     if (placed_for_ != glm::ivec2(w, h)) {
         placed_for_ = {w, h};
+        // The full-screen effects (frost, blood, the shield's ripple) are 4:3 planes before the
+        // camera: wider screens get them stretched across.
+        const float widen = std::max(1.0f, float(w) / float(std::max(h, 1)) / (4.0f / 3.0f));
+        for (size_t o : {frost_object_, blood_, damage_})
+            if (o != size_t(-1)) scene_.set_object_transform(o, glm::scale(glm::mat4(1), glm::vec3(widen, 1, 1)));
         const float sx = float(std::max(w, h)) / 480.0f, sy = float(std::min(w, h)) / 320.0f;
         const glm::mat4 vp = f.hud_proj * f.hud_view;
         place("weapons", {float(w) - 70 * sx, 40 * sy}, vp, w, h);

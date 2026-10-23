@@ -312,7 +312,7 @@ void Game::apply_sound() {
     logic.audio->music = 0.6f * settings.music_volume;
 }
 
-// HUD_StartFrost / HUD_StopFrost: the frost spreads or melts over time.
+// HUD_StartFrost / HUD_StopFrost: the frost spreads or melts over time; and the hits' HUD effects.
 void Game::update_frost(float dt) {
     if (logic.frost.serial != frost_serial) {
         frost_serial = logic.frost.serial;
@@ -321,6 +321,11 @@ void Game::update_frost(float dt) {
     }
     hud.frost_max = logic.frost.max;
     hud.update_frost(dt);
+    // The shield's ripple and the blood (CLevel::StartHudEffect, CHud::ShowBlood).
+    if (combat.take_hud_damage()) hud.damage_effect();
+    if (const float blood = combat.take_hud_blood(); blood >= 0) hud.show_blood(blood);
+    if (combat.take_blood_fade()) hud.fade_blood();
+    hud.update_effects(dt);
 }
 
 void Game::draw_text(FrameParams& f, int w, int h) {
@@ -351,6 +356,10 @@ void Game::draw_text(FrameParams& f, int w, int h) {
         hs.weapon_sprite = combat.weapon_sprite();
         hs.clip_size = combat.clip_size();
         hud.frame(f, w, h, hs, hud_sprites);
+        if (float angle = 0; hs.visible && combat.hit_indicator(angle))   // CLevel::Render2DInterface
+            if (const Sprite* cs = hud.sprite("controls.bsprite"))
+                hud.draw_frame_rotated(hud_sprites, *cs, 60, {float(w) * 0.5f, float(h) * 0.5f}, hud.sprite_scale("controls.bsprite"),
+                                       glm::radians(angle), glm::vec4(1));
         const std::string& qte = logic.qte_kind();
         if (logic.input == InputScheme::Touch && (hs.visible || !qte.empty())) {
             const LevelLogic::Controls& lc = logic.controls;

@@ -1,5 +1,6 @@
 #include "render/material_system.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "render/renderer.h"
@@ -128,6 +129,13 @@ const GpuMaterial* MaterialSystem::get(const Material& m, bool skinned) {
     const GpuMaterial* result = nullptr;
     const Effect* fx = m.effect.empty() ? nullptr : effect(m.effect);
     const Technique* tech = fx ? fx->technique(m.technique) : nullptr;
+    // Screen-reading techniques come in one per device orientation (NV_Distortion's Opaque,
+    // Opaque_O90, ...); _O180 reads the screen the right way up for an unrotated view.
+    if (tech && !tech->passes.empty()) {
+        const auto& defs = tech->passes.front().fragment_defines;
+        if (std::find(defs.begin(), defs.end(), "O0") != defs.end())
+            if (const Technique* upright = fx->technique(m.technique + "_O180")) tech = upright;
+    }
     if (tech && !tech->passes.empty()) {
         const EffectPass& pass = tech->passes.front();
         if (const GpuProgram* prog = program(pass, skinned)) {

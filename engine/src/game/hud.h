@@ -65,6 +65,15 @@ public:
     void stop_frost(float ms) { frost_target_ = 0, frost_rate_ = 1000.0f / std::max(ms, 1.0f); }
     float frost_max = 1;
     void update_frost(float dt);
+    // HUD_Damage (hud_damage.bdae, PostEffects HUD effect 24): the shield's blue ripple over
+    // the screen, its clip once from the start (CLevel::StartHudEffect(4)).
+    void damage_effect();
+    // HUD_Blood2 (hud_blood_2.bdae, CHud::ShowBlood): blood held at a point of its clip by the
+    // shield left (`fraction` of the maximum: under 1/4 all of it), until fade_blood() plays
+    // the rest of the clip (the regeneration starting) and it goes.
+    void show_blood(float fraction);
+    void fade_blood();
+    void update_effects(float dt);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
     void frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites);
 
@@ -116,6 +125,8 @@ private:
     float shield_shown_ = -1;
     int core_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
+    size_t damage_ = size_t(-1), blood_ = size_t(-1);
+    bool damage_shown_ = false, blood_shown_ = false, blood_fading_ = false;
     bool frost_shown_ = false;
     glm::ivec2 placed_for_{0};
     bool visible_ = false, grenades_ = true;

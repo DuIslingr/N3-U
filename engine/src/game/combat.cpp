@@ -161,6 +161,7 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
             regen_rate_ = num(*b, 1, 20);
             regen_pause_ = num(*b, 2, 3000) / 1000.0f;
             view_hurt_pause_ = num(*b, 3, 0) / 1000.0f, view_hurt_heavy_ = num(*b, 4, 0);
+            base_shield_percent_ = num(*b, 0, 50);
         }
     }
     base_max_health_ = player_max_health, base_regen_pause_ = regen_pause_;
@@ -1547,22 +1548,33 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
 }
 
 void Combat::damage_player(float amount, const glm::vec3& from) {
-    (void)from;
     if (player_dead || player_invulnerable || protect_ > 0 || amount <= 0) return;
     if (logic_.in_mech()) amount *= 0.3f;   // the mech's armour (its health is 200 to the player's 50)
     player_health -= amount;
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;
-    damage_flash_ = std::min(damage_flash_ + amount / 30.0f + 0.15f, 1.0f);
-    // The view jolts away from the hit: by the angle from the view's heading to the
-    // source (clockwise, 0..360) when it has one.
+    // The angle from the view's heading to the hit's source (clockwise, 0..360; 0 without
+    // one). The hit indicator points there (CLevel::StartInterfaceEffect: controls.bsprite
+    // frame 60 turned by it, for a second) and the view jolts away from it.
     const glm::vec2 to(from.x - player_.center.x, from.y - player_.center.y);
-    if (view_hurt_wait_ <= 0 && glm::length(to) > 0.01f) {
-        view_hurt_wait_ = view_hurt_pause_;
+    float angle = 0;
+    if (glm::length(to) > 0.01f) {
         const float y = glm::radians(player_.yaw);
         const glm::vec2 ahead(-std::sin(y), std::cos(y)), dir = glm::normalize(to);
-        float angle = glm::degrees(std::acos(std::clamp(glm::dot(ahead, dir), -1.0f, 1.0f)));
+        angle = glm::degrees(std::acos(std::clamp(glm::dot(ahead, dir), -1.0f, 1.0f)));
         if (ahead.y * dir.x - dir.y * ahead.x < 0) angle = 360 - angle;
+    }
+    hit_angle_ = angle, hit_left_ = 1.0f;
+    // Over half the shield left (100 - PlayerBase [0] percent): its ripple; else blood.
+    const float half = (100.0f - base_shield_percent_) * 0.01f * player_max_health;
+    if (logic_.in_mech() || logic_.player_vehicle() >= 0) {   // not in the mech or the jeep
+    } else if (player_health > half) {
+        if (hud_damage_wait_ <= 0) hud_damage_ = true, hud_damage_wait_ = 3.0f;
+    } else {
+        hud_blood_ = player_health / std::max(player_max_health, 1.0f);
+    }
+    if (view_hurt_wait_ <= 0 && glm::length(to) > 0.01f) {
+        view_hurt_wait_ = view_hurt_pause_;
         const char* side = angle >= 325 || angle < 35 ? "front" : angle < 135 ? "right" : angle < 225 ? "back" : "left";
         view_hurt_ = std::string("Hurt_") + side + (amount > view_hurt_heavy_ ? "_heavy" : "");
     }
@@ -1784,6 +1796,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);
+    hit_left_ = std::max(hit_left_ - dt, 0.0f);
     since_shot_ += dt;
     for (Target& t : targets_) t.hurt_sound_wait = std::max(t.hurt_sound_wait - dt, 0.0f);
     logic_.actor_positions.clear();
@@ -1873,7 +1886,6 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     sparks_.erase(std::remove_if(sparks_.begin(), sparks_.end(), [](const Spark& s) { return s.life <= 0; }), sparks_.end());
 
     // The player: death and revival, regeneration.
-    damage_flash_ = std::max(damage_flash_ - dt * 1.5f, 0.0f);
     hit_marker_ = std::max(hit_marker_ - dt, 0.0f);
     stats_.play_time += dt;
     if (player_dead) {
@@ -1895,6 +1907,8 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     }
     if (core >= 0 && player_health <= player_max_health) core = -1;   // the core's charge is spent
     regen_delay_ -= dt;
+    hud_damage_wait_ = std::max(hud_damage_wait_ - dt, 0.0f);
+    if (regen_delay_ < 0 && player_health < player_max_health) blood_fade_ = true;   // RegenerateHealth
     if (regen_delay_ <= 0 && player_health < player_max_health)
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);
 
@@ -1997,25 +2011,6 @@ void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const
     // HUD, in pixels.
     const float w = float(width), h = float(height), u = h / 720.0f;
     const float cx = w * 0.5f, cy = h * 0.5f;
-    if (damage_flash_ > 0 || player_dead) {
-        const float a = player_dead ? 0.55f : damage_flash_ * 0.45f;
-        const float edge = 90 * u;
-        const glm::vec4 red(0.7f, 0.0f, 0.0f, a), clear(0.7f, 0.0f, 0.0f, 0);
-        auto grad = [&](float x0, float y0, float x1, float y1, bool horizontal, bool flip) {
-            const uint32_t pa = pack_rgba(flip ? clear : red), pb = pack_rgba(flip ? red : clear);
-            if (horizontal)
-                o.screen.insert(o.screen.end(), {{{x0, y0, 0}, pa}, {{x1, y0, 0}, pb}, {{x1, y1, 0}, pb},
-                                                 {{x0, y0, 0}, pa}, {{x1, y1, 0}, pb}, {{x0, y1, 0}, pa}});
-            else
-                o.screen.insert(o.screen.end(), {{{x0, y0, 0}, pa}, {{x1, y0, 0}, pa}, {{x1, y1, 0}, pb},
-                                                 {{x0, y0, 0}, pa}, {{x1, y1, 0}, pb}, {{x0, y1, 0}, pb}});
-        };
-        grad(0, 0, edge, h, true, false);
-        grad(w - edge, 0, w, h, true, true);
-        grad(0, 0, w, edge, false, false);
-        grad(0, h - edge, w, h, false, true);
-        if (player_dead) rect(o.screen, 0, 0, w, h, {0.25f, 0, 0, 0.35f});
-    }
     // Crosshair: red over an enemy, wider while the spread is open.
     const glm::vec4 cc = aim_on_enemy_ ? glm::vec4(1, 0.25f, 0.2f, 0.9f) : glm::vec4(1, 1, 1, 0.75f);
     const float gap = (6 + spread_ * 4) * u, len = 9 * u, th = std::max(2 * u, 1.0f);

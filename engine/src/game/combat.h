@@ -264,6 +264,17 @@ public:
     // The view's jolt for the last hit (CPlayerBaseComponent::ReceiveDamage): Hurt_front,
     // Hurt_left_heavy, ... by where it came from; the caller adds "IronSight_" while aiming.
     std::string take_view_hurt() { return std::exchange(view_hurt_, {}); }
+    // The HUD's answer to the last hits (CPlayerBaseComponent::ReceiveDamage): the shield's
+    // ripple while over half of it is left (at most every 3 s), the blood under that (the
+    // shield's fraction left); and the blood's fade when the shield starts regenerating.
+    bool take_hud_damage() { return std::exchange(hud_damage_, false); }
+    float take_hud_blood() { return std::exchange(hud_blood_, -1.0f); }
+    bool take_blood_fade() { return std::exchange(blood_fade_, false); }
+    // The hit indicator: shown while true, pointing `angle` degrees clockwise from straight up.
+    bool hit_indicator(float& angle) const {
+        angle = hit_angle_;
+        return hit_left_ > 0;
+    }
     // A landing hard enough for the weapon's landing clip: 0 Landing, 1 LandingMed,
     // 2 LandingHi; -1 if none since the last call.
     int take_landing() { return std::exchange(landing_, -1); }
@@ -489,6 +500,10 @@ private:
     // CPlayerBaseComponent [3]: the least time between two jolts (ms); [4]: the damage
     // that makes one heavy.
     float view_hurt_pause_ = 0, view_hurt_heavy_ = 0, view_hurt_wait_ = 0;
+    float hit_angle_ = 0, hit_left_ = 0;   // seconds left of the hit indicator
+    bool hud_damage_ = false, blood_fade_ = false;
+    float hud_blood_ = -1, hud_damage_wait_ = 0;
+    float base_shield_percent_ = 50;   // CPlayerBaseComponent [0]: the share of the shield the blood takes over at
     std::string view_hurt_;
     float fall_damage_from_ = 15, fall_damage_per_ = 16;
     std::array<float, 3> landing_speeds_{5, 15, 20};
@@ -589,7 +604,7 @@ private:
     float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;
-    float damage_flash_ = 0, hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
+    float hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
     bool killing_headshot_ = false, killing_repel_ = false;   // what the damage being dealt is
     int max_shooters_ = 2;   // enemies firing at the player at once (attack tokens; SetMaxActiveEnemies)
     static constexpr float kBurstInterval = 1.2f;   // seconds between any two bursts starting
