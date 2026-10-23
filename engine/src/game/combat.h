@@ -118,6 +118,7 @@ private:
         bool aware = false;
         float timer = 0, fire_timer = 0, repath = 0, hurt_cooldown = 0, lost_sight = 0;
         int shots_left = 0;
+        bool token = false;            // allowed to shoot at the player (a few at a time)
         bool melee_hit = false;
         int tri = -1;
         std::vector<glm::vec3> path;
@@ -209,7 +210,10 @@ private:
     float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;
-    float damage_flash_ = 0, hit_marker_ = 0, dead_timer_ = 0;
+    float damage_flash_ = 0, hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
+    static constexpr int kMaxShooters = 2;   // enemies firing at the player at once (attack tokens)
+    static constexpr float kBurstInterval = 1.2f;   // seconds between any two bursts starting
+    float burst_cooldown_ = 0;
     glm::vec3 last_eye_{0}, last_aim_{0, 1, 0};
     bool aim_on_enemy_ = false;
     std::mt19937 rng_{1234};

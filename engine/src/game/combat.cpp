@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <limits>
 
@@ -440,14 +441,30 @@ void Combat::update_actor(Target& t, float dt) {
         play(t, t.clip_fire, true);
         t.fire_timer -= dt;
         if (t.fire_timer <= 0) {
-            if (t.shots_left <= 0) t.shots_left = t.burst;
+            if (t.shots_left <= 0) {
+                // A new burst needs one of the few attack tokens; otherwise aim and wait.
+                int shooters = 0;
+                for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
+                if (shooters >= kMaxShooters || burst_cooldown_ > 0) {
+                    t.fire_timer = 0.3f;
+                    play(t, t.clip_alert, true);
+                    break;
+                }
+                t.token = true;
+                t.shots_left = t.burst;
+                burst_cooldown_ = kBurstInterval;
+            }
             fire_bolt(t);
             --t.shots_left;
-            t.fire_timer = t.shots_left > 0 ? t.burst_gap
-                                            : t.burst_pause * std::uniform_real_distribution<float>(0.7f, 1.4f)(rng_);
+            if (t.shots_left > 0) {
+                t.fire_timer = t.burst_gap;
+            } else {
+                t.token = false;
+                t.fire_timer = t.burst_pause * std::uniform_real_distribution<float>(0.8f, 1.6f)(rng_);
+            }
         }
         // Lost the line of fire, or too far: close in again.
-        if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0;
+        if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
         if (dist < t.melee_range && !t.clip_melee.empty() && t.fire_timer > 0.3f) {
             t.state = S::Melee, t.timer = 0, t.melee_hit = false;
             play(t, t.clip_melee, false);
@@ -505,7 +522,7 @@ void Combat::fire_bolt(Target& t) {
     // Aim at the player's chest with some inaccuracy that grows with distance.
     glm::vec3 aim = player_center() - muzzle;
     const float dist = glm::length(aim);
-    std::normal_distribution<float> n(0.0f, 0.04f + 0.004f * dist);
+    std::normal_distribution<float> n(0.0f, 0.05f + 0.004f * dist);
     aim = glm::normalize(aim / std::max(dist, 0.01f) + glm::vec3(n(rng_), n(rng_), n(rng_) * 0.5f));
     bolts_.push_back({muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())});
     ++stats_.enemy_shots;
@@ -513,7 +530,7 @@ void Combat::fire_bolt(Target& t) {
 
 void Combat::damage_player(float amount, const glm::vec3& from) {
     (void)from;
-    if (player_dead || player_invulnerable || amount <= 0) return;
+    if (player_dead || player_invulnerable || protect_ > 0 || amount <= 0) return;
     player_health -= amount;
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;
@@ -552,6 +569,7 @@ void Combat::die(Target& t) {
     o->dead = true;
     o->health = 0;
     t.timer = 0;
+    t.token = false;
     ++stats_.kills;
     log("killed " + t.type + " #" + std::to_string(t.id));
     if (t.actor && !t.clip_deaths.empty()) {
@@ -644,6 +662,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     last_eye_ = eye;
     last_aim_ = aim;
     update_spawners(dt);
+    burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     logic_.actor_positions.clear();
     for (const Target& t : targets_)
         if (t.actor && t.mobile && t.aware && alive(t)) logic_.actor_positions.push_back(t.pos + glm::vec3(0, 0, 1));
@@ -716,13 +735,15 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     hit_marker_ = std::max(hit_marker_ - dt, 0.0f);
     if (player_dead) {
         dead_timer_ += dt;
-        if (dead_timer_ > 3.0f) {   // no checkpoints yet: get up where you fell
+        if (dead_timer_ > 3.0f) {   // no checkpoints yet: get up where you fell, briefly protected
             player_dead = false;
             player_health = player_max_health;
+            protect_ = 3.0f;
             log("player revived");
         }
         return;
     }
+    protect_ = std::max(protect_ - dt, 0.0f);
     regen_delay_ -= dt;
     if (regen_delay_ <= 0 && player_health < player_max_health)
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);

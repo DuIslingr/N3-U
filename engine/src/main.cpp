@@ -424,6 +424,7 @@ int main(int argc, char** argv) {
                 bool flying = false;
                 float accumulator = 0;
                 CombatInput combat_in;
+                bool fire_held = false;
                 SDL_SetWindowRelativeMouseMode(window, true);
                 bool running = true;
                 auto last = std::chrono::steady_clock::now();
@@ -439,6 +440,9 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Z && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true;
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
+                        if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_1) combat_in.select = 0;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_2) combat_in.select = 1;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
@@ -477,7 +481,7 @@ int main(int argc, char** argv) {
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         if (opt.scripts) {
-                            combat_in.fire = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
+                            combat_in.fire = fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
                             combat.update(dt, combat_in, player.eye(), cam.forward());
                             combat.push_player_out();
                             combat_in = {};
@@ -486,10 +490,13 @@ int main(int argc, char** argv) {
                         static float log_timer = 0;
                         if (opt.log_player && (log_timer += dt) >= 1.0f) {
                             log_timer = 0;
-                            std::printf("player (%.2f %.2f %.2f) yaw %.0f %s, input fwd %.0f right %.0f, zone %d, %.0f fps\n",
+                            std::printf("player (%.2f %.2f %.2f) yaw %.0f %s, input fwd %.0f right %.0f fire %d, zone %d, "
+                                        "health %.0f%s, shooting %s, ammo %d/%d, enemies %d, %.0f fps\n",
                                         player.center.x, player.center.y, player.center.z, player.yaw,
-                                        player.on_ground ? "ground" : "air", in.forward, in.right, scene.zones().current(),
-                                        dt > 0 ? 1.0f / dt : 0.0f);
+                                        player.on_ground ? "ground" : "air", in.forward, in.right, int(fire_held),
+                                        scene.zones().current(), combat.player_health, combat.player_dead ? " (dead)" : "",
+                                        combat.shoot_enabled ? "on" : "off", combat.ammo_in_clip(), combat.ammo_reserve(),
+                                        combat.enemies_alive(), dt > 0 ? 1.0f / dt : 0.0f);
                             std::fflush(stdout);
                         }
                     }
