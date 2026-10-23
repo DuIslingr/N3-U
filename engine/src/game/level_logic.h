@@ -346,6 +346,13 @@ public:
     void limited_view_input(float& yaw, float& pitch, float dt);
     bool limited_view(Scene::CameraView& out) const;   // the rig's camera, turned by the view
     bool limited_tap();   // a tap (click, use): the arm console in Minigame wins
+    // Lifts (CElevatorAIComponent 0x18: [0]/[1] its two waypoints, [2] speed in m/s): it
+    // waits (Idle) for the player to stand on it, then closes and carries them to its other
+    // end (Opening, DestEnd), and once they step off it waits there for the way back.
+    // SendEvent(lift, "MoveToStart"/"MoveToEnd") calls it to an end on its own; LockElevator
+    // stops it from moving once it is back at rest, UnlockElevator lets it.
+    void lock_elevator(int id, bool lock);
+    bool elevator_event(int id, const std::string& event);   // false if not a lift's event
     // Linked objects (CLinkObjectComponent 0x17, [0]: the object it is linked to): carried
     // with that object (enemies riding a lift, guns on a vehicle); a linked NPC holds its
     // place (CNPCComponent::SetImobile) until Npc_UnLink. Npc_Link links it to another.
@@ -479,6 +486,24 @@ private:
     bool camera_held_ = false, restore_view_ = false;
     float held_yaw_ = 0, held_pitch_ = 0;
     void update_movers(float dt);
+    struct Elevator {
+        int id = 0, type = 0;
+        size_t index = 0;
+        glm::vec3 start{0}, end{0}, position{0};
+        float speed = 1;
+        bool to_end = true;            // where it goes next
+        std::string state = "Idle";
+        float state_time = 0, state_length = 0;
+        bool moving = false, lock_pending = false;
+        glm::vec3 from{0}, dest{0};
+        float along = 0;
+        std::vector<int> sounds;
+    };
+    std::vector<Elevator> elevators_;
+    Elevator* elevator(int id);
+    void elevator_state(Elevator& e, const std::string& state);
+    void elevator_move(Elevator& e, bool to_end);
+    void update_elevators(float dt);
     struct Limited {
         bool on = false, gravity = true;
         std::string state;

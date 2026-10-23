@@ -1150,6 +1150,13 @@ bool Scene::camera_view(size_t object, CameraView& out) const {
     return false;
 }
 
+bool Scene::object_bounds(size_t object, glm::vec3& min, glm::vec3& max) const {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return false;
+    min = instances_[it->second].world_min, max = instances_[it->second].world_max;
+    return true;
+}
+
 glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {
     if (const AnimatedInstance* a = object_anim(object)) {
         if (node.empty()) return a->placement;   // where it is now (it may have moved)

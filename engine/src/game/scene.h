@@ -138,6 +138,7 @@ public:
     // World transform of one of the object's nodes; the object's placement if `node` is
     // empty or not found (or the object is not animated).
     glm::mat4 object_matrix(size_t object, const std::string& node = {}) const;
+    bool object_bounds(size_t object, glm::vec3& min, glm::vec3& max) const;   // world box, as placed now
     const SceneStats& stats() const { return stats_; }
     const Vfs& vfs() const { return vfs_; }
     // A texture by image file name (any extension; cached), e.g. for HUD sprites.

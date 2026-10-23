@@ -88,6 +88,7 @@ int api_send_event(lua_State* L) {
     if (c.trace) c.log("SendEvent " + std::to_string(id) + " " + name);
     c.runtime_.send_event(name, id);
     c.start_script("Obj" + std::to_string(id) + "_" + name, id);
+    c.elevator_event(id, name);   // a lift called to an end
     // Orders to NPCs (CAIComponent::OnEvent): a waypoint/region/gun id or a flag after the name.
     if (c.combat && lua_gettop(L) >= 2) {
         const int arg = lua_isnumber(L, 3) ? int(lua_tointeger(L, 3)) : 0;
@@ -559,6 +560,11 @@ int api_flashback_stop(lua_State* L) {   // PostEffect_FlashbackStop(ms)
 }
 int api_start_flash(lua_State* L) {   // StartFlashEffect(ms)
     ctx(L).screen_effect(LevelLogic::ScreenEffect::Flash, float(lua_tonumber(L, 1)));
+    return 0;
+}
+template <bool Lock>
+int api_lock_elevator(lua_State* L) {   // LockElevator(lift) / UnlockElevator(lift) (ids also as strings)
+    ctx(L).lock_elevator(int(lua_tointeger(L, 1)), Lock);
     return 0;
 }
 int api_player_look_to(lua_State* L) {
@@ -1324,6 +1330,8 @@ const Entry kImplemented[] = {
     {"PlayerLimitedControlSetLimitPitch", api_limited_limit<1>},
     {"SetLimitedControlStrafeSpeed", api_limited_strafe},
     {"PlayerSetPosition", api_player_set_position},
+    {"LockElevator", api_lock_elevator<true>},
+    {"UnlockElevator", api_lock_elevator<false>},
     {"PostEffect_FlashbackStart", api_flashback_start},
     {"PostEffect_FlashbackStop", api_flashback_stop},
     {"StartFlashEffect", api_start_flash},

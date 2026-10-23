@@ -337,6 +337,20 @@ void LevelLogic::start(StartMode mode) {
         limited_.rig = scene.spawn_object(limited_.rig_type, -1002, player.center, 0);
         if (limited_.rig != size_t(-1)) scene.set_object_viewmodel(limited_.rig), scene.set_object_visible(limited_.rig, false);
     }
+    elevators_.clear();
+    for (auto& [id, o] : objects_) {
+        const Value* el = o.index < scene.level().objects.size() ? object_component(o, 0x18) : nullptr;
+        const Object* a = el && el->size() >= 3 ? object((*el)[0].i) : nullptr;
+        const Object* b = el && el->size() >= 3 ? object((*el)[1].i) : nullptr;
+        if (!a || !b) continue;
+        Elevator e;
+        e.id = id, e.index = o.index, e.type = scene.level().objects[o.index].type;
+        e.start = a->position, e.end = b->position, e.position = o.position;
+        e.speed = std::max((*el)[2].as_float(), 0.1f);
+        // CElevatorAIComponent::ReInit: it goes first to the end it is not at.
+        e.to_end = glm::distance(e.position, e.start) < glm::distance(e.position, e.end);
+        elevators_.push_back(e);
+    }
     links_.clear();
     for (auto& [id, o] : objects_)
         if (const Value* l = o.index < scene.level().objects.size() ? object_component(o, 0x17) : nullptr; l && l->size() > 0 && (*l)[0].i > 0)
@@ -1451,6 +1465,7 @@ void LevelLogic::update(float dt) {
     update_music(dt);
     update_dialog(dt);
     update_movers(dt);
+    update_elevators(dt);
     update_links();
     update_limited(dt);
     update_cinematics(dt);
