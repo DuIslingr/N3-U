@@ -1,8 +1,11 @@
 #include "game/pause_menu.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
+#include "game/combat.h"
+#include "game/shop.h"
 #include "render/text.h"
 
 namespace nova {
@@ -27,6 +30,10 @@ constexpr int kPauseButton = 187, kPauseButtonOn = 188, kButton = 29, kButtonOn 
 constexpr int kToggleOn = 123, kToggleOff = 124, kSlider = 127, kSliderKnob = 128, kSliderKnobOn = 129;
 const glm::vec2 kSliderTrack(0.085f, 0.903f);   // the slider's track (between - and +), across its frame
 constexpr int kArrowLeft = 193, kArrowLeftOn = 194, kArrowRight = 195, kArrowRightOn = 196;
+// The Military Shop (GS_InGameMenu::Create, RenderPausePage): tabs, the drum, the credits sign
+// and the credits bar.
+constexpr int kShopTab = 189, kShopTabOn = 190, kDrum = 191, kCoin = 192, kCreditsBar = 252;
+constexpr int kShopRow = 3;   // Row::slot of the shop's tabs and BUY
 
 // The display choices: 16:9 sizes, modes, frame-rate caps (0: unlocked).
 struct Size {
@@ -46,6 +53,30 @@ void PauseMenu::show() {
     open = true;
     stack_ = {Page::Pause};
     selected_ = -1, dragging_ = -1;
+    shop_tab_ = 1, shop_pick_ = 0, shop_drum_ = 0;
+}
+
+std::vector<int> PauseMenu::shop_list() const {
+    std::vector<int> out;
+    if (shop)
+        for (const Shop::Item& it : shop->items())
+            if (it.item == (shop_tab_ == 0)) out.push_back(it.index);
+    return out;
+}
+
+int PauseMenu::shop_selected() const {
+    const std::vector<int> list = shop_list();
+    if (list.empty()) return -1;
+    const int n = int(list.size());
+    return list[size_t((shop_pick_ % n + n) % n)];
+}
+
+void PauseMenu::shop_turn(int d) { shop_pick_ += d; }
+
+void PauseMenu::update(float dt) {
+    // The drum eases round to the pick.
+    shop_drum_ += (float(shop_pick_) - shop_drum_) * std::min(dt * 10.0f, 1.0f);
+    if (std::abs(float(shop_pick_) - shop_drum_) < 1e-3f) shop_drum_ = float(shop_pick_);
 }
 
 void PauseMenu::show_options() {
@@ -122,6 +153,18 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) {
             button(text("FPS_RESTART_LEVEL"), confirm(text("FPS_CONFIRM_RESTART_LEVEL"), Action::RestartLevel));
             button(text("FPS_OPTIONS"), go(Page::Options));
             button(text("FPS_MAIN_MENU"), confirm(text("FPS_CONFIRM_MAINMENU"), Action::Exit));
+            if (shop) {   // the shop's tabs and BUY
+                for (int tab = 0; tab < 2; ++tab)
+                    button(text(tab == 0 ? "FPS_SHOP_ITEM" : "FPS_SHOP_UPGRADE"), [this, tab](Settings&, int d) {
+                        if (d == 0 && shop_tab_ != tab) shop_tab_ = tab, shop_pick_ = 0, shop_drum_ = 0;
+                        return Action::None;
+                    }, kShopRow);
+                const int pick = shop_selected();
+                button(text(pick >= 0 && shop->owned(pick, s) ? "FPS_MP_OWNED" : "FPS_MP_STORE_BUY"), [this](Settings& st, int d) {
+                    if (d != 0 || !combat) return Action::None;
+                    return shop->buy(shop_selected(), *combat, st) ? Action::Changed : Action::None;
+                }, kShopRow);
+            }
             break;
         case Page::Objectives:
             break;   // drawn from the objectives; only Back
@@ -208,6 +251,7 @@ PauseMenu::Action PauseMenu::key(Key k, Settings& s) {
         case Key::Down: selected_ = n ? (selected_ < 0 ? 0 : (selected_ + 1) % n) : 0; return Action::None;
         case Key::Left:
         case Key::Right:
+            if (page() == Page::Pause && shop) return shop_turn(k == Key::Left ? -1 : 1), Action::None;   // the shop's drum
             // Across the bottom pair; on the page's rows, a step of the setting.
             if (selected_ >= 0 && selected_ < n && list[size_t(selected_)].slot != 0) {
                 for (int i = 0; i < n; ++i)
@@ -226,6 +270,9 @@ PauseMenu::Action PauseMenu::pointer(glm::vec2 at, Pointer phase, Settings& s) {
         dragging_ = -1;
         return Action::None;
     }
+    if (page() == Page::Pause && shop && phase == Pointer::Press)   // the drum's arrows and side items turn it
+        for (int side = 0; side < 2; ++side)
+            if (inside(shop_arrows_[side], at) || inside(shop_sides_[side], at)) return shop_turn(side == 0 ? -1 : 1), Action::None;
     std::vector<Row> list = rows(s);
     if (dragging_ >= 0 && dragging_ < int(rects_.size()) && dragging_ < int(list.size())) {
         const glm::vec4& c = rects_[size_t(dragging_)].control;
@@ -285,25 +332,30 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
     };
 
     if (page() == Page::Pause) {
-        // On the left, where the original has its shop: the objectives, in the same panel.
+        // On the left, the original's panel: the Military Shop (or, without one, the objectives).
         if (art) {
             const glm::vec4 a = Hud::frame_bounds(*art, kPanelTop), b = Hud::frame_bounds(*art, kPanelBottom);
             const glm::vec2 mid((std::min(a.x, b.x) + std::max(a.z, b.z)) * 0.5f, (a.y + b.w) * 0.5f);
             const glm::vec2 o = at(-207, 18) - mid * art_scale;
             hud.draw_frame(out, *art, kPanelTop, o, art_scale, kWhite);
             hud.draw_frame(out, *art, kPanelBottom, o, art_scale, kWhite);
-            title.draw(out, text("FPS_OBJECTIVES"), o + glm::vec2(mid.x, a.y + 26) * art_scale, int(W), kWhite, {0.5f, 0.5f});
-            float y = o.y + (a.y + 80) * art_scale;
-            for (const Hud::ObjectiveLine& line : objectives) {
-                const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
-                const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
-                y += items.draw(out, mark + line.text, {o.x + 40 * art_scale, y}, int((mid.x * 2 - 80) * art_scale), color, {0.0f, 0.0f}) +
-                     12 * u;
+            if (shop) {
+                draw_shop(out, hud, *art, title, items, list, s, o - glm::vec2(25, 0) * art_scale, art_scale, W);
+            } else {
+                title.draw(out, text("FPS_OBJECTIVES"), o + glm::vec2(mid.x, a.y + 26) * art_scale, int(W), kWhite, {0.5f, 0.5f});
+                float y = o.y + (a.y + 80) * art_scale;
+                for (const Hud::ObjectiveLine& line : objectives) {
+                    const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
+                    const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
+                    y += items.draw(out, mark + line.text, {o.x + 40 * art_scale, y}, int((mid.x * 2 - 80) * art_scale), color, {0.0f, 0.0f}) +
+                         12 * u;
+                }
             }
         }
         // The column of buttons on the right, Resume under it.
         int n = 0;
         for (int i = 0; i < int(list.size()); ++i) {
+            if (list[size_t(i)].slot == kShopRow) continue;   // drawn with the shop
             if (list[size_t(i)].slot != 0) {
                 pair_button(i, at(227, 205));
                 continue;
@@ -391,6 +443,123 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
                 break;
             }
         }
+    }
+}
+
+void PauseMenu::draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRenderer& title, TextRenderer& items,
+                          const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float k, float W) {
+    // GS_InGameMenu::Create / RenderPausePage, at their 960x640 positions.
+    auto P = [&](float x, float y) { return origin + glm::vec2(x, y) * k; };
+    auto frame_at = [&](int f, glm::vec2 p, const glm::vec4& color) {
+        hud.draw_frame(out, art, f, p, k, color);
+        const glm::vec4 b = Hud::frame_bounds(art, f);
+        return glm::vec4(p + glm::vec2(b.x, b.y) * k, p + glm::vec2(b.z, b.w) * k);
+    };
+    // Text with the string tables' colour codes ("#6FD7FFFF#BUY: #FFFFFFFF#%s"), centred on `c`.
+    auto coded = [&](const std::string& t, glm::vec2 c) {
+        std::vector<std::pair<std::string, glm::vec4>> parts;
+        glm::vec4 color = kWhite;
+        size_t i = 0;
+        while (i < t.size()) {
+            if (t[i] == '#' && i + 9 < t.size() + 0 && t[i + 9] == '#') {
+                const unsigned v = unsigned(std::stoul(t.substr(i + 1, 8), nullptr, 16));
+                color = glm::vec4(float(v >> 24 & 255), float(v >> 16 & 255), float(v >> 8 & 255), float(v & 255)) / 255.0f;
+                i += 10;
+                continue;
+            }
+            const size_t next = t.find('#', i + 1);
+            const std::string piece = t.substr(i, next == std::string::npos ? std::string::npos : next - i);
+            parts.emplace_back(piece, color);
+            i += piece.size();
+        }
+        float width = 0;
+        for (const auto& [piece, c2] : parts) width += items.measure(piece, int(W)).x;
+        float x = c.x - width * 0.5f;
+        for (const auto& [piece, c2] : parts) {
+            items.draw(out, piece, {x, c.y}, int(W), c2, {0.0f, 0.5f});
+            x += items.measure(piece, int(W)).x;
+        }
+    };
+    const Sprite* icons = hud.sprite("upgrades.bsprite");
+    const float icon_k = k * hud.sprite_scale("upgrades.bsprite") / std::max(hud.sprite_scale("Chatboard.bsprite"), 1e-6f);
+
+    // The credits held: the bar at the menu's corner, its sign on the left.
+    const glm::vec4 bar = frame_at(kCreditsBar, P(0, 0), kWhite);
+    items.draw(out, std::to_string(s.credits), {(bar.x + bar.z) * 0.5f + 18 * k, (bar.y + bar.w) * 0.5f}, int(W), kWhite, {0.5f, 0.5f});
+    title.draw(out, text("FPS_MILITARY_SHOP"), P(247, 92), int(W), kWhite, {0.5f, 0.5f});
+
+    // The tabs and BUY (rows of their own, for the keys).
+    std::vector<int> rows_here;
+    for (int i = 0; i < int(list.size()); ++i)
+        if (list[size_t(i)].slot == kShopRow) rows_here.push_back(i);
+    const int pick = shop_selected();
+    for (size_t t = 0; t < rows_here.size() && t < 2; ++t) {
+        const int i = rows_here[t];
+        const glm::vec4 box = frame_at(int(t) == shop_tab_ ? kShopTabOn : kShopTab, P(t == 0 ? 49 : 267, 154), kWhite);
+        items.draw(out, list[size_t(i)].label, (glm::vec2(box.x, box.y) + glm::vec2(box.z, box.w)) * 0.5f, int(W),
+                   i == selected_ ? kHighlight : kWhite, {0.5f, 0.5f});
+        rects_[size_t(i)].row = rects_[size_t(i)].control = box;
+    }
+
+    // The drum (CButtonCircularSweep): the tab's goods round a cylinder, the pick in front;
+    // further round, smaller and fainter, each with its cost under it.
+    const std::vector<int> ids = shop_list();
+    const glm::vec4 drum_b = Hud::frame_bounds(art, kDrum);
+    const glm::vec2 drum = P(252, 351);
+    frame_at(kDrum, drum, kWhite);
+    const float drum_w = drum_b.z - drum_b.x, radius = drum_w * 0.5f - 30, spacing = drum_w * 2 / 5;
+    const int n = int(ids.size());
+    std::vector<std::pair<float, int>> order;   // furthest first
+    for (int j = 0; j < n; ++j) {
+        float off = std::fmod(float(j) - shop_drum_, float(n));
+        if (off > n * 0.5f) off -= float(n);
+        if (off < -n * 0.5f) off += float(n);
+        order.emplace_back(off, j);
+    }
+    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return std::abs(a.first) > std::abs(b.first); });
+    const glm::vec4 coin_b = Hud::frame_bounds(art, kCoin);
+    for (const auto& [off, j] : order) {
+        const float angle = off * spacing / radius;
+        if (std::abs(angle) >= 1.5707963f) continue;
+        const float x = std::sin(angle) * radius, size = std::cos(angle) * 0.6f + 0.4f, alpha = std::cos(angle) * 0.8f + 0.2f;
+        const Shop::Item& it = shop->items()[size_t(ids[size_t(j)])];
+        const glm::vec4 c(1, 1, 1, alpha);
+        if (icons) hud.draw_frame(out, *icons, it.icon, drum + glm::vec2(x, 0) * k, icon_k * size, c);
+        // The cost and the credits sign after it.
+        const std::string cost = std::to_string(shop->cost(it.index));
+        const glm::vec2 at = drum + glm::vec2(x, 50 * size) * k;
+        const float tw = items.measure(cost, int(W)).x;
+        items.draw(out, cost, at, int(W), c, {0.5f, 0.5f});
+        const glm::vec2 coin = glm::vec2(coin_b.z - coin_b.x, coin_b.w - coin_b.y) * k * size * 0.6f;
+        hud.draw_frame(out, art, kCoin, at + glm::vec2(tw * 0.5f + 3 * k, -coin.y * 0.5f) - glm::vec2(coin_b.x, coin_b.y) * k * size * 0.6f,
+                       k * size * 0.6f, c);
+    }
+    // The items either side of the pick turn the drum when touched.
+    const float side_x = std::sin(spacing / radius) * radius;
+    for (int side = 0; side < 2; ++side) {
+        const glm::vec2 c = drum + glm::vec2(side == 0 ? -side_x : side_x, 0) * k;
+        shop_sides_[side] = {c - glm::vec2(45, 50) * k, c + glm::vec2(45, 70) * k};
+    }
+    shop_arrows_[0] = frame_at(kArrowLeft, P(39, 322), kWhite);
+    shop_arrows_[1] = frame_at(kArrowRight, P(442, 322), kWhite);
+    for (glm::vec4& a : shop_arrows_) a += glm::vec4(-12, -12, 12, 12) * k;   // easier to hit
+
+    // The pick: "BUY: <name>" and what it does.
+    if (pick >= 0) {
+        const Shop::Item& it = shop->items()[size_t(pick)];
+        std::string line = text("FPS_SHOP_BUY");
+        if (const size_t p = line.find("%s"); p != std::string::npos) line.replace(p, 2, text(it.name));
+        coded(line, P(253, 230));
+        items.draw(out, text(it.description), P(253, 470), int(400 * k), kWhite, {0.5f, 0.5f});
+    }
+    // BUY (Owned once a lasting upgrade is had), faint when it cannot be bought.
+    if (rows_here.size() > 2) {
+        const int i = rows_here[2];
+        const bool can = pick >= 0 && combat && shop->can_buy(pick, *combat, s);
+        const glm::vec4 color(1, 1, 1, can ? 1.0f : 0.45f);
+        const glm::vec4 box = frame_at(can && i == selected_ ? kSmallButtonOn : kSmallButton, P(89, 511), color);
+        items.draw(out, list[size_t(i)].label, (glm::vec2(box.x, box.y) + glm::vec2(box.z, box.w)) * 0.5f, int(W), color, {0.5f, 0.5f});
+        rects_[size_t(i)].row = rects_[size_t(i)].control = box;
     }
 }
 

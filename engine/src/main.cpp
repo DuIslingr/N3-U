@@ -51,6 +51,7 @@
 #include "game/scene.h"
 #include "game/pause_menu.h"
 #include "game/settings.h"
+#include "game/shop.h"
 #include "game/touch_controls.h"
 #include "render/renderer.h"
 #include "render/text.h"
@@ -79,6 +80,7 @@ struct Options {
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
+    int credits = -1;           // the credits to hold (the Military Shop), instead of the saved ones
     int loading_screen = -1;
     float death_screen = -1;    // headless: draw the death screen this long after it opened
     float end_screen = -1;      // headless: draw the end-of-level screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
@@ -153,6 +155,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--power-test") o.power_test = std::stof(next());
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
+        else if (a == "--credits") o.credits = std::stoi(next());
         else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
         else if (a == "--death-screen") o.death_screen = std::stof(next());
         else if (a == "--end-screen") o.end_screen = std::stof(next());
@@ -471,7 +474,11 @@ int main(int argc, char** argv) {
             TouchControls touch(hud);   // the Touch scheme's on-screen controls
             const std::string settings_path = headless ? std::string() : Settings::default_path();
             Settings settings = Settings::load(settings_path);
+            if (opt.credits >= 0) settings.credits = opt.credits;
             PauseMenu menu;
+            Shop shop;   // the Military Shop on the pause page
+            shop.load(gol);
+            if (!shop.items().empty()) menu.shop = &shop, menu.combat = &combat;
             LensFlares flares(scene, logic);
             DeathScreen death;
             EndLevelScreen end_screen;
@@ -547,6 +554,8 @@ int main(int argc, char** argv) {
                     hs.grenades = combat.grenades_enabled && logic.controls.items;
                     hs.grenade_count = combat.grenades;
                     hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
+                    hs.core = combat.core;
+                    if (combat.core >= 0) hs.core_left = (hs.shield - 1) / std::max(combat.core_percent / 100, 1e-3f);
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
                     hud.frame(f, w, h, hs, hud_sprites);
@@ -657,6 +666,7 @@ int main(int argc, char** argv) {
                             ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
                 combat.start();
                 combat.campaign_loadout(opt.level);
+                shop.apply_owned(combat, settings);
                 viewmodel.start();
                 hud.start();
                 flares.start();
@@ -686,6 +696,7 @@ int main(int argc, char** argv) {
                 logic.start();
                 combat.start();
                 combat.campaign_loadout(opt.level);
+                shop.apply_owned(combat, settings);
                 viewmodel.start();
                 hud.start();
                 flares.start();
@@ -716,6 +727,7 @@ int main(int argc, char** argv) {
                     scene.load_level(opt.level, logic.checkpoint_section());
                     loading.active = false;
                     logic.respawn_at_checkpoint();
+                    shop.apply_owned(combat, settings);   // what was bought for good stays
                     viewmodel.start();
                     hud.start();
                     flares.start();
@@ -1036,8 +1048,9 @@ int main(int argc, char** argv) {
                         if (c == '.') continue;
                         using K = PauseMenu::Key;
                         const K k = c == 'u' ? K::Up : c == 'd' ? K::Down : c == 'l' ? K::Left : c == 'r' ? K::Right : c == 'b' ? K::Back : K::Activate;
-                        menu.key(k, settings);
+                        if (menu.key(k, settings) == PauseMenu::Action::Resume) menu.open = false;
                     }
+                    menu.update(1.0f);
                 }
                 if (opt.scripts && !logic.player_locked()) combat.draw(overlay, shot.camera, opt.width, opt.height);
                 if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
@@ -1465,6 +1478,7 @@ int main(int argc, char** argv) {
                     if (end_screen.open && !end_was_open) SDL_SetWindowRelativeMouseMode(window, false), fire_held = aim_held = false;
                     end_was_open = end_screen.open;
                     if (end_screen.open && !menu.open) end_screen.update(raw_dt);
+                    if (menu.open) menu.update(raw_dt);
                     if (death.open && !menu.open) {
                         death.update(raw_dt);
                         if (death.music_due() && logic.audio) logic.audio->play("m_mission_failed");

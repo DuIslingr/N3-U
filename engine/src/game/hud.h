@@ -31,6 +31,10 @@ public:
         bool grenades = false;
         int grenade_count = 0;
         float shield = 1;            // the player's health, 0..1 (the shield bar at the top)
+        // A shield core's overcharge (the Military Shop): its kind (0 Vanguard, 1 Crypton,
+        // 2 Plasma; -1 none) and how much of it is left, 0..1 (CHud::SetShieldPercent).
+        int core = -1;
+        float core_left = 0;
         std::string weapon_sprite;   // the weapon's .bsprite: frame 0 is its icon
     };
     // A prompt with touch-button glyphs (^NN^: frames of tutorial.bsprite) drawn inline,
@@ -107,6 +111,7 @@ private:
     bool large_ = false;
     size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1), shield_ = size_t(-1);
     float shield_shown_ = -1;
+    int core_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
     bool frost_shown_ = false;
     glm::ivec2 placed_for_{0};

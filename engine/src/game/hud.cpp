@@ -35,7 +35,7 @@ void Hud::start() {
     // HUDShield (nv_hud_shield.bdae): the bar's elements go out along its "shield" clip as
     // the shield (the player's health) drops (CHudShieldNode::UpdatePercent).
     shield_ = scene_.spawn_model("nv_hud_shield.bdae", true, "nv_hud_shield.bdae", "shield");
-    shield_shown_ = -1;
+    shield_shown_ = -1, core_shown_ = -1;
     if (shield_ != size_t(-1)) scene_.play_clip(shield_, "shield", false);
     // HUD_Frost: its clip runs as the frost spreads.
     frost_object_ = scene_.spawn_model("hud_frost.bdae", true, "hud_frost.bdae", "hud_frost");
@@ -359,9 +359,17 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& spri
         visible_ = s.visible;
     }
     if (s.grenades != grenades_) scene_.set_node_visible(object_, "grenade_button", s.grenades), grenades_ = s.grenades;
-    if (Scene::ClipState cs; shield_ != size_t(-1) && std::abs(s.shield - shield_shown_) > 1e-3f && scene_.clip_state(shield_, cs)) {
-        shield_shown_ = s.shield;
-        scene_.set_clip_time(shield_, (1 - std::clamp(s.shield, 0.0f, 1.0f)) * cs.length * 0.999f / 1000.0f);
+    if (shield_ != size_t(-1) && s.core != core_shown_) {   // HUDShield's states: Normal, or a core's bar
+        static const char* const kClips[] = {"shield_upgrade_vanguard", "shield_upgrade_crypton", "shield_upgrade_plasma"};
+        scene_.play_clip(shield_, s.core >= 0 && s.core < 3 ? kClips[s.core] : "shield", false);
+        core_shown_ = s.core, shield_shown_ = -1;
+    }
+    const float fill = s.core >= 0 ? s.core_left : s.shield;
+    if (Scene::ClipState cs; shield_ != size_t(-1) && std::abs(fill - shield_shown_) > 1e-3f && scene_.clip_state(shield_, cs)) {
+        shield_shown_ = fill;
+        // The cores' clips fill with time (CHud::SetShieldPercent), the shield's empties.
+        const float t = s.core >= 0 ? std::clamp(fill, 0.0f, 1.0f) : 1 - std::clamp(fill, 0.0f, 1.0f);
+        scene_.set_clip_time(shield_, t * cs.length * 0.999f / 1000.0f);
     }
     if (!s.visible) return;
     Scene::CameraView cv;

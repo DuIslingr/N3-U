@@ -7,7 +7,10 @@
 //   Controls: Sensitivity, Left-Handed (touch), Invert Y-Axis, Aim (mouse: hold or toggle)
 //   Display: Resolution (16:9, up to 3840x2160), Display Mode, V-Sync, Frame Rate
 //   Advanced: Aim Assist, Auto-Switch, Auto-Leveling, Metric
-// Driven by the keys, the mouse or a finger; settings change as they are picked.
+// Driven by the keys, the mouse or a finger; settings change as they are picked. Beside the
+// PAUSE page's buttons, the Military Shop (the original's panel there): its ITEM and UPGRADE
+// tabs, a drum of what they sell (the arrows or Left/Right turn it), the pick's name and
+// description, BUY, and the credits held.
 #pragma once
 
 #include <functional>
@@ -22,6 +25,8 @@
 
 namespace nova {
 
+class Combat;
+class Shop;
 class TextRenderer;
 
 class PauseMenu {
@@ -32,6 +37,10 @@ public:
     // String lookup (the game's string tables: "FPS_PAUSE" ...); the id itself if missing.
     std::function<std::string(const std::string&)> text = [](const std::string& id) { return id; };
     bool touch = false;   // the touch scheme: Left-Handed shows, the mouse aim option does not
+    // The Military Shop on the pause page (without them, the objectives there instead).
+    const Shop* shop = nullptr;
+    Combat* combat = nullptr;
+    void update(float dt);   // the shop's drum turning
 
     enum class Action { None, Resume, Changed, DisplayChanged, RestartCheckpoint, RestartLevel, Exit };
     enum class Key { Up, Down, Left, Right, Activate, Back };
@@ -69,6 +78,18 @@ private:
         glm::vec4 row{0}, control{0};               // x0, y0, x1, y1
     };
     std::vector<Rect> rects_;
+    // The shop: the tab (0 ITEM, 1 UPGRADE, which it opens on), the drum's pick in it and
+    // where the drum stands (easing to the pick, in items), the arrows' and side items' boxes.
+    int shop_tab_ = 1, shop_pick_ = 0;
+    float shop_drum_ = 0;
+    glm::vec4 shop_arrows_[2]{}, shop_sides_[2]{};
+    std::vector<int> shop_list() const;
+    int shop_selected() const;   // the upgrade under the drum's pick; -1 if none
+    void shop_turn(int d);
+    // The shop in the pause page's panel, `origin` the original's menu origin there and `k`
+    // the art's scale (its layout is in the 960x640 sheet's pixels).
+    void draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRenderer& title, TextRenderer& items,
+                   const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float k, float W);
 };
 
 }  // namespace nova

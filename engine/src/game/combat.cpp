@@ -324,6 +324,7 @@ void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
     if (const int hit = ray_target(eye, aim, 500.0f, hit_t, hit_at); hit >= 0 && line_clear(eye, hit_at - aim * 0.2f)) {
         Target& t = targets_[size_t(hit)];
         if (!t.actor || t.hostile) t.paralyzed = t.paralyze_time;
+        if (paralyze_damage > 0 && t.actor && t.hostile) apply_damage(t, paralyze_damage, true);
     }
     for (Target& t : targets_) {
         if (!t.actor || !t.hostile || !alive(t)) continue;
@@ -351,13 +352,14 @@ void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
         const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
         const glm::vec3 to = c - eye;
         const float d = glm::length(to);
-        if (d > 12.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.7f || !line_clear(eye, c)) continue;
+        const float reach = 12.0f * repel_scale;
+        if (d > reach || d < 1e-3f || glm::dot(to / d, aim) < 0.7f || !line_clear(eye, c)) continue;
         killing_repel_ = true;
-        apply_damage(t, 6.0f * (1 - d / 14.0f), true);
+        apply_damage(t, 6.0f * (1 - d / (reach + 2)), true);
         killing_repel_ = false;
         // Knocked back along the push, kept on the walkable area.
         if (t.mobile && alive(t)) {
-            t.pos += flat * (4.0f * (1 - d / 12.0f));
+            t.pos += flat * (4.0f * (1 - d / reach));
             stay_on_mesh(t);
             if (!t.clip_hurt.empty()) t.state = Target::State::Hurt, t.timer = 0, play(t, t.clip_hurt, false);
             scene_.set_object_pose(t.object, t.pos, t.yaw);
@@ -435,6 +437,27 @@ int Combat::cycle_weapon(int step) const {
     return current_;
 }
 
+void Combat::take_core(int kind, float percent) {
+    core = kind, core_percent = percent;
+    player_health = player_max_health * (1 + percent / 100);
+    critical_ = false;
+}
+
+bool Combat::can_refill() const {
+    for (size_t i = 0; i < owned_.size(); ++i) {
+        if (!owned_[i] || int(i) == vehicle_weapon_ || int(i) == mounted_gun_ || int(i) == mech_weapon_ || reserve_[i] < 0) continue;
+        if (clip_[i] < weapons_[i].clip || reserve_[i] < weapons_[i].reserve) return true;
+    }
+    return false;
+}
+
+void Combat::refill_weapons() {
+    for (size_t i = 0; i < owned_.size(); ++i) {
+        if (!owned_[i] || int(i) == vehicle_weapon_ || int(i) == mounted_gun_ || int(i) == mech_weapon_ || reserve_[i] < 0) continue;
+        clip_[i] = weapons_[i].clip, reserve_[i] = weapons_[i].reserve;
+    }
+}
+
 bool Combat::unlock_weapon(const std::string& name) {
     if (lower(name) == "grenade") return grenades_enabled = true;
     const int i = find_weapon(name);
@@ -486,7 +509,7 @@ bool Combat::give_ammo(const std::string& name, int amount) {
 void Combat::respawn() {
     if (!player_dead) return;
     player_dead = false;
-    player_health = player_max_health;
+    player_health = player_max_health, core = -1;
     protect_ = 3.0f;
     dead_timer_ = 0;
     logic_.respawn_player();
@@ -1774,6 +1797,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         const float v = std::exchange(player_.landing_speed, 0.0f);
         if (logic_.fall_damage && v > 13.0f) damage_player((v - 13.0f) * 8.0f, player_.center);
     }
+    if (core >= 0 && player_health <= player_max_health) core = -1;   // the core's charge is spent
     regen_delay_ -= dt;
     if (regen_delay_ <= 0 && player_health < player_max_health)
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);

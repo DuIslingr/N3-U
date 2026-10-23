@@ -206,6 +206,23 @@ public:
     void spend_round() { int& c = clip_[size_t(current_)]; c = std::max(c - 1, 0); }   // QTE_Fire
     int grenades = 0;
     bool grenades_enabled = true;
+    // The Military Shop's (CUpgradesManager::ApplyUpgrade). A shield core: the shield
+    // overcharged by `percent` of its maximum (the HUD's UpgradeVanguard/Crypton/Plasma bar),
+    // until it is back under the maximum; only bought at or under it.
+    int core = -1;            // 0 Vanguard, 1 Crypton, 2 Plasma; -1 none
+    float core_percent = 0;
+    bool core_allowed() const { return player_health <= player_max_health; }
+    void take_core(int kind, float percent);
+    // Instant Ammo Refill (CWeaponManager::RefillWeapons): every weapon held to its full clip
+    // and reserve; allowed while one is short.
+    bool can_refill() const;
+    void refill_weapons();
+    // Mines (the Mine Pack) are not in this port yet.
+    bool mines_enabled = false;
+    int mines = 0;
+    // Repel's reach scaled (the Repel Upgrade, CPhysicsObjectComponent::ComputeRepel) and
+    // damage added to the Paralyze shot (the Paralyze Upgrade, CProjectileComponent::GetDamage).
+    float repel_scale = 1, paralyze_damage = 0;
     // Special powers (CPowerManager): Repel, the plasma hand, pushes back and hurts what is
     // in front; 5 s to recharge. The view model plays its state when taken.
     bool power_ready() const { return power_cooldown_ <= 0; }

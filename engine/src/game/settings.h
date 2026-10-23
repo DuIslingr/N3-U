@@ -25,6 +25,9 @@ struct Settings {
     int chapters = 1;
     // Credits (the shop's currency), earned at the end of each level.
     int credits = 0;
+    // The Military Shop's lasting purchases (weapons, the Repel and Paralyze upgrades), a bit
+    // per upgrade (gol 4510's index).
+    int upgrades = 0;
 
     // The settings file; empty if there is no preferences folder.
     static std::string default_path();
