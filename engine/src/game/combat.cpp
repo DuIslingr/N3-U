@@ -453,7 +453,9 @@ void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_p
         const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
         const float d = glm::distance(at, c);
         if (d >= r || !line_clear(at + glm::vec3(0, 0, 0.2f), c)) continue;
+        damage_cause_ = Cause::Explosion;
         apply_damage(t, damage * (1 - d / r), by_player);
+        damage_cause_ = Cause::Shot;
     }
     const float d = glm::distance(at, player_center());
     if (d < r && line_clear(at + glm::vec3(0, 0, 0.2f), player_.eye())) {
@@ -1612,13 +1614,26 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
         sound(t.hurt_sounds, &at);
         t.hurt_sound_wait = 1.2f;
     }
-    // Flinch now and then.
+    // Flinch now and then: ducking from a blast, else by where the shot struck (the head,
+    // a leg by its side, the front).
     if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee &&
         std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f) {
+        std::string clip;
+        if (damage_cause_ == Cause::Explosion) {
+            clip = state_variant(t, "DuckExplosion" + std::to_string(std::uniform_int_distribution<int>(1, 4)(rng_)));
+        } else if (damage_point_) {
+            const float up = (damage_point_->z - t.pos.z) / std::max(t.height, 0.1f);
+            const float y = glm::radians(t.yaw);
+            const float side = glm::dot(glm::vec2(*damage_point_ - t.pos), glm::vec2(std::cos(y), std::sin(y)));   // + its right
+            if (t.headshots && up > 0.84f) clip = state_variant(t, "HurtHead");
+            else if (up < 0.45f) clip = state_variant(t, side < 0 ? "HurtLeftLeg" : "HurtRightLeg");
+        }
+        if (clip.empty()) clip = state_variant(t, "HurtFront");
+        if (clip.empty()) clip = t.clip_hurt;
         t.state = Target::State::Hurt;
         t.timer = 0;
         t.hurt_cooldown = 2.5f;
-        play(t, t.clip_hurt, false);
+        play(t, clip, false);
     }
 }
 
@@ -1647,6 +1662,15 @@ bool Combat::effect(const std::string& name, const glm::vec3& at, const glm::vec
     return scene_.particles().start(name, m) >= 0;
 }
 
+std::string Combat::state_variant(const Target& t, const std::string& state) {
+    const LevelLogic::Object* o = logic_.object(t.id);
+    if (!o || o->index >= scene_.level().objects.size()) return {};
+    std::vector<std::string> clips;
+    for (const std::string& c : logic_.state_clips(scene_.level().objects[o->index].type, state))
+        if (scene_.clip_length(t.object, c) > 0) clips.push_back(c);
+    return clips.empty() ? std::string() : clips[std::uniform_int_distribution<size_t>(0, clips.size() - 1)(rng_)];
+}
+
 void Combat::die(Target& t) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
@@ -1667,9 +1691,16 @@ void Combat::die(Target& t) {
         const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.6f);
         sound(t.death_sounds, &at);
     }
-    if (t.actor && !t.clip_deaths.empty()) {
+    // The death by its cause (the states set's DeathHeadShot, DeathExplosion, DeathFlames,
+    // DeathWeak), else any death clip.
+    std::string death = killing_headshot_ ? state_variant(t, "DeathHeadShot")
+                      : damage_cause_ == Cause::Explosion ? state_variant(t, "DeathExplosion")
+                      : damage_cause_ == Cause::Fire ? state_variant(t, "DeathFlames") : std::string();
+    if (death.empty()) death = state_variant(t, "DeathWeak");
+    if (death.empty() && !t.clip_deaths.empty()) death = t.clip_deaths[std::uniform_int_distribution<size_t>(0, t.clip_deaths.size() - 1)(rng_)];
+    if (t.actor && !death.empty()) {
         t.state = Target::State::Dying;
-        play(t, t.clip_deaths[std::uniform_int_distribution<size_t>(0, t.clip_deaths.size() - 1)(rng_)], false);
+        play(t, death, false);
     } else {
         t.state = Target::State::Dead;
         if (!t.actor) logic_.show(*o, false);
@@ -1686,7 +1717,7 @@ void Combat::die(Target& t) {
         for (Target& other : targets_) {
             if (&other == &t || !alive(other)) continue;
             const float d = glm::distance(other.pos, t.pos);
-            if (d < 6.0f) apply_damage(other, 40.0f * (1 - d / 6.0f), true);
+            if (d < 6.0f) damage_cause_ = Cause::Explosion, apply_damage(other, 40.0f * (1 - d / 6.0f), true), damage_cause_ = Cause::Shot;
         }
         const float d = glm::distance(player_center(), c);
         if (d < 6.0f) damage_player(40.0f * (1 - d / 6.0f), c);
@@ -1771,8 +1802,10 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         hit_marker_ = 0.15f;
         if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
         killing_headshot_ = head;
+        damage_point_ = &point;
+        if (weapon_types_[size_t(current_)] == "FlameThrower_Player") damage_cause_ = Cause::Fire;
         apply_damage(t, dmg, true);
-        killing_headshot_ = false;
+        killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot;
     } else if (wall) {
         impact(w.impacts, material, end, normal);
     }

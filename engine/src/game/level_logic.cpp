@@ -995,6 +995,13 @@ std::string LevelLogic::state_clip(int type, const std::string& state) {
     return st ? st->clip : "";
 }
 
+std::vector<std::string> LevelLogic::state_clips(int type, const std::string& state) {
+    std::string name = state;
+    for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+    const AnimSounds::State* st = anim_sounds_->state(type, name);
+    return st ? st->clips : std::vector<std::string>{};
+}
+
 bool LevelLogic::look_target(float& yaw, float& pitch) {
     if (restore_view_) {
         restore_view_ = false;

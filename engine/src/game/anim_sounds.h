@@ -35,6 +35,7 @@ public:
     };
     struct State {
         std::string clip;
+        std::vector<std::string> clips;                      // every clip of it (one is picked)
         std::vector<Event> sounds;
         bool loop = false;
         std::string next;                                    // the state after its clip ("" none)
