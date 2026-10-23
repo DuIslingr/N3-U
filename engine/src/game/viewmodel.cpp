@@ -31,7 +31,14 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
     Clips& c = clips_[weapon];
     const GolType* t = type_named(gol_, weapon);
     if (!t) return c;
-    if (const Value* w = resolved_template(*t, gol_, kCompWeapon); w && w->size() > 1 && (*w)[1].type == Value::String) c.node = (*w)[1].s;
+    if (const Value* w = resolved_template(*t, gol_, kCompWeapon); w && w->size() > 4) {
+        if ((*w)[1].type == Value::String) c.node = (*w)[1].s;
+        // Fire mode: [9] muzzle object, [10] its ironsight one, [11] the node.
+        if (const Value& modes = (*w)[4]; modes.size() > 0 && modes[0].size() > 11) {
+            c.muzzle_type = modes[0][9].i, c.aim_muzzle_type = modes[0][10].i;
+            if (modes[0][11].type == Value::String) c.muzzle_node = modes[0][11].s;
+        }
+    }
     // Each state: [0] name, [1] type, [2] loops, [6] the next state's index, [11] clips
     // ({name, speed, ...}).
     if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1)
@@ -59,6 +66,7 @@ void ViewModel::start() {
         scene_.set_object_viewmodel(cockpit_);
         scene_.set_object_visible(cockpit_, false);
     }
+    muzzles_.clear(), flashing_ = -1;   // their objects went with the old level
     weapon_.clear(), base_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
@@ -254,6 +262,53 @@ void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pit
     const glm::mat4 view = glm::rotate(glm::rotate(glm::translate(glm::mat4(1), eye), glm::radians(yaw_deg), glm::vec3(0, 0, 1)),
                                        glm::radians(pitch_deg), glm::vec3(1, 0, 0));
     scene_.set_object_transform(rig, view * glm::inverse(cam_rig));
+    if (rig == object_) place_muzzle();
+}
+
+void ViewModel::flash(bool aiming) {
+    if (object_ == size_t(-1) || !visible_ || weapon_.empty()) return;
+    const Clips& c = clips(weapon_);
+    const int type = aiming && c.aim_muzzle_type >= 0 ? c.aim_muzzle_type : c.muzzle_type;
+    if (type < 0 || c.muzzle_node.empty()) return;
+    auto [it, fresh] = muzzles_.try_emplace(type);
+    Muzzle& m = it->second;
+    if (fresh) {
+        m.object = scene_.spawn_object(type, -1100 - int(muzzles_.size()), glm::vec3(0), 0);
+        if (m.object == size_t(-1)) return;
+        scene_.set_object_viewmodel(m.object);
+        // Its states set's first state (Idle): one clip per shot, at random.
+        if (const GolType* t = gol_.count(type) ? &gol_.at(type) : nullptr)
+            if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1 && (*v)[1].size() > 0)
+                if (const Value& st = (*v)[1][0]; st.size() > 11)
+                    for (const Value& clip : st[11].list)
+                        if (clip.size() > 0 && clip[0].type == Value::String) m.clips.push_back(clip[0].s);
+    }
+    if (m.object == size_t(-1) || m.clips.empty()) return;
+    if (flashing_ >= 0 && flashing_ != type) scene_.set_object_visible(muzzles_[flashing_].object, false);
+    scene_.play_clip(m.object, m.clips[size_t(std::rand()) % m.clips.size()], false);
+    scene_.set_object_visible(m.object, true);
+    flashing_ = type;
+    place_muzzle();
+}
+
+// The muzzle object follows the weapon's muzzle node and goes once its clip is over
+// (CWeaponComponent::UpdateMuzzleObjects).
+void ViewModel::place_muzzle() {
+    if (flashing_ < 0) return;
+    const Muzzle& m = muzzles_[flashing_];
+    const Clips& c = clips(weapon_);
+    if (!visible_ || lowered_ || scene_.clip_finished(m.object)) {
+        scene_.set_object_visible(m.object, false), flashing_ = -1;
+        return;
+    }
+    scene_.set_object_transform(m.object, scene_.object_matrix(object_, c.node + "/" + c.muzzle_node));
+}
+
+bool ViewModel::muzzle(glm::vec3& out) const {
+    if (object_ == size_t(-1) || !visible_ || weapon_.empty()) return false;
+    auto it = clips_.find(weapon_);
+    if (it == clips_.end() || it->second.muzzle_node.empty()) return false;
+    return scene_.node_position(object_, it->second.node + "/" + it->second.muzzle_node, out);
 }
 
 }  // namespace nova

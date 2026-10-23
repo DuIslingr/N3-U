@@ -252,7 +252,7 @@ int Game::run_screenshot() {
                 player.pitch = glm::degrees(std::asin(glm::clamp(aim.z, -1.0f, 1.0f)));
                 ci.fire = true;
             }
-            combat.update(kPhysicsStep, ci, player.eye(), aim);
+            fire_step(kPhysicsStep, ci, player.eye(), aim, false);
             combat.push_player_out();
             if (opt.combat_test > 0 && (report += kPhysicsStep) >= 1.0f) {
                 report = 0;

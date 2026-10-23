@@ -18,6 +18,7 @@
 #include <functional>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,10 @@ struct WeaponDef {
     std::string reload_sound, loop_sound, end_sound;
     Impacts impacts;
     std::string sprite;                // HUD icon and crosshair (.bsprite)
+    // The bullet (CComponentProjectile): its speed (m/s) and the object it carries
+    // (NPC_AssaultRifle_BulletTrail's streak; -1: none).
+    float bullet_speed = 0;
+    int trail_type = -1;
 };
 
 // An NPC command (CAIComponent::PushGoal_*, from NpcCmd_* script calls): goals run in
@@ -193,6 +198,9 @@ public:
     // The player's weapon, for the view model: its gol type, and what it is doing.
     const std::string& weapon_type() const { return weapon_types_[size_t(current_)]; }
     bool reloading() const { return reload_left_ > 0; }
+    // Where the view model's muzzle is now: the player's bullets leave from it (null: a
+    // point below and right of the eye).
+    void set_muzzle(const glm::vec3* at) { has_muzzle_ = at != nullptr; if (at) muzzle_ = *at; }
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
@@ -434,10 +442,18 @@ private:
         glm::vec4 color;
         int owner;                     // target index
     };
+    // A bullet's streak (CProjectileComponent::LaunchBullet / UpdateBullet): its trail
+    // object flies from the muzzle to where the shot ends at the bullet's speed, growing
+    // ("start"), then fades there ("end").
     struct Tracer {
-        glm::vec3 from, to;
-        float life;
+        size_t object;
+        int type;
+        glm::vec3 from, pos, dir, end;
+        float speed;
+        bool ending = false;
     };
+    void launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to);
+    void update_trails(float dt);
     struct Spark {
         glm::vec3 pos;
         float life;
@@ -591,6 +607,9 @@ private:
     int next_spawn_id_ = 2000000;
     std::vector<Bolt> bolts_;
     std::vector<Tracer> tracers_;
+    std::unordered_map<int, std::vector<size_t>> trail_pool_;   // hidden trail objects, per type
+    glm::vec3 muzzle_{0};
+    bool has_muzzle_ = false;
     std::vector<Spark> sparks_;
     std::vector<WeaponDef> weapons_;
     std::vector<int> clip_, reserve_;

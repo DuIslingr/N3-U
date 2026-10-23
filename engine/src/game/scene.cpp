@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <regex>
+#include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -1029,8 +1030,20 @@ const Scene::AnimatedInstance* Scene::object_anim(size_t object) const {
 }
 
 int Scene::find_node(const LoadedModel& m, const std::string& name) const {
+    auto named = [&](size_t n, std::string_view s) { return m.cpu.nodes[n].name == s || m.cpu.nodes[n].id == s; };
+    // "parent/child": the first child of that name under that parent (the view model has a
+    // "muzzle" under each WEAPON_* node).
+    if (const size_t slash = name.find('/'); slash != std::string::npos) {
+        const std::string_view up(name.data(), slash), child(name.data() + slash + 1, name.size() - slash - 1);
+        for (size_t n = 0; n < m.cpu.nodes.size(); ++n) {
+            if (!named(n, child)) continue;
+            for (int p = n < m.parent.size() ? m.parent[n] : -1; p >= 0; p = m.parent[size_t(p)])
+                if (named(size_t(p), up)) return int(n);
+        }
+        return -1;
+    }
     for (size_t n = 0; n < m.cpu.nodes.size(); ++n)
-        if (m.cpu.nodes[n].name == name || m.cpu.nodes[n].id == name) return int(n);
+        if (named(n, name)) return int(n);
     return -1;
 }
 

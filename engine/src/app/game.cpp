@@ -571,6 +571,14 @@ void Game::step_logic(float dt) {
 }
 
 // StartJump / StartLanding: the weapon's own clips (ironsight ones while aiming).
+void Game::fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming) {
+    glm::vec3 at;
+    combat.set_muzzle(viewmodel.muzzle(at) ? &at : nullptr);
+    const size_t shots = combat.stats().shots;
+    combat.update(dt, in, eye, aim);
+    if (combat.stats().shots != shots) viewmodel.flash(aiming);
+}
+
 void Game::movement_states(bool aim) {
     if (player.jumps != view_jumps) view_jumps = player.jumps, viewmodel.movement_state(aim ? "AimJump" : "Jump");
     static const char* const kLanding[2][3] = {{"Landing", "LandingMed", "LandingHi"}, {"LandingAim", "LandingAimMed", "LandingAimHi"}};

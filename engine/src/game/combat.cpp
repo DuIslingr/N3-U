@@ -687,6 +687,9 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                     w.damage_far = num(*pr, 1, 1), w.damage_near = num(*pr, 2, 2);
                     w.far_dist = num(*pr, 3, 30), w.near_dist = num(*pr, 4, 30);
                     w.impacts = read_impacts(*pr);
+                    // [8] speed (per ms times 1000: CProjectileComponent::LaunchBullet), [36]
+                    // the object it carries.
+                    if (pr->size() > 36) w.bullet_speed = num(*pr, 8, 0), w.trail_type = (*pr)[36].i;
                 }
             }
         }
@@ -722,6 +725,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
 void Combat::start(bool keep_stats) {
     nav_.build(scene_.level());
     live_grenades_.clear();   // their objects went with the old level
+    tracers_.clear(), trail_pool_.clear();
     throw_delay_ = -1;
     targets_.clear();
     spawners_.clear();
@@ -1793,8 +1797,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     glm::vec3 point;
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
     const glm::vec3 end = hit >= 0 ? point : eye + dir * (wall ? wall_t * range : range);
-    const glm::vec3 muzzle = eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f;
-    tracers_.push_back({muzzle, end, 0.06f});
+    launch_trail(w, has_muzzle_ ? muzzle_ : eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f, end);
     if (hit >= 0) {
         Target& t = targets_[size_t(hit)];
         const float d = glm::distance(eye, point);
@@ -1918,8 +1921,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         b.pos = end;
     }
     bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
-    for (Tracer& t : tracers_) t.life -= dt;
-    tracers_.erase(std::remove_if(tracers_.begin(), tracers_.end(), [](const Tracer& t) { return t.life <= 0; }), tracers_.end());
+    update_trails(dt);
     for (Spark& s : sparks_) s.life -= dt;
     sparks_.erase(std::remove_if(sparks_.begin(), sparks_.end(), [](const Spark& s) { return s.life <= 0; }), sparks_.end());
 
@@ -2034,11 +2036,50 @@ void Combat::push_player_out() {
     }
 }
 
-void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const {
-    for (const Tracer& t : tracers_) {
-        const float a = t.life / 0.06f;
-        beam(o.world, t.from, t.to, 0.035f, {1.0f, 0.85f, 0.5f, 0.9f * a}, {1.0f, 0.7f, 0.3f, 0.2f * a}, eye);
+void Combat::launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to) {
+    const float len = glm::distance(from, to);
+    if (w.trail_type < 0 || w.bullet_speed <= 0 || len < 0.5f) return;
+    std::vector<size_t>& pool = trail_pool_[w.trail_type];
+    size_t object;
+    if (!pool.empty()) {
+        object = pool.back(), pool.pop_back();
+    } else {
+        object = scene_.spawn_object(w.trail_type, -4000 - int(tracers_.size()), from, 0);
+        if (object == size_t(-1)) return;
     }
+    scene_.play_clip(object, "start", false);
+    scene_.set_object_visible(object, true);
+    tracers_.push_back({object, w.trail_type, from, from, (to - from) / len, to, w.bullet_speed});
+}
+
+void Combat::update_trails(float dt) {
+    for (Tracer& t : tracers_) {
+        if (!t.ending) {
+            t.pos += t.dir * t.speed * dt;
+            if (glm::dot(t.end - t.pos, t.dir) <= 0) t.pos = t.end, t.ending = true, scene_.play_clip(t.object, "end", false);
+        } else if (scene_.clip_finished(t.object)) {
+            scene_.set_object_visible(t.object, false);
+            trail_pool_[t.type].push_back(t.object);
+            t.object = size_t(-1);
+            continue;
+        }
+        // The streak lies along its -Y from the head, flat in its XY plane: turned about the
+        // flight to face the eye, and no longer than the way flown (it grows to 7 m).
+        const glm::vec3 to_eye = last_eye_ - t.pos;
+        glm::vec3 side = glm::cross(t.dir, to_eye);
+        side = glm::length(side) > 1e-4f ? glm::normalize(side) : glm::vec3(1, 0, 0);
+        const float flown = glm::distance(t.from, t.pos);
+        glm::mat4 m(1);
+        m[0] = glm::vec4(side, 0);
+        m[1] = glm::vec4(t.dir * std::min(1.0f, flown / 7.0f), 0);
+        m[2] = glm::vec4(glm::cross(side, t.dir), 0);
+        m[3] = glm::vec4(t.pos, 1);
+        scene_.set_object_transform(t.object, m);
+    }
+    std::erase_if(tracers_, [](const Tracer& t) { return t.object == size_t(-1); });
+}
+
+void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const {
     for (const Bolt& b : bolts_) {
         const glm::vec3 tail = b.pos - glm::normalize(b.vel) * 1.2f;
         beam(o.world, tail, b.pos, 0.12f, glm::vec4(glm::vec3(b.color), 0), b.color, eye);

@@ -494,7 +494,7 @@ void Game::run_window() {
                     combat_in.fire = !locked && !logic.limited_active() && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
                 }
                 combat.aim_assist = settings.aim_assist, combat.auto_switch = settings.auto_switch;
-                combat.update(dt, combat_in, player.eye(), cam.forward());
+                fire_step(dt, combat_in, player.eye(), cam.forward(), aiming);
                 combat.push_player_out();
                 combat_in = {};
             }

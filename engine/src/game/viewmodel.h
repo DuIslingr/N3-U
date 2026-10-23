@@ -51,6 +51,12 @@ public:
     // over `ms` (a quarter of the way each 30 fps frame, then set).
     void arms_distort(bool on);
     void arms_distort_blend(float target, float ms);
+    // A shot (CWeaponComponent::ActivateMuzzleObjects): the weapon's muzzle object (its
+    // ironsight one while aiming) shown at the weapon's muzzle node for one of its clips.
+    void flash(bool aiming);
+    // Where the current weapon's muzzle is in the world (the bullets leave from it); false
+    // while no weapon is up.
+    bool muzzle(glm::vec3& out) const;
 
 private:
     // The weapon's states set (CStatesSetComponent): each state's type, whether it loops,
@@ -67,6 +73,10 @@ private:
         std::vector<State> states;
         std::unordered_map<std::string, int> index;
         std::string node;                                       // the WEAPON_* node shown for it
+        // The fire mode's muzzle objects (gol types; -1: none) and the node under `node`
+        // they sit at.
+        int muzzle_type = -1, aim_muzzle_type = -1;
+        std::string muzzle_node;
         const State* find(const std::string& name) const {
             auto it = index.find(name);
             return it == index.end() ? nullptr : &states[size_t(it->second)];
@@ -108,6 +118,14 @@ private:
     bool distort_ = false;
     float distort_blend_ = 0, distort_target_ = 0, distort_ms_ = 0;
     void update_camera_layer(float dt, const Clips& c);
+    // The muzzle objects, spawned when first fired: per gol type, its object and its clips.
+    struct Muzzle {
+        size_t object = size_t(-1);
+        std::vector<std::string> clips;
+    };
+    std::unordered_map<int, Muzzle> muzzles_;
+    int flashing_ = -1;            // the muzzle type shown
+    void place_muzzle();
 };
 
 }  // namespace nova

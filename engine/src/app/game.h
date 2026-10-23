@@ -74,6 +74,9 @@ private:
     // A fixed step of level logic (and what it sets off: sections, respawns, level ends).
     void step_logic(float dt);
     void movement_states(bool aim);
+    // A combat step: the player's bullets leave from the view model's muzzle, which flashes
+    // for each shot fired.
+    void fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming);
     void arms_distort();   // the level logic's Test_distort_* requests, to the view model
     void apply_sound();
     void update_frost(float dt);
