@@ -56,12 +56,17 @@ LevelLogic::Object* LevelLogic::object(int id) {
 
 void LevelLogic::load_objects() {
     const Level& level = scene.level();
+    std::unordered_set<int> templated;   // gol types whose template scripts are loaded
     for (size_t i = 0; i < level.objects.size(); ++i) {
         const LevelObject& o = level.objects[i];
-        // Scripts: every chunk defines Obj<id>_<Event> functions in the shared state.
+        // Scripts: every chunk defines Obj<id>_<Event> functions in the shared state; the
+        // object types' templates define Templ<type>_<Event> for objects without their own.
         std::vector<std::string> chunks;
         collect_scripts(o.fields, chunks);
         for (const auto& [comp, v] : o.components) collect_scripts(v, chunks);
+        if (auto g = gol.find(o.type); o.kind == "object" && g != gol.end() && templated.insert(o.type).second)
+            for (const auto& [comp, flag] : resolved_components(g->second, gol))
+                if (const Value* t = resolved_template(g->second, gol, comp)) collect_scripts(*t, chunks);
         for (const std::string& c : chunks) {
             ++stats_.chunks;
             if (!runtime_.load(c, o.kind + " " + o.name + " #" + std::to_string(i))) ++stats_.chunk_errors;
