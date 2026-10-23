@@ -21,6 +21,7 @@ namespace nova {
 struct GpuTexture {
     SDL_GPUTexture* texture = nullptr;
     bool has_alpha = false;
+    int width = 0, height = 0;
 };
 
 // A model's vertex/index data on the GPU, with one range per primitive.
@@ -54,6 +55,7 @@ struct DrawItem {
     const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
     bool sky = false;                           // skybox: drawn first, around the camera, at the far depth
     bool viewmodel = false;                     // first-person hands and weapon: drawn last, in front of the world
+    bool hud = false;                           // the 3D HUD (NV_hud.bdae): drawn in the HUD pass with its own camera
     const std::vector<struct ParamOverride>* overrides = nullptr;   // animated material parameters
 };
 
@@ -144,6 +146,9 @@ struct FrameParams {
     const PostParams* post = nullptr;
     const ParticleList* particles = nullptr;
     const ParticleList* sprites = nullptr;   // HUD: textured quads in pixels (origin top left), alpha
+    // The 3D HUD: items flagged `hud`, seen through their own camera, over the finished frame.
+    bool hud3d = false;
+    glm::mat4 hud_view{1}, hud_proj{1};
 };
 
 class Renderer {
@@ -181,6 +186,9 @@ private:
     };
     void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
     // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).
+    bool hud_pass_ = false;   // encode_scene draws the HUD items over the target (kept), not the world
+    void encode_hud(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
+                    const std::vector<DrawItem>& items, const FrameParams& frame);
     void encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
                       const std::vector<DrawItem>& items, const FrameParams& frame, bool hud);
     void draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const Pipelines& pipes, uint32_t w,

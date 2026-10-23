@@ -50,13 +50,14 @@ const TextRenderer::Line& TextRenderer::line(const std::string& text, int wrap) 
     return cache_[key] = l;
 }
 
-float TextRenderer::draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color) {
+float TextRenderer::draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color,
+                         glm::vec2 anchor) {
     if (!font_ || text.empty()) return 0;
     const Line& l = line(text, wrap);
     if (!l.texture) return 0;
     auto quad = [&](glm::vec2 p, const glm::vec4& c) {
         const uint32_t rgba = pack_rgba(c);
-        const float x0 = std::floor(p.x - float(l.width) * 0.5f), y0 = std::floor(p.y);
+        const float x0 = std::floor(p.x - float(l.width) * anchor.x), y0 = std::floor(p.y - float(l.height) * anchor.y);
         const float x1 = x0 + float(l.width), y1 = y0 + float(l.height);
         const ParticleVertex v[4] = {{{x0, y0, 0}, {0, 0}, rgba}, {{x1, y0, 0}, {1, 0}, rgba},
                                      {{x1, y1, 0}, {1, 1}, rgba}, {{x0, y1, 0}, {0, 1}, rgba}};

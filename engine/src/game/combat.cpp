@@ -119,25 +119,6 @@ void rect(std::vector<ColorVertex>& out, float x, float y, float w, float h, con
                            {{x, y, 0}, p}, {{x + w, y + h, 0}, p}, {{x, y + h, 0}, p}});
 }
 
-// Seven-segment digits for the ammo counter.
-void digits(std::vector<ColorVertex>& out, int value, float x, float y, float h, const glm::vec4& c) {
-    static const uint8_t kSegments[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
-    const std::string s = std::to_string(std::max(value, 0));
-    const float w = h * 0.5f, t = h * 0.12f;
-    for (char ch : s) {
-        const uint8_t m = kSegments[ch - '0'];
-        const float hh = h * 0.5f;
-        if (m & 0x01) rect(out, x, y, w, t, c);                    // a: top
-        if (m & 0x02) rect(out, x + w - t, y, t, hh, c);           // b: top right
-        if (m & 0x04) rect(out, x + w - t, y + hh, t, hh, c);      // c: bottom right
-        if (m & 0x08) rect(out, x, y + h - t, w, t, c);            // d: bottom
-        if (m & 0x10) rect(out, x, y + hh, t, hh, c);              // e: bottom left
-        if (m & 0x20) rect(out, x, y, t, hh, c);                   // f: top left
-        if (m & 0x40) rect(out, x, y + hh - t * 0.5f, w, t, c);    // g: middle
-        x += w + t * 2.5f;
-    }
-}
-
 }  // namespace
 
 Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
@@ -179,6 +160,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
         w.reserve = f[16].i;
         w.clip = std::max(f[17].i, 1);
         w.spread_step = f[27].as_float();
+        if (f.size() > 35 && f[35].type == Value::String) w.sprite = f[35].s;
         // Fire modes {?, projectile type, continuous, continuous delay (ms), ...}.
         if (f[4].size() > 0 && f[4][0].size() > 3) {
             const Value& mode = f[4][0];
@@ -1112,23 +1094,7 @@ void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const
             rect(o.screen, cx + dx * (s + 2 * u) - th / 2, cy + dy * (s + 2 * u) - th / 2, th * 2, th * 2, {1, 1, 1, a});
         }
     }
-    // Health (bottom left) and ammo (bottom right).
-    const float bw = 240 * u, bh = 14 * u, bx = 30 * u, by = h - 40 * u;
-    rect(o.screen, bx - 2 * u, by - 2 * u, bw + 4 * u, bh + 4 * u, {0, 0, 0, 0.5f});
-    const float frac = player_health / player_max_health;
-    const glm::vec4 hc = frac > 0.5f ? glm::vec4(0.3f, 0.85f, 1.0f, 0.85f) : frac > 0.25f ? glm::vec4(1, 0.75f, 0.2f, 0.9f)
-                                                                                         : glm::vec4(1, 0.2f, 0.15f, 0.95f);
-    rect(o.screen, bx, by, bw * frac, bh, hc);
-    const float dh = 34 * u;
-    const int clip = ammo_in_clip(), reserve = ammo_reserve();
-    const glm::vec4 ac = clip == 0 ? glm::vec4(1, 0.3f, 0.2f, 0.9f) : glm::vec4(0.3f, 0.85f, 1.0f, 0.85f);
-    digits(o.screen, clip, w - 230 * u, h - 60 * u, dh, ac);
-    if (reserve >= 0) digits(o.screen, reserve, w - 120 * u, h - 50 * u, dh * 0.6f, {0.8f, 0.9f, 1.0f, 0.7f});
-    if (reload_left_ > 0) {
-        const float rw = 120 * u;
-        rect(o.screen, cx - rw / 2, cy + 40 * u, rw, 5 * u, {0, 0, 0, 0.5f});
-        rect(o.screen, cx - rw / 2, cy + 40 * u, rw * (1 - reload_left_ / weapon().reload_time), 5 * u, {1, 1, 1, 0.8f});
-    }
+    // (Health shows as the damage flash, ammo on the HUD's weapon panel: game/hud.cpp.)
 }
 
 int Combat::count_teams(uint32_t team_mask) const {

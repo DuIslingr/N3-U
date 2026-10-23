@@ -37,6 +37,7 @@
 #include "audio/audio.h"
 #include "core/vfs.h"
 #include "game/combat.h"
+#include "game/hud.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -332,9 +333,19 @@ int main(int argc, char** argv) {
             // Subtitles: the latest script message, bottom centre.
             TextRenderer subtitles(vfs, renderer, "Days.ttf", std::max(16.0f, float(opt.height) * 0.032f));
             ParticleList hud_sprites;
+            Hud hud(scene);
+            TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
             auto draw_text = [&](FrameParams& f, int w, int h) {
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
+                if (opt.scripts) {
+                    Hud::State hs;
+                    hs.visible = !combat.player_dead && !logic.player_locked();
+                    hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
+                    hs.weapon_sprite = combat.weapon_sprite();
+                    hs.clip_size = combat.clip_size();
+                    hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);
+                }
                 if (opt.scripts && !logic.messages().empty()) {
                     const LevelLogic::Message& m = logic.messages().back();
                     const float a = std::clamp(m.seconds_left / 0.4f, 0.0f, 1.0f);
@@ -349,6 +360,7 @@ int main(int argc, char** argv) {
                             ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
                 combat.start();
                 viewmodel.start();
+                hud.start();
                 if (opt.list_actors)
                     for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
             }
@@ -378,6 +390,7 @@ int main(int argc, char** argv) {
                     logic.start(true);
                     combat.start();
                     viewmodel.start();
+                    hud.start();
                 }
             };
             constexpr float kPhysicsStep = 1.0f / 120.0f;

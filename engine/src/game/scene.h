@@ -82,11 +82,22 @@ public:
     // Actors: objects that game logic moves. Place the object's model at `position`
     // turned `yaw` degrees about Z (keeping its scale), and update its bounds and lighting.
     bool set_object_pose(size_t object, const glm::vec3& position, float yaw);
+    // A model added at runtime without a gol type (returns its object index); `hud`: its
+    // draws belong to the HUD pass (FrameParams::hud), not the world.
+    size_t spawn_model(const std::string& model_file, bool hud, const std::string& anim_file = {}, const std::string& clip = {});
     // Place an animated object with a full transform (the first-person view model).
     bool set_object_transform(size_t object, const glm::mat4& placement);
     // Draw the object as the first-person view model (in front of the world, no zone).
     void set_object_viewmodel(size_t object);
     std::vector<std::string> node_names(size_t object) const;
+    // The first mesh at or under a node, as a quad: its first four vertices in world space,
+    // their UVs and its diffuse texture (the HUD draws such quads itself, e.g. clipped).
+    struct Quad {
+        std::array<glm::vec3, 4> position;
+        std::array<glm::vec2, 4> uv;
+        const GpuTexture* texture = nullptr;
+    };
+    bool node_quad(size_t object, const std::string& node, Quad& out) const;
     // Moving level objects (elevators, platforms): place the object at `position` (its
     // placement's rotation kept) and move its collision with it.
     bool move_object(size_t object, const glm::vec3& position);
@@ -107,6 +118,9 @@ public:
         float fov = 1;
     };
     bool camera_view(size_t object, CameraView& out) const;
+    // Move one of the object's nodes: its translation relative to its parent (game logic,
+    // e.g. the HUD anchoring its parts to the screen corners).
+    void set_node_translation(size_t object, const std::string& node, const glm::vec3& local);
     // World position of one of the object's nodes (by name or id), e.g. Bip01_Head.
     bool node_position(size_t object, const std::string& node, glm::vec3& out) const;
     // World transform of one of the object's nodes; the object's placement if `node` is
@@ -114,6 +128,8 @@ public:
     glm::mat4 object_matrix(size_t object, const std::string& node = {}) const;
     const SceneStats& stats() const { return stats_; }
     const Vfs& vfs() const { return vfs_; }
+    // A texture by image file name (any extension; cached), e.g. for HUD sprites.
+    const GpuTexture* texture(const std::string& image_name);
     // Diagnostics: per draw, what it is and its world bounds.
     struct DrawInfo {
         std::string name;
@@ -203,6 +219,7 @@ private:
         std::vector<ValueBinding> values;
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
         std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)
+        std::unordered_map<int, glm::vec3> node_translation;   // per node: translation set by game logic
         int root_lock = -1;                  // node whose horizontal translation is held (actors)
         glm::vec2 root_xy{0};
     };
@@ -236,7 +253,6 @@ private:
 
     const LoadedModel* model(const std::string& name);
     static void build_lod_sets(LoadedModel& lm);
-    const GpuTexture* texture(const std::string& image_name);
     // Returns the instance's index into instances_.
     size_t add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p = nullptr, bool sky = false);
     void load_skyboxes();
@@ -261,6 +277,7 @@ private:
         ObjectLighting lighting;
         struct AnimatedInstance* anim = nullptr;
         int zone = ZoneSystem::kNone;
+        bool never_culled = false;                       // the HUD and the first-person view model
         glm::vec3 world_min{0}, world_max{0}, local_min{0}, local_max{0};   // bounds (local: placement space)
     };
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance

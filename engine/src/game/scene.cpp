@@ -210,7 +210,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
     // Animated if it has an animation clip or any skinned mesh (skins need a joint palette).
     const AnimationLibrary* lib = p && !p->anim_file.empty() ? animation(p->anim_file) : nullptr;
     std::unique_ptr<AnimatedInstance> anim;
-    if (lib || !m.cpu.skins.empty()) {
+    if (lib || !m.cpu.skins.empty() || (p && p->animated)) {
         anim = std::make_unique<AnimatedInstance>();
         anim->model = &m;
         anim->placement = placement;
@@ -559,6 +559,7 @@ void Scene::pose(AnimatedInstance& a) {
         const ModelNode& node = m.cpu.nodes[n];
         NodePose p{node.translation, node.rotation, node.scale};
         if (a.tracks[n]) sample_tracks(*a.tracks[n], t, p);
+        if (auto moved = a.node_translation.find(int(n)); moved != a.node_translation.end()) p.translation = moved->second;
         if (int(n) == a.root_lock) p.translation.x = a.root_xy.x, p.translation.y = a.root_xy.y;
         const glm::mat4 parent = m.parent[n] < 0 ? a.placement : a.world[m.parent[n]];
         a.world[n] = parent * local_matrix(p.translation, p.rotation, p.scale);
@@ -895,6 +896,31 @@ size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float ya
     return index;
 }
 
+size_t Scene::spawn_model(const std::string& model_file, bool hud, const std::string& anim_file, const std::string& clip) {
+    LevelObject o;
+    o.kind = "runtime";
+    o.name = model_file;
+    o.base = Transform{};
+    const size_t index = level_.objects.size();
+    level_.objects.push_back(o);
+    Placement p;
+    p.object_index = index;
+    p.model = model_file;
+    p.animated = true;
+    p.anim_file = anim_file;
+    p.anim_clip = clip;
+    if (const LoadedModel* lm = model(p.model)) {
+        const size_t inst = add_instance(*lm, glm::mat4(1), &p);
+        object_instances_[index] = inst;
+        Instance& in = instances_[inst];
+        in.zone = ZoneSystem::kNone;
+        in.never_culled = hud;
+        for (size_t i = 0; i < in.draw_count; ++i) draws_[in.first_draw + i].hud = hud;
+    }
+    stats_.draws = draws_.size();
+    return index;
+}
+
 bool Scene::clip_state(size_t object, ClipState& out) const {
     const AnimatedInstance* a = object_anim(object);
     if (!a || !a->library || a->clip_name.empty()) return false;
@@ -947,7 +973,33 @@ void Scene::set_object_viewmodel(size_t object) {
     if (it == object_instances_.end()) return;
     Instance& inst = instances_[it->second];
     inst.zone = ZoneSystem::kNone;
-    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].viewmodel = true;
+    inst.never_culled = true;
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].viewmodel = true, draws_[inst.first_draw + i].zone_hidden = false;
+}
+
+bool Scene::node_quad(size_t object, const std::string& node, Quad& out) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a) return false;
+    const LoadedModel& m = *a->model;
+    std::vector<int> todo{find_node(m, node)};
+    while (!todo.empty()) {
+        const int n = todo.back();
+        todo.pop_back();
+        if (n < 0) continue;
+        const ModelNode& mn = m.cpu.nodes[size_t(n)];
+        for (int mesh : mn.meshes) {
+            const auto& prims = m.cpu.meshes[size_t(mesh)].primitives;
+            if (prims.empty() || prims[0].vertices.size() < 4) continue;
+            for (int k = 0; k < 4; ++k) {
+                out.position[size_t(k)] = glm::vec3(a->world[size_t(n)] * glm::vec4(prims[0].vertices[size_t(k)].position, 1));
+                out.uv[size_t(k)] = prims[0].vertices[size_t(k)].uv0;
+            }
+            out.texture = prims[0].material >= 0 ? m.materials[size_t(prims[0].material)].diffuse : nullptr;
+            return true;
+        }
+        todo.insert(todo.end(), mn.children.begin(), mn.children.end());
+    }
+    return false;
 }
 
 std::vector<std::string> Scene::node_names(size_t object) const {
@@ -1044,6 +1096,16 @@ void Scene::set_node_visible(size_t object, const std::string& node, bool visibl
     pose(a);
 }
 
+void Scene::set_node_translation(size_t object, const std::string& node, const glm::vec3& local) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return;
+    AnimatedInstance& a = *instances_[it->second].anim;
+    int n = find_node(*a.model, node);
+    if (n < 0) return;
+    a.node_translation[n] = local;
+    pose(a);
+}
+
 bool Scene::camera_view(size_t object, CameraView& out) const {
     const AnimatedInstance* a = object_anim(object);
     if (!a) return false;
@@ -1107,6 +1169,7 @@ void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_z
     zones_.update(camera, view_proj, floor_zone);
     for (const Instance& inst : instances_) {
         if (inst.draw_count && draws_[inst.first_draw].sky) continue;
+        if (inst.never_culled) continue;
         const bool hidden = !zones_.box_visible(inst.zone, inst.world_min, inst.world_max);
         for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].zone_hidden = hidden;
     }

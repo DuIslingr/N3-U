@@ -633,6 +633,7 @@ GpuModel* Renderer::upload_model(const Model& model) {
 const GpuTexture* Renderer::upload_texture(const Image& image) {
     auto tex = std::make_unique<GpuTexture>();
     tex->has_alpha = image.has_alpha();
+    tex->width = image.width, tex->height = image.height;
     const uint32_t w = uint32_t(image.width), h = uint32_t(image.height);
     const uint32_t levels = 1 + uint32_t(std::floor(std::log2(double(std::max(w, h)))));
     SDL_GPUTextureCreateInfo ti{};
@@ -681,7 +682,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     SDL_GPUColorTargetInfo color{};
     color.texture = target;
     color.clear_color = {frame.clear.r, frame.clear.g, frame.clear.b, frame.clear.a};
-    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.load_op = hud_pass_ ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
@@ -704,6 +705,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended;
     for (const auto& it : items) {
         if (!it.visible || it.hidden || it.anim_hidden || it.zone_hidden || it.occluded || !it.model->vertices) continue;
+        if (it.hud != hud_pass_) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
         if (it.sky) sky.push_back(&it);
         else if (it.viewmodel) (blend ? view_blended : view_opaque).push_back(&it);
@@ -843,7 +845,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     if (overlay) {
         SDL_GPUBufferBinding vb{overlay_buffer_, 0};
         SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
-        if (!overlay->world.empty()) {
+        if (!overlay->world.empty() && !hud_pass_) {
             SDL_BindGPUGraphicsPipeline(pass, pipes.effects);
             SDL_PushGPUVertexUniformData(cmd, 0, &view_proj, sizeof view_proj);
             SDL_DrawGPUPrimitives(pass, uint32_t(overlay->world.size()), 1, 0, 0);
@@ -922,10 +924,27 @@ const Renderer::PostPipelines& Renderer::post_pipelines_for(SDL_GPUTextureFormat
     return post_pipelines_[int(format)] = PostPipelines{make(fs_post_blur_, kOffscreenFormat), make(fs_post_final_, format)};
 }
 
+void Renderer::encode_hud(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
+                          uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
+    // The HUD scene over the finished frame: its own camera, no fog, then the 2D overlay.
+    FrameParams hf = frame;
+    hf.view = frame.hud_view, hf.proj = frame.hud_proj;
+    hf.camera = glm::vec3(glm::inverse(frame.hud_view)[3]);
+    hf.post = nullptr, hf.particles = nullptr;
+    hf.fog_density = 0, hf.fog_start = 1e9f, hf.fog_end = 2e9f;
+    hud_pass_ = true;
+    encode_scene(cmd, target, format, w, h, items, hf, true);
+    hud_pass_ = false;
+}
+
 void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
                       uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
     const PostParams* post = frame.post && frame.post->active() ? frame.post : nullptr;
-    if (!post) return encode_scene(cmd, target, format, w, h, items, frame, true);
+    if (!post) {
+        encode_scene(cmd, target, format, w, h, items, frame, !frame.hud3d);
+        if (frame.hud3d) encode_hud(cmd, target, format, w, h, items, frame);
+        return;
+    }
 
     // Scene to a texture, then the blur (quarter size, horizontal then vertical, as the
     // game's RenderBlur), then everything combined into the target, then the HUD.
@@ -968,7 +987,8 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     u.dof = {post->dof_focus, post->dof_range, post->dof_factor, post->dof ? 1.0f : 0.0f};
     u.fog = {post->fog_top, post->fog_bottom, post->fog_opacity, post->height_fog ? 1.0f : 0.0f};
     u.fog_color = glm::vec4(post->fog_color, 1);
-    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_}, &u, sizeof u, true);
+    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_}, &u, sizeof u, !frame.hud3d);
+    if (frame.hud3d) encode_hud(cmd, target, format, w, h, items, frame);
 }
 
 void Renderer::upload_vertices(SDL_GPUCommandBuffer* cmd, const ParticleList& p, DynamicBuffer& b) {

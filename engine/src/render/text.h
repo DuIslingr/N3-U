@@ -25,9 +25,10 @@ public:
     TextRenderer& operator=(const TextRenderer&) = delete;
     bool ok() const { return font_ != nullptr; }
 
-    // Draw `text` (UTF-8, wrapped at `wrap` pixels) with its top centre at `at` (pixels)
-    // into `out`; returns its height in pixels.
-    float draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color);
+    // Draw `text` (UTF-8, wrapped at `wrap` pixels) into `out`, `at` (pixels) being the point
+    // `anchor` of its box (0,0 top left, 0.5,0 top centre, 0.5,0.5 centre); returns its height.
+    float draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color,
+               glm::vec2 anchor = {0.5f, 0.0f});
 
 private:
     struct Line {

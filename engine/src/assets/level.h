@@ -100,6 +100,7 @@ struct Placement {
     std::string anim_file;     // from the animation component, if any
     std::string anim_clip;
     float anim_speed = 1.0f;
+    bool animated = false;     // keep per-node transforms even without clips (runtime models)
 };
 
 // Visible models placed in the level: per-instance meshes, or the type's template mesh.

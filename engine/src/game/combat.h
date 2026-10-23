@@ -50,6 +50,7 @@ struct WeaponDef {
     std::vector<std::string> shot_sounds;
     std::string reload_sound, loop_sound, end_sound;
     Impacts impacts;
+    std::string sprite;                // HUD icon and crosshair (.bsprite)
 };
 
 // An NPC command (CAIComponent::PushGoal_*, from NpcCmd_* script calls): goals run in
@@ -121,6 +122,8 @@ public:
     // The player's weapon, for the view model: its gol type, and what it is doing.
     const std::string& weapon_type() const { return weapon_types_[size_t(current_)]; }
     bool reloading() const { return reload_left_ > 0; }
+    const std::string& weapon_sprite() const { return weapon().sprite; }
+    int clip_size() const { return weapon().clip; }
     float since_shot() const { return since_shot_; }   // seconds since the last shot
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
