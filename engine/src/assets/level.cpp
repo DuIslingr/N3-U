@@ -389,6 +389,7 @@ std::vector<LevelLight> level_lights(const Level& level, const Gol& gol) {
         if (!v || v->size() < 10 || !tf) continue;
         LevelLight l;
         l.object = o.name;
+        l.index = size_t(&o - level.objects.data());
         l.position = tf->position;
         for (int k = 0; k < 4; ++k) l.color[k] = float(uint8_t((*v)[size_t(k)].i)) / 255.0f;
         l.intensity = (*v)[4].as_float();

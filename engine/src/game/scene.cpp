@@ -331,7 +331,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
             pl.attenuation = {ml.falloff_start, ml.falloff_end > ml.falloff_start ? 1.0f / (ml.falloff_end - ml.falloff_start) : 0.0f, 0};
             pl.radius = ml.falloff_end;
             lights_.push_back(pl);
-            light_sources_.push_back({anim.get(), ni, pl.position});
+            light_sources_.push_back({anim.get(), ni, pl.position, p ? zones_.object_zone(p->object_index) : ZoneSystem::kNone});
         }
         if (!m.lod_sets.empty()) {
             lods.node_pos[ni] = glm::vec3(world[3]);
@@ -482,7 +482,8 @@ bool Scene::set_skybox(int id) {
 
 // CNovaSceneManager::UpdateLights, per instance: the light probe at the bounds centre, and
 // the nearest light (measured from the edge of its range), blended with the next one
-// when the object is inside both.
+// when the object is inside both. Only lights registered this frame count — those of
+// visible zones — however far; with none, the object gets no light (L0 black).
 void Scene::compute_object_lighting() {
     for (Instance& inst : instances_) {
         if (!inst.draw_count) continue;
@@ -500,6 +501,7 @@ void Scene::light_instance(Instance& inst, const glm::vec3& center) {
         int best = -1, second = -1;
         float best_d = 0, second_d = 0;
         for (size_t i = 0; i < lights_.size(); ++i) {
+            if (i < light_on_.size() && !light_on_[i]) continue;
             const float d = glm::distance(center, lights_[i].position) - lights_[i].radius;
             if (best < 0 || d < best_d) {
                 second = best, second_d = best_d;
@@ -731,9 +733,9 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     stats_ = SceneStats{};
     for (const LevelObject& o : level_.objects) {
         if (o.kind != "level_properties" || o.fields.size() < 8) continue;
-        // i, then fog colour as an SColor's bytes (B, G, R, A), fog near, fog far, density.
+        // i, then fog colour as an SColor's bytes (R, G, B, A: glitch's SColor keeps red in the low byte), fog near, fog far, density.
         auto byte = [&](size_t k) { return float(uint8_t(o.fields[k].i)) / 255.0f; };
-        fog_color = {byte(3), byte(2), byte(1), byte(4)};
+        fog_color = {byte(1), byte(2), byte(3), byte(4)};
         fog_start = o.fields[5].as_float();
         fog_end = o.fields[6].as_float();
         fog_density = o.fields[7].as_float();
@@ -766,6 +768,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     zones_.build(level_, gol_);
     lights_.clear();
     light_sources_.clear();
+    light_on_.clear();
     for (const LevelLight& l : level_lights(level_, gol_)) {
         // CLightComponent::Load: attenuation (1, 1 / radius, 0).
         PointLight pl;
@@ -775,7 +778,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
         pl.radius = l.radius;
         pl.fake = l.fake;
         lights_.push_back(pl);
-        light_sources_.push_back({nullptr, -1, pl.position});
+        light_sources_.push_back({nullptr, -1, pl.position, zones_.object_zone(l.index)});
     }
     object_instances_.clear();
     for (const Placement& p : model_placements(level_, gol_)) {
@@ -1237,6 +1240,14 @@ void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_z
         if (inst.never_culled) continue;
         const bool hidden = !zones_.box_visible(inst.zone, inst.world_min, inst.world_max);
         for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].zone_hidden = hidden;
+    }
+    // Lights register with the scene through their zone: a hidden zone's lights light nothing.
+    std::vector<uint8_t> on(lights_.size());
+    for (size_t i = 0; i < on.size() && i < light_sources_.size(); ++i) on[i] = zones_.visible(light_sources_[i].zone);
+    if (on != light_on_) {
+        light_on_ = std::move(on);
+        for (Instance& inst : instances_)
+            if (inst.draw_count) light_instance(inst, inst.lighting.center);
     }
 }
 

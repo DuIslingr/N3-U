@@ -297,7 +297,7 @@ void LevelLogic::start(bool keep_player) {
         zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
         player.jetpack = false;
         grading_ = Grading{};
-        if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
+        if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_, log("colour grading: " + default_lut_);
     }
     // Apply the starting state: hidden objects are disabled; doors start closed.
     for (auto& [id, o] : objects_) {

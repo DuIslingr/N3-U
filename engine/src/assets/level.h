@@ -126,6 +126,7 @@ struct LevelLight {
     glm::vec4 color{1};       // RGBA, bytes in that order
     float intensity = 1, radius = 1;
     bool fake = false;        // registered with its zone as a "fake light"
+    size_t index = 0;         // the level object
 };
 std::vector<LevelLight> level_lights(const Level& level, const Gol& gol);
 

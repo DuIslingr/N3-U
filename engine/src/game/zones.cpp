@@ -69,10 +69,10 @@ void ZoneSystem::build(const Level& level, const Gol& gol) {
             z.id = o.base->id;
             z.meta = o.kind == "meta_zone";
             if (o.kind == "zone" && o.fields.size() >= 9 && o.fields[1].i != 0) {
-                // Fog colour as an SColor's bytes (B, G, R, A), like the level properties.
+                // Fog colour as a glitch SColor's bytes: R, G, B, A (SColorf takes red from the low byte).
                 auto byte = [&](size_t k) { return float(uint8_t(o.fields[k].i)) / 255.0f; };
                 z.fog.override = true;
-                z.fog.color = {byte(4), byte(3), byte(2), 1};
+                z.fog.color = {byte(2), byte(3), byte(4), 1};
                 z.fog.start = o.fields[6].as_float();
                 z.fog.end = o.fields[7].as_float();
                 z.fog.density = o.fields[8].as_float();

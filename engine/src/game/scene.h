@@ -305,9 +305,11 @@ private:
         const AnimatedInstance* anim = nullptr;
         int node = -1;
         glm::vec3 position{0};
+        int zone = ZoneSystem::kNone;   // registered for lighting only while its zone is visible
     };
     std::vector<PointLight> lights_;
     std::vector<LightSource> light_sources_;
+    std::vector<uint8_t> light_on_;     // per light, this frame (empty: all)
     std::unique_ptr<MaterialSystem> materials_;
     bool game_shaders_ = true;
     CollisionWorld collision_;
