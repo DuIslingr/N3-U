@@ -38,9 +38,22 @@
 #include "audio/audio.h"
 #include "core/vfs.h"
 
+#ifdef _WIN32   // last: it defines near, far, min, max...
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 using namespace nova;
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // A windowed program: started from a console, it prints there all the same.
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        std::freopen("CONOUT$", "w", stdout);
+        std::freopen("CONOUT$", "w", stderr);
+    }
+#endif
     Options opt;
     try {
         opt = parse_options(argc, argv);
@@ -66,7 +79,10 @@ int main(int argc, char** argv) {
             const std::filesystem::path ios = std::filesystem::path(opt.data).lexically_normal().parent_path() / "ios" / "ipa" / "Payload" / "nova3.app";
             if (std::filesystem::is_directory(ios)) opt.data = ios.string();
         }
-        if (vfs.mount_directory(opt.data) == 0) throw std::runtime_error("no .gla archives in " + opt.data);
+        if (!std::filesystem::is_directory(opt.data) || vfs.mount_directory(opt.data) == 0)
+            throw std::runtime_error("The game's data (its .gla archives) was not found in " + opt.data +
+                                     ".\nPut the files of your copy of N.O.V.A. 3 in a folder named data beside the game, or "
+                                     "start it with --data FOLDER.");
         std::vector<std::string> extra = opt.extra_data;
         if (extra.empty()) {
             const std::filesystem::path ios = std::filesystem::path(opt.data) / ".." / "ios" / "ipa" / "Payload" / "nova3.app";
@@ -100,6 +116,8 @@ int main(int argc, char** argv) {
         if (window) SDL_DestroyWindow(window);
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
+        // Started from a desktop there may be no console to read it in.
+        if (opt.screenshot.empty()) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "N.O.V.A. 3", ex.what(), nullptr);
         rc = 1;
     }
     SDL_Quit();

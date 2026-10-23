@@ -57,6 +57,7 @@ add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 # The game.
 file(GLOB VIEWER_SOURCES CONFIGURE_DEPENDS src/main.cpp src/app/*.cpp src/render/*.cpp src/game/*.cpp src/audio/*.cpp)
 add_executable(nova3 ${VIEWER_SOURCES})
+set_target_properties(nova3 PROPERTIES WIN32_EXECUTABLE ON)   # no console window of its own
 target_link_libraries(nova3 PRIVATE nova3core nova3::sdl3 nova3::sdl3_ttf)
 target_compile_options(nova3 PRIVATE ${NOVA3_WARNINGS})
 if(NOVA3_SHADERCROSS)
