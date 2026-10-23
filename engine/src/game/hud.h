@@ -45,6 +45,12 @@ public:
     // CLevel::RenderObjective: the guide marker (Chatboard.bsprite) over a point with its
     // distance; off screen, an arrow at the edge pointing its way.
     void draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w, int h);
+    // CHud frost (HUD_Frost: hud_frost.bdae in the HUD scene): it grows over `ms`
+    // (StartFrost) up to the max factor of its clip, and melts back (StopFrost).
+    void start_frost(float ms) { frost_target_ = 1, frost_rate_ = 1000.0f / std::max(ms, 1.0f); }
+    void stop_frost(float ms) { frost_target_ = 0, frost_rate_ = 1000.0f / std::max(ms, 1.0f); }
+    float frost_max = 1;
+    void update_frost(float dt);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
     void frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numbers, ParticleList& sprites);
 
@@ -65,7 +71,9 @@ private:
 
     Scene& scene_;
     std::unordered_map<std::string, Sprite> sprites_;
-    size_t object_ = size_t(-1), ammo_ = size_t(-1);
+    size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1);
+    float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
+    bool frost_shown_ = false;
     glm::ivec2 placed_for_{0};
     bool visible_ = false, grenades_ = true;
 };

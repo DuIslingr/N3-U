@@ -112,6 +112,10 @@ public:
     float zfar = 8000, move_sensitivity = 1;
     bool player_rush = true;
     bool fall_damage = true;   // Player_EnableFallDamage
+    struct Frost {
+        float on = 0, ms = 1000, max = 1;   // HUD_StartFrost / HUD_StopFrost over ms; HUD_SetFrostMaxFactor
+        uint32_t serial = 0;
+    } frost;
     // Vehicles (CCarAIComponent, simplified): Vehicle_MoveOnPath drives one along a
     // waypoint chain at its maximum speed (Vehicle_SetMaxSpeed, km/h), turning no faster
     // than its steering allows, on the ground. Vehicle_Activate puts the player in the

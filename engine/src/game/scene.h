@@ -76,6 +76,8 @@ public:
         bool reverse = false;
     };
     bool clip_state(size_t object, ClipState& out) const;
+    // Pose the object's current clip at a time (seconds) and hold it there (speed 0).
+    void set_clip_time(size_t object, float seconds);
 
     // Create an object of a gol type at runtime (spawn managers); it starts hidden.
     // Returns its index into level().objects.

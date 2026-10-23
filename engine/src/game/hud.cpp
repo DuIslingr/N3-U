@@ -29,6 +29,20 @@ void Hud::start() {
     visible_ = false;
     grenades_ = true;
     placed_for_ = glm::ivec2(0);
+    // HUD_Frost: its clip runs as the frost spreads.
+    frost_object_ = scene_.spawn_model("hud_frost.bdae", true, "hud_frost.bdae", "hud_frost");
+    if (frost_object_ != size_t(-1)) scene_.set_object_visible(frost_object_, false);   // made for the HUD camera as it is
+    frost_ = frost_target_ = 0, frost_max = 1, frost_shown_ = false;
+}
+
+void Hud::update_frost(float dt) {
+    if (frost_object_ == size_t(-1)) return;
+    const float target = frost_target_ * frost_max;
+    frost_ = frost_ < target ? std::min(frost_ + frost_rate_ * dt, target) : std::max(frost_ - frost_rate_ * dt, target);
+    const bool shown = frost_ > 0;
+    if (shown != frost_shown_) scene_.set_object_visible(frost_object_, shown), frost_shown_ = shown;
+    Scene::ClipState cs;
+    if (shown && scene_.clip_state(frost_object_, cs)) scene_.set_clip_time(frost_object_, frost_ * cs.length / 1000.0f);
 }
 
 const Sprite* Hud::sprite(const std::string& name) {

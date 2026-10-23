@@ -880,6 +880,15 @@ bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool re
     return true;
 }
 
+void Scene::set_clip_time(size_t object, float seconds) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return;
+    AnimatedInstance* a = instances_[it->second].anim;
+    if (!a) return;
+    a->time = seconds, a->speed = 0;
+    pose(*a);
+}
+
 size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float yaw) {
     auto g = gol_.find(type);
     LevelObject o;

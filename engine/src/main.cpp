@@ -370,6 +370,17 @@ int main(int argc, char** argv) {
             TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
             TouchControls touch(hud);   // the Touch scheme's on-screen controls
             TextRenderer objective_text(vfs, renderer, "Days.ttf", std::max(13.0f, float(opt.height) * 0.026f));
+            // HUD_StartFrost / HUD_StopFrost: the frost spreads or melts over time.
+            uint32_t frost_serial = 0;
+            auto update_frost = [&](float dt) {
+                if (logic.frost.serial != frost_serial) {
+                    frost_serial = logic.frost.serial;
+                    if (logic.frost.on > 0) hud.start_frost(logic.frost.ms);
+                    else hud.stop_frost(logic.frost.ms);
+                }
+                hud.frost_max = logic.frost.max;
+                hud.update_frost(dt);
+            };
             auto draw_text = [&](FrameParams& f, int w, int h) {
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
@@ -723,6 +734,7 @@ int main(int argc, char** argv) {
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
                         viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
+                        update_frost(kPhysicsStep);
                     }
                     if (logic.audio && !opt.sound_render.empty()) {
                         logic.audio->set_listener(player.eye(), player.view_forward(), glm::vec3(0, 0, 1));
@@ -1048,6 +1060,7 @@ int main(int argc, char** argv) {
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
                         if (combat.take_power_used()) viewmodel.set_state("Repel");
+                        update_frost(dt);
                         vm.aiming = aiming;
                         vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
                         const bool* k = SDL_GetKeyboardState(nullptr);

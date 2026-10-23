@@ -849,6 +849,18 @@ int api_set_fog_z_color(lua_State* L) {
     return 0;
 }
 
+// HUD_StartFrost(ms), HUD_StopFrost(ms), HUD_SetFrostMaxFactor(f): the frost overlay.
+template <bool On>
+int api_hud_frost(lua_State* L) {
+    LevelLogic::Frost& f = ctx(L).frost;
+    f.on = On ? 1.0f : 0.0f, f.ms = float(lua_tonumber(L, 1)), ++f.serial;
+    return 0;
+}
+int api_hud_frost_max(lua_State* L) {
+    ctx(L).frost.max = std::clamp(float(lua_tonumber(L, 1)), 0.0f, 1.0f);
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -973,6 +985,9 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"HUD_StartFrost", api_hud_frost<true>},
+    {"HUD_StopFrost", api_hud_frost<false>},
+    {"HUD_SetFrostMaxFactor", api_hud_frost_max},
     {"ChangeLightMap", api_change_light_map},
     {"SetFogZColor", api_set_fog_z_color},
     {"LoadObjectType", api_ignore},
