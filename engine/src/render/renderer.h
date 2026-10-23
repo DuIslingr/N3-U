@@ -192,6 +192,7 @@ private:
         SDL_GPUGraphicsPipeline* effects = nullptr;    // overlay: world, additive
         SDL_GPUGraphicsPipeline* hud = nullptr;        // overlay: screen, alpha
         SDL_GPUGraphicsPipeline* sprites = nullptr;    // screen, textured, alpha
+        SDL_GPUGraphicsPipeline* sprites_additive = nullptr;   // screen, textured, additive (lens flares)
     };
     void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
     // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).

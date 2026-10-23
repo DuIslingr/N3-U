@@ -47,6 +47,7 @@ public:
 
     const std::vector<DrawItem>& draws() const { return draws_; }
     const Level& level() const { return level_; }
+    const Gol& gol() const { return gol_; }
     const CollisionWorld& collision() const { return collision_; }
 
     // Zone/portal visibility for a camera: hides objects in zones it cannot see.

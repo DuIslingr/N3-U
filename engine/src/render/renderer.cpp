@@ -308,6 +308,7 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.particles_additive);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.particles_alpha);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.sprites);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.sprites_additive);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.hud);
     }
     if (overlay_buffer_) SDL_ReleaseGPUBuffer(device_, overlay_buffer_);
@@ -561,7 +562,7 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
     };
     return pipelines_[int(format)] = Pipelines{make(false, false), make(true, false), make(false, true), make(true, true),
                                                make_particles(true, true), make_particles(false, true), make_color(true), make_color(false),
-                                               make_particles(false, false)};
+                                               make_particles(false, false), make_particles(true, false)};
 }
 
 void Renderer::ensure_depth(uint32_t w, uint32_t h) {
@@ -883,7 +884,9 @@ void Renderer::draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer
         SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
         SDL_BindGPUGraphicsPipeline(pass, pipes.sprites);
         SDL_PushGPUVertexUniformData(cmd, 0, &pixels, sizeof pixels);
+        bool additive = false;
         for (const ParticleBatch& b : sprites->batches) {
+            if (b.additive != additive) SDL_BindGPUGraphicsPipeline(pass, (additive = b.additive) ? pipes.sprites_additive : pipes.sprites);
             SDL_GPUTextureSamplerBinding tex{b.texture->texture, clamp_sampler_};
             SDL_BindGPUFragmentSamplers(pass, 0, &tex, 1);
             SDL_DrawGPUPrimitives(pass, b.count, 1, b.first, 0);

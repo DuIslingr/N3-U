@@ -42,6 +42,7 @@
 #include "game/main_menu.h"
 #include "game/death_screen.h"
 #include "game/end_level_screen.h"
+#include "game/lens_flare.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -467,6 +468,7 @@ int main(int argc, char** argv) {
             const std::string settings_path = headless ? std::string() : Settings::default_path();
             Settings settings = Settings::load(settings_path);
             PauseMenu menu;
+            LensFlares flares(scene, logic);
             DeathScreen death;
             EndLevelScreen end_screen;
             end_screen.text = [&main_strings](const std::string& id) {
@@ -525,6 +527,12 @@ int main(int argc, char** argv) {
                 }
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
+                if (opt.scripts) {   // lens flares, under the HUD
+                    static float flare_clock = -1;
+                    const float flare_dt = flare_clock < 0 ? 10.0f : clock - flare_clock;   // the first frame: settled
+                    flare_clock = clock;
+                    flares.frame(flare_dt, f.camera, f.proj * f.view, w, h, hud_sprites);
+                }
                 if (opt.scripts) {
                     Hud::State hs;
                     hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open;
@@ -632,6 +640,7 @@ int main(int argc, char** argv) {
                 combat.campaign_loadout(opt.level);
                 viewmodel.start();
                 hud.start();
+                flares.start();
                 if (opt.list_actors)
                     for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
             }
@@ -660,6 +669,7 @@ int main(int argc, char** argv) {
                 combat.campaign_loadout(opt.level);
                 viewmodel.start();
                 hud.start();
+                flares.start();
             };
             // Level logic at a fixed step, so triggers and doors see every position.
             bool end_screen_done = false;   // dismissed with Continue: the level's end goes on
@@ -679,6 +689,7 @@ int main(int argc, char** argv) {
                     combat.start(true);
                     viewmodel.start();
                     hud.start();
+                    flares.start();
                 }
                 // EndLevel: a moment on the faded screen, then the next campaign level (the
                 // same one again after a failure). The arsenal carries over.
