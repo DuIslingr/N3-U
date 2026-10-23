@@ -43,6 +43,7 @@
 #include "game/player.h"
 #include "game/level_logic.h"
 #include "game/scene.h"
+#include "game/touch_controls.h"
 #include "render/renderer.h"
 #include "render/text.h"
 
@@ -65,6 +66,7 @@ struct Options {
     float walk_test = 0;
     bool log_player = false;    // print the player's state every second (interactive)
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
+    float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -126,6 +128,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--trace-zones") o.trace_zones = true;
         else if (a == "--log-player") o.log_player = true;
         else if (a == "--combat-test") o.combat_test = std::stof(next());
+        else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
         else if (a == "--audit") o.audit = std::stoi(next());
@@ -178,10 +181,12 @@ bool focus_camera(const Scene& scene, const Gol& gol, const std::string& spec, g
     return false;
 }
 
+constexpr float kFov = 65, kAimFov = 42;   // vertical, degrees; aim mode narrows the view
+
 struct Camera {
     glm::vec3 position{0};
     float yaw = 0, pitch = 0;   // degrees; yaw 0 looks along +Y, positive yaw turns left (game convention)
-    float fov = 65;             // vertical, degrees
+    float fov = kFov;
     // A camera that looks along a given direction (cinematics) instead of yaw/pitch.
     bool directed = false;
     glm::vec3 direction{0, 1, 0}, up{0, 0, 1};
@@ -338,6 +343,7 @@ int main(int argc, char** argv) {
             ParticleList hud_sprites;
             Hud hud(scene);
             TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
+            TouchControls touch(hud);   // the Touch scheme's on-screen controls
             auto draw_text = [&](FrameParams& f, int w, int h) {
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
@@ -348,6 +354,12 @@ int main(int argc, char** argv) {
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
                     hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);
+                    if (logic.input == InputScheme::Touch && hs.visible) {
+                        touch.layout(w, h);
+                        touch.draw(hud_sprites);
+                    } else {
+                        touch.release_all();
+                    }
                 }
                 if (opt.scripts && !logic.messages().empty()) {
                     const LevelLogic::Message& m = logic.messages().back();
@@ -555,8 +567,29 @@ int main(int argc, char** argv) {
                 if (opt.screenshot.empty()) return 0;
                 float report = 0;
                 const float run_time = std::max(opt.run, opt.combat_test);
+                glm::vec3 touch_from{0};
+                float touch_yaw = 0;
+                bool touching = false;
                 for (float t = 0; t < run_time; t += kPhysicsStep) {   // stand still and let the scripts run
-                    if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
+                    PlayerInput pin;
+                    if (opt.touch_test > 0 && t >= run_time - opt.touch_test) {
+                        // Fingers: 1 holds the walk pad forward, 2 swipes right to turn.
+                        touch.layout(opt.width, opt.height);
+                        const glm::vec2 swipe(float(opt.width) * 0.6f, float(opt.height) * 0.4f);
+                        if (!touching) {
+                            touching = true;
+                            touch.down(1, touch.pad_anchor());
+                            touch.down(2, swipe);
+                            touch_from = player.center, touch_yaw = player.yaw;
+                        }
+                        const float k = (t - (run_time - opt.touch_test)) / opt.touch_test;
+                        touch.move(1, touch.pad_anchor() - glm::vec2(0, float(opt.height)));
+                        touch.move(2, swipe + glm::vec2(k * float(opt.width) * 0.2f, 0));
+                        const TouchControls::Output o = touch.take();
+                        pin.forward = o.forward, pin.right = o.right;
+                        player.yaw += o.look.x;
+                    }
+                    if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), pin, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     if (opt.scripts) {
                         CombatInput ci;
@@ -676,6 +709,9 @@ int main(int argc, char** argv) {
                                     d.anim_hidden ? " anim-hidden" : "", d.zone_hidden ? " zone-hidden" : "", di.min.x, di.min.y,
                                     di.min.z, di.max.x, di.max.y, di.max.z);
                     }
+                if (touching)
+                    std::printf("touch test: walked %.2f m, turned %.1f degrees\n", glm::length(glm::vec2(player.center - touch_from)),
+                                player.yaw - touch_yaw);
                 if (opt.log_player)
                     std::printf("player at (%.2f %.2f %.2f) %s\n", player.center.x, player.center.y, player.center.z,
                                 player.on_ground ? "on the ground" : "in the air");
@@ -686,13 +722,58 @@ int main(int argc, char** argv) {
                 bool flying = false;
                 float accumulator = 0;
                 CombatInput combat_in;
-                bool fire_held = false;
-                SDL_SetWindowRelativeMouseMode(window, true);
+                bool fire_held = false, aim_held = false;
+                // Touch: fingers drive the on-screen controls, and the mouse stands in for a
+                // finger (a free pointer); else the mouse looks around.
+                const bool touch_mode = opt.scripts && logic.input == InputScheme::Touch;
+                SDL_SetWindowRelativeMouseMode(window, !touch_mode);
+                auto to_pixels = [&](float x, float y, bool normalized) {
+                    int ww = 1, wh = 1, pw = 1, ph = 1;
+                    SDL_GetWindowSize(window, &ww, &wh);
+                    SDL_GetWindowSizeInPixels(window, &pw, &ph);
+                    return normalized ? glm::vec2(x * float(pw), y * float(ph))
+                                      : glm::vec2(x * float(pw) / float(std::max(ww, 1)), y * float(ph) / float(std::max(wh, 1)));
+                };
                 bool running = true;
                 auto last = std::chrono::steady_clock::now();
                 while (running) {
+                    if (touch_mode) {
+                        int pw = 0, ph = 0;
+                        SDL_GetWindowSizeInPixels(window, &pw, &ph);
+                        touch.layout(pw, ph);
+                    }
                     SDL_Event e;
                     while (SDL_PollEvent(&e)) {
+                        if (touch_mode) {
+                            constexpr int64_t kMouseFinger = -1;
+                            switch (e.type) {
+                                case SDL_EVENT_FINGER_DOWN:
+                                    touch.down(int64_t(e.tfinger.fingerID), to_pixels(e.tfinger.x, e.tfinger.y, true));
+                                    break;
+                                case SDL_EVENT_FINGER_MOTION:
+                                    touch.move(int64_t(e.tfinger.fingerID), to_pixels(e.tfinger.x, e.tfinger.y, true));
+                                    break;
+                                case SDL_EVENT_FINGER_UP:
+                                case SDL_EVENT_FINGER_CANCELED:
+                                    touch.up(int64_t(e.tfinger.fingerID), to_pixels(e.tfinger.x, e.tfinger.y, true));
+                                    break;
+                                // Mouse events made from touches are already handled above.
+                                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                                    if (e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT)
+                                        touch.down(kMouseFinger, to_pixels(e.button.x, e.button.y, false));
+                                    break;
+                                case SDL_EVENT_MOUSE_MOTION:
+                                    if (e.motion.which != SDL_TOUCH_MOUSEID) touch.move(kMouseFinger, to_pixels(e.motion.x, e.motion.y, false));
+                                    break;
+                                case SDL_EVENT_MOUSE_BUTTON_UP:
+                                    if (e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT)
+                                        touch.up(kMouseFinger, to_pixels(e.button.x, e.button.y, false));
+                                    break;
+                                case SDL_EVENT_WINDOW_FOCUS_LOST: touch.release_all(); break;
+                                default: break;
+                            }
+                            if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP || e.type == SDL_EVENT_MOUSE_MOTION) continue;
+                        }
                         if (e.type == SDL_EVENT_QUIT) running = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
                         // Debug: F1 free flight, F2 zone culling, F3 built-in shaders.
@@ -705,7 +786,9 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
-                        if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false;
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) aim_held = true;
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) aim_held = false;
+                        if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false, aim_held = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_1) combat_in.select = 0;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_2) combat_in.select = 1;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F3 && !e.key.repeat) {
@@ -716,8 +799,9 @@ int main(int argc, char** argv) {
                             combat_in.select = (combat.current_weapon() + (e.wheel.y < 0 ? 1 : n - 1)) % n;
                         }
                         if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && logic.player_locked())) {
-                            cam.yaw -= e.motion.xrel * 0.12f;
-                            cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * 0.12f, -89.0f, 89.0f);
+                            const float k = 0.12f * cam.fov / kFov;   // slower while aiming
+                            cam.yaw -= e.motion.xrel * k;
+                            cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k, -89.0f, 89.0f);
                         }
                     }
                     const auto now = std::chrono::steady_clock::now();
@@ -742,6 +826,13 @@ int main(int argc, char** argv) {
                         frames_counted = 0, frames_time = 0, worst_frame = 0;
                     }
                     const bool* keys = SDL_GetKeyboardState(nullptr);
+                    const TouchControls::Output touch_in = touch_mode ? touch.take() : TouchControls::Output{};
+                    {   // aim mode: the view narrows (right mouse button held, or the aim button)
+                        const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead &&
+                                            (touch_mode ? touch_in.aim : aim_held);
+                        const float target = aiming ? kAimFov : kFov;
+                        cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
+                    }
                     if (flying) {
                         const float speed = (keys[SDL_SCANCODE_LSHIFT] ? 25.0f : 6.0f) * dt;
                         const glm::vec3 fwd = cam.forward();
@@ -757,10 +848,13 @@ int main(int argc, char** argv) {
                         PlayerInput in;
                         const bool locked = opt.scripts && logic.player_locked();   // cinematics
                         if (!locked) {
-                            in.forward = float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]);
-                            in.right = float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]);
-                            in.jump = keys[SDL_SCANCODE_SPACE];
-                            in.run = keys[SDL_SCANCODE_LSHIFT];
+                            in.forward = glm::clamp(float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]) + touch_in.forward, -1.0f, 1.0f);
+                            in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
+                            in.jump = keys[SDL_SCANCODE_SPACE] || touch_in.jump;
+                            in.run = keys[SDL_SCANCODE_LSHIFT] || touch_in.run;
+                            const float k = cam.fov / kFov;
+                            cam.yaw += touch_in.look.x * k;
+                            cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k, -89.0f, 89.0f);
                         }
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
                         player.yaw = cam.yaw;
@@ -773,7 +867,16 @@ int main(int argc, char** argv) {
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         if (opt.scripts) {
-                            combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
+                            if (touch_mode) {
+                                combat_in.fire = !locked && touch_in.fire;
+                                combat_in.reload |= touch_in.reload;
+                                if (touch_in.weapon_step != 0 && combat.weapon_count() > 1) {
+                                    const int n = combat.weapon_count();
+                                    combat_in.select = (combat.current_weapon() + touch_in.weapon_step + n) % n;
+                                }
+                            } else {
+                                combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
+                            }
                             combat.update(dt, combat_in, player.eye(), cam.forward());
                             combat.push_player_out();
                             combat_in = {};
@@ -802,7 +905,8 @@ int main(int argc, char** argv) {
                         vm.weapon = combat.weapon_type();
                         vm.visible = !flying && !combat.player_dead && !logic.player_locked();
                         const bool* k = SDL_GetKeyboardState(nullptr);
-                        vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D]);
+                        vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D] ||
+                                                         touch_in.forward != 0 || touch_in.right != 0);
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
                         Camera v = cam;
