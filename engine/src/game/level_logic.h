@@ -321,6 +321,8 @@ public:
     uint32_t checkpoint_section() const;
     void respawn_at_checkpoint();
     int checkpoint() const { return checkpoint_; }
+    // The end of level's play time bonus limits, minutes (level properties [43], [44]).
+    float play_time_limit(int k) const { return play_time_limits_[k & 1]; }
     // Limited control (CPlayerLimitedControlComponent; SwitchToPlayerLimitedControl): the
     // player as the PlayerLimitedControl rig (arms_legs.bdae) seen through its camera —
     // falling and strafing in space (Ship_01's decompression), hanging from the hull with
@@ -421,9 +423,10 @@ private:
     std::deque<Message> messages_;
     int properties_id_ = -1, start_spawn_id_ = -1;
     // Background music (level properties [41], an event of tracks), with a pause between
-    // tracks; it gives way while scripts play action music.
+    // tracks (12 to 22 s, this port's choice); it gives way while scripts play action music.
     std::string music_event_;
-    float music_gap_min_ = 12, music_gap_max_ = 22, music_wait_ = 0;
+    float music_wait_ = 0;
+    float play_time_limits_[2] = {0, 0};
     int music_ = -1;
     void update_music(float dt);
     std::deque<std::string> dialog_;

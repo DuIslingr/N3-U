@@ -505,6 +505,7 @@ Combat::Saved Combat::save() const {
         const LevelLogic::Object* o = logic_.object(t.id);
         s.actors.push_back({t.id, o && o->dead, t.pos, t.yaw});
     }
+    s.stats = stats_;
     return s;
 }
 
@@ -515,6 +516,13 @@ void Combat::restore(const Saved& s) {
     grenades = s.grenades;
     if (!s.powers.empty()) powers_ = s.powers, power_index_ = std::clamp(s.power_index, 0, int(powers_.size()) - 1);
     power_cooldown_ = 0;
+    // CLevelStatistics::Load on a respawn: the counts go back to the checkpoint's, but
+    // the retries and the play time run on.
+    const Stats now = stats_;
+    stats_ = s.stats;
+    stats_.targets = now.targets, stats_.actors = now.actors, stats_.hostile = now.hostile;
+    stats_.deaths = now.deaths, stats_.play_time = now.play_time;
+    critical_ = false;
     for (const Saved::Actor& a : s.actors) {
         Target* t = find_target(a.id);
         if (!t || !t->actor) continue;
@@ -617,15 +625,12 @@ void Combat::start(bool keep_stats) {
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
-    if (keep_stats) {
-        const Stats kept = stats_;
-        stats_ = {};
-        stats_.shots = kept.shots, stats_.hits = kept.hits, stats_.kills = kept.kills, stats_.headshot_kills = kept.headshot_kills;
-        stats_.repel_kills = kept.repel_kills, stats_.paralyze_kills = kept.paralyze_kills, stats_.slow_kills = kept.slow_kills;
-        stats_.deaths = kept.deaths, stats_.play_time = kept.play_time;
+    if (keep_stats) {   // counted again below
+        stats_.targets = stats_.actors = stats_.hostile = 0;
     } else {
         stats_ = {};
     }
+    critical_ = false;
     const Level& level = scene_.level();
     for (auto& [id, obj] : logic_.objects_) {
         if (obj.index >= level.objects.size()) continue;
@@ -1450,6 +1455,11 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
         sound(player_hurt_sounds_, nullptr);
         player_hurt_wait_ = 1.5f;
     }
+    // Each fall below 30% of the shield counts against the end of level's shield bonus
+    // (CPlayerBaseComponent::ReceiveDamage, CLevelStatistics +0x18).
+    const bool critical = player_health < player_max_health * 0.3f;
+    if (critical && !critical_ && player_health > 0) ++stats_.criticals;
+    critical_ = critical;
     if (player_health <= 0) {
         player_health = 0;
         player_dead = true;

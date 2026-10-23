@@ -23,6 +23,8 @@ struct Settings {
     int fps_limit = 0;          // frames per second; 0: unlocked
     // Campaign progress: how many chapters the player has reached (chapter select).
     int chapters = 1;
+    // Credits (the shop's currency), earned at the end of each level.
+    int credits = 0;
 
     // The settings file; empty if there is no preferences folder.
     static std::string default_path();

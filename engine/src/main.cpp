@@ -484,10 +484,13 @@ int main(int argc, char** argv) {
                 EndLevelScreen::Stats st;
                 st.headshots = int(cs.headshot_kills), st.blast_kills = int(cs.repel_kills), st.paralyze_kills = int(cs.paralyze_kills);
                 st.slow_kills = int(cs.slow_kills), st.kills = int(cs.kills), st.retries = int(cs.deaths);
-                st.shield = combat.player_max_health > 0 ? std::clamp(combat.player_health / combat.player_max_health, 0.0f, 1.0f) : 1.0f;
-                st.accuracy = cs.shots ? float(cs.hits) / float(cs.shots) : 0.0f;
+                st.criticals = int(cs.criticals);
+                st.accuracy = cs.shots ? std::min(float(cs.hits) / float(cs.shots), 1.0f) : 1.0f;
                 st.play_time = cs.play_time;
                 return st;
+            };
+            auto end_rules = [&] {
+                return EndLevelScreen::read_rules(gol, logic.play_time_limit(0), logic.play_time_limit(1));
             };
             death.text = [&main_strings](const std::string& id) {
                 const std::string t = main_strings.find(id);
@@ -725,7 +728,11 @@ int main(int argc, char** argv) {
                 } else if ((ended_for += dt) > 3.0f) {
                     // Complete: the end-of-level screen first; its Continue comes back here.
                     if (logic.level_success && !headless && !end_screen.open && !end_screen_done) {
-                        end_screen.show(end_stats(), next_campaign_level(campaign, opt.level).empty());
+                        end_screen.show(end_stats(), end_rules(), next_campaign_level(campaign, opt.level).empty());
+                        // CUpgradesManager::GiveUpgradePoints, kept with the settings.
+                        settings.credits = std::max(settings.credits + end_screen.earned().total, 0);
+                        settings.save(settings_path);
+                        std::printf("end of level: %d credits (%d in all)\n", end_screen.earned().total, settings.credits);
                     }
                     if (end_screen.open) return;
                     end_screen_done = false;
@@ -1068,7 +1075,8 @@ int main(int argc, char** argv) {
                 if (opt.end_screen >= 0) {   // the end-of-level screen over the view
                     EndLevelScreen::Stats st = end_stats();
                     st.headshots = 7, st.blast_kills = 3, st.kills = 41, st.accuracy = 0.46f, st.play_time = 734, st.retries = 2;
-                    end_screen.show(st, false);
+                    end_screen.show(st, end_rules(), false);
+                    std::printf("end of level: %d credits\n", end_screen.earned().total);
                     end_screen.update(opt.end_screen);
                     draw_text(shot, opt.width, opt.height);
                 }

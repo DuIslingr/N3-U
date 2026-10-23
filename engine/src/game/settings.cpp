@@ -46,6 +46,7 @@ Settings Settings::load(const std::string& path) {
         else if (key == "vsync") s.vsync = on;
         else if (key == "fps_limit") s.fps_limit = std::clamp(i, 0, 1000);
         else if (key == "chapters") s.chapters = std::max(i, 1);
+        else if (key == "credits") s.credits = std::max(i, 0);
     }
     return s;
 }
@@ -56,7 +57,7 @@ bool Settings::save(const std::string& path) const {
     out << "sound=" << sound << "\nsfx_volume=" << sfx_volume << "\nmusic_volume=" << music_volume << "\nsensitivity=" << sensitivity
         << "\ninvert_y=" << invert_y << "\nleft_handed=" << left_handed << "\naim_toggle=" << aim_toggle << "\naim_assist=" << aim_assist
         << "\nauto_switch=" << auto_switch << "\nauto_leveling=" << auto_leveling << "\nmetric=" << metric << "\nwidth=" << width
-        << "\nheight=" << height << "\ndisplay=" << int(display) << "\nvsync=" << vsync << "\nfps_limit=" << fps_limit << "\nchapters=" << chapters << "\n";
+        << "\nheight=" << height << "\ndisplay=" << int(display) << "\nvsync=" << vsync << "\nfps_limit=" << fps_limit << "\nchapters=" << chapters << "\ncredits=" << credits << "\n";
     return bool(out);
 }
 

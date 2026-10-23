@@ -80,7 +80,7 @@ void LevelLogic::load_objects() {
             if (o.fields.size() > 44 && o.fields[41].type == Value::String) {
                 music_event_ = o.fields[41].s;
                 while (!music_event_.empty() && music_event_.back() == ' ') music_event_.pop_back();
-                music_gap_min_ = o.fields[43].as_float(), music_gap_max_ = o.fields[44].as_float();
+                play_time_limits_[0] = o.fields[43].as_float(), play_time_limits_[1] = o.fields[44].as_float();
             }
             default_lut_ = o.fields.size() > 38 && o.fields[38].type == Value::String ? o.fields[38].s : "";   // colour grading
             // The level's string table (CComponentLevelProperties [24]), after MAIN.
@@ -1255,7 +1255,7 @@ void LevelLogic::update_music(float dt) {
     if (music_ >= 0 && audio->playing(music_)) return;
     if (music_ >= 0) {   // a track ended: a pause before the next
         music_ = -1;
-        music_wait_ = music_gap_min_ + float(std::rand()) / float(RAND_MAX) * std::max(music_gap_max_ - music_gap_min_, 0.0f);
+        music_wait_ = 12 + float(std::rand()) / float(RAND_MAX) * 10;
     }
     if ((music_wait_ -= dt) > 0) return;
     Audio::Params p;

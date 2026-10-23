@@ -103,6 +103,14 @@ public:
     // CPowerManager, the actors' CActorComponent/CNPCComponent): the weapons the player has,
     // their ammunition and the one in hand, grenades and powers; which actors are dead, and
     // where the others stand (they come back at full health).
+    struct Stats {
+        size_t targets = 0, actors = 0, hostile = 0, shots = 0, hits = 0, kills = 0, enemy_shots = 0;
+        float damage_taken = 0;
+        // The end of level's statistics (GS_EndLevel).
+        size_t headshot_kills = 0, repel_kills = 0, paralyze_kills = 0, slow_kills = 0, deaths = 0;
+        size_t criticals = 0;   // falls below 30% of the shield
+        float play_time = 0;
+    };
     struct Saved {
         std::vector<uint8_t> owned;
         std::vector<int> clip, reserve;
@@ -115,6 +123,7 @@ public:
             float yaw = 0;
         };
         std::vector<Actor> actors;
+        Stats stats;   // the level's statistics as they were (all but the retries and the time)
     };
     Saved save() const;
     void restore(const Saved& s);   // after start() on the freshly loaded level
@@ -167,13 +176,6 @@ public:
     float player_health = 150, player_max_health = 150;
     bool player_dead = false;
 
-    struct Stats {
-        size_t targets = 0, actors = 0, hostile = 0, shots = 0, hits = 0, kills = 0, enemy_shots = 0;
-        float damage_taken = 0;
-        // The end of level's statistics (GS_EndLevel).
-        size_t headshot_kills = 0, repel_kills = 0, paralyze_kills = 0, slow_kills = 0, deaths = 0;
-        float play_time = 0;
-    };
     const Stats& stats() const { return stats_; }
     const WeaponDef& weapon() const { return weapons_[size_t(current_)]; }
     int ammo_in_clip() const { return clip_[size_t(current_)]; }
@@ -434,6 +436,7 @@ private:
     int fire_loop_ = -1;                // the player's looping fire sound
     std::vector<std::string> player_hurt_sounds_;
     float player_hurt_wait_ = 0;
+    bool critical_ = false;   // below 30% of the shield at the last hit
     void fire_player(const glm::vec3& eye, const glm::vec3& aim);
     // Grenades (CGrenadeComponent of Grenade_Player): thrown along the view, they bounce
     // off the level and explode when the fuse runs out, hurting everything in the radius.
