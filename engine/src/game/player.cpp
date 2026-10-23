@@ -10,7 +10,7 @@ void Player::spawn(const glm::vec3& feet, float yaw_deg) {
     yaw = yaw_deg;
     pitch = 0;
     ++spawns;
-    vertical_speed = 0;
+    vertical_speed = 0, landing_speed = 0;
     on_ground = false;
     stuck_time = escape_time = 0;
 }
@@ -51,7 +51,9 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
         if (!r.falling) vertical_speed = 0;
         on_ground = false;
     } else {
+        const bool was_on_ground = on_ground;
         on_ground = !r.falling;
+        if (on_ground && !was_on_ground) landing_speed = -vertical_speed;
         if (on_ground) vertical_speed = 0;
     }
     center = r.position;

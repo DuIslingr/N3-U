@@ -25,6 +25,7 @@ public:
     float yaw = 0, pitch = 0;       // degrees; yaw 0 looks along +Y, positive turns left
     float vertical_speed = 0;
     bool on_ground = false;
+    float landing_speed = 0;   // downward speed at the last landing (taken by fall damage)
     // Wedged (pushing but hardly moving): move by Irrlicht's one-sided rule for a while.
     float stuck_time = 0, escape_time = 0;
 

@@ -111,6 +111,7 @@ public:
     float game_fov() const { return fov_len_ > 0 && fov_t_ < fov_len_ ? fov_from_ + (fov_to_ - fov_from_) * fov_t_ / fov_len_ : fov_to_; }
     float zfar = 8000, move_sensitivity = 1;
     bool player_rush = true;
+    bool fall_damage = true;   // Player_EnableFallDamage
     // Vehicles (CCarAIComponent, simplified): Vehicle_MoveOnPath drives one along a
     // waypoint chain at its maximum speed (Vehicle_SetMaxSpeed, km/h), turning no faster
     // than its steering allows, on the ground. Vehicle_Activate puts the player in the
@@ -128,6 +129,9 @@ public:
     int player_gun() const { return player_gun_; }
     // Where the riding player's eyes are, and the yaw range the view may take (degrees).
     bool seat(glm::vec3& eye, float& yaw_min, float& yaw_max);
+    void reset_trigger_runs(int id) {
+        if (Object* o = object(id); o && o->trigger >= 0) triggers_[size_t(o->trigger)].runs_left = triggers_[size_t(o->trigger)].runs;
+    }
     void set_primary_objective(const std::string& id);
     void add_secondary_objective(const std::string& id);
     void secondary_objective_complete(const std::string& id);
@@ -156,6 +160,7 @@ public:
         glm::vec2 center{0};
         float radius = 0;
         int runs_left = -1;          // -1: unlimited
+        int runs = -1;               // as loaded (ResetTriggerRunCount)
         bool player_target = true;
         bool inside = false;
         // A rotated box: tested in its own frame (box from local_min to local_max).

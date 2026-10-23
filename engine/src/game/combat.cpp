@@ -993,7 +993,7 @@ void Combat::update_actor(Target& t, float dt) {
                 // A new burst at the player needs one of the few attack tokens; otherwise aim and wait.
                 int shooters = 0;
                 for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
-                if (on_player && (shooters >= kMaxShooters || burst_cooldown_ > 0)) {
+                if (on_player && (shooters >= max_shooters_ || burst_cooldown_ > 0)) {
                     t.fire_timer = 0.3f;
                     play(t, t.clip_alert, true);
                     break;
@@ -1381,6 +1381,11 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         return;
     }
     protect_ = std::max(protect_ - dt, 0.0f);
+    // Falling: a hard landing hurts (Player_EnableFallDamage).
+    if (player_.landing_speed > 0) {
+        const float v = std::exchange(player_.landing_speed, 0.0f);
+        if (logic_.fall_damage && v > 13.0f) damage_player((v - 13.0f) * 8.0f, player_.center);
+    }
     regen_delay_ -= dt;
     if (regen_delay_ <= 0 && player_health < player_max_health)
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);

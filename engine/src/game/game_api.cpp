@@ -785,6 +785,47 @@ int api_switch_to_player_on_foot(lua_State* L) {
     return 0;
 }
 
+int api_set_max_active_enemies(lua_State* L) {   // SetMaxActiveEnemies(n): attack tokens
+    if (Combat* c = ctx(L).combat) c->set_max_shooters(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_enable_fall_damage(lua_State* L) {
+    ctx(L).fall_damage = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+int api_hide_message(lua_State* L) {
+    ctx(L).hide_message("");
+    return 0;
+}
+int api_reset_trigger_run_count(lua_State* L) {
+    ctx(L).reset_trigger_runs(int(lua_tointeger(L, 1)));
+    return 0;
+}
+// IsPlayerLookingAt(object, degrees): the object within that angle of the view.
+int api_is_player_looking_at(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    bool looking = false;
+    if (const LevelLogic::Object* o = obj(L, 1)) {
+        const glm::vec3 to = o->position + glm::vec3(0, 0, 1) - c.player.eye();
+        const float d = glm::length(to);
+        looking = d > 1e-3f && glm::degrees(std::acos(std::clamp(glm::dot(to / d, c.player.view_forward()), -1.0f, 1.0f))) <=
+                                   float(lua_tonumber(L, 2));
+    }
+    lua_pushboolean(L, looking);
+    return 1;
+}
+// Enter/ExitInvisibility(npc): cloaked NPCs are not drawn.
+template <bool Visible>
+int api_invisibility(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* o = obj(L, 1)) c.scene.set_object_visible(o->index, Visible && o->visible);
+    return 0;
+}
+int api_npc_crouch(lua_State* L) {   // NpcCmd_Crouch(npc, id, on): crouches where it is (holds there)
+    if (Combat* c = ctx(L).combat) c->npc_order(int(lua_tointeger(L, 1)), "lock_in_cover", 0, lua_toboolean(L, 3) != 0);
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -909,6 +950,17 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"SetMaxActiveEnemies", api_set_max_active_enemies},
+    {"SetMinEnemiesOnPlayer", api_ignore},
+    {"Player_EnableFallDamage", api_enable_fall_damage},
+    {"HideMessage", api_hide_message},
+    {"ResetTriggerRunCount", api_reset_trigger_run_count},
+    {"IsPlayerLookingAt", api_is_player_looking_at},
+    {"EnterInvisibility", api_invisibility<false>},
+    {"ExitInvisibility", api_invisibility<true>},
+    {"NpcCmd_Crouch", api_npc_crouch},
+    {"Fog_AnimationStart", api_ignore},
+    {"Fog_AnimationStop", api_ignore},
     {"Vehicle_MoveOnPath", api_vehicle_move_on_path},
     {"Vehicle_Stop", api_vehicle_stop},
     {"Vehicle_SetMaxSpeed", api_vehicle_set<0>},

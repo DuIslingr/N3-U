@@ -114,6 +114,7 @@ public:
     void splash_damage(const glm::vec3& at, float damage, float radius, bool by_player);
 
     bool shoot_enabled = true;         // EnableShootControl
+    void set_max_shooters(int n) { max_shooters_ = std::max(n, 0); }
     // SetGlobalAwarenessFactor: how fast NPCs notice their enemies (0: not at all).
     float awareness_factor = 1;
     // LockTarget / IgnoreTarget (object ids; 0 is the player). False if `npc` is no actor.
@@ -367,7 +368,7 @@ private:
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;
     float damage_flash_ = 0, hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
-    static constexpr int kMaxShooters = 2;   // enemies firing at the player at once (attack tokens)
+    int max_shooters_ = 2;   // enemies firing at the player at once (attack tokens; SetMaxActiveEnemies)
     static constexpr float kBurstInterval = 1.2f;   // seconds between any two bursts starting
     float burst_cooldown_ = 0;
     glm::vec3 last_eye_{0}, last_aim_{0, 1, 0};

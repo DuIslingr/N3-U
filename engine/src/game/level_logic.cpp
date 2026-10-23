@@ -120,7 +120,7 @@ void LevelLogic::load_objects() {
             const glm::vec3 scale(v[7].as_float(), v[8].as_float(), v[9].as_float());
             obj.enabled = obj.visible = v[11].i != 0;
             Trigger tr;
-            tr.runs_left = v[10].i;
+            tr.runs_left = tr.runs = v[10].i;
             tr.player_target = v[13].i == 0 || (v[15].i & 1);
             if (const Value* cyl = o.components.count(kCompBuiltinCylinder) ? comp(kCompBuiltinCylinder) : nullptr; cyl && cyl->size() >= 2) {
                 tr.cylinder = true;
@@ -289,7 +289,7 @@ void LevelLogic::start(bool keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
         player_vehicle_ = player_gun_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
-        zfar = 8000, move_sensitivity = 1, player_rush = true;
+        zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true;
         grading_ = Grading{};
         if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
     }
@@ -765,9 +765,9 @@ void LevelLogic::update_tutorial(float dt) {
     runtime_.send_event("TutorialStepEnded");
 }
 
-void LevelLogic::hide_message(const std::string& id) {
+void LevelLogic::hide_message(const std::string& id) {   // "" hides them all (HideMessage)
     for (Message& m : messages_)
-        if (m.id == id) m.seconds_left = 0;
+        if (id.empty() || m.id == id) m.seconds_left = 0;
 }
 
 void LevelLogic::save_checkpoint(int spawn_id) {
