@@ -50,7 +50,7 @@ namespace {
 
 struct Options {
     std::string data = "work/data";
-    std::string level = "Ship_01.lvc";
+    std::string level = "levels/San_Francisco_1_FINAL.lvc";   // the campaign's first level
     std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
     bool sound_check = false;           // decode every sound in the sound table and exit
     bool mute = false;
@@ -530,7 +530,7 @@ int main(int argc, char** argv) {
                 float report = 0;
                 const float run_time = std::max(opt.run, opt.combat_test);
                 for (float t = 0; t < run_time; t += kPhysicsStep) {   // stand still and let the scripts run
-                    player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
+                    if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     if (opt.scripts) {
                         CombatInput ci;
@@ -715,7 +715,9 @@ int main(int argc, char** argv) {
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
                         player.yaw = cam.yaw;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
-                            player.update(scene.collision(), in, kPhysicsStep);
+                            // During cinematics the player is out of play (the intro's spawn
+                            // point may float in the void).
+                            if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), in, kPhysicsStep);
                             step_logic(kPhysicsStep);
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out

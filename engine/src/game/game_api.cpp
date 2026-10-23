@@ -144,6 +144,17 @@ int api_set_position(lua_State* L) {
     if (auto* o = obj(L, 1)) o->position = {lua_tonumber(L, 2), lua_tonumber(L, 3), lua_tonumber(L, 4)};
     return 0;
 }
+// GetPlayerPositionFromCameraPosition() -> x, y, z: where the player stands to see from
+// the current (cinematic) camera: its position less the eye height.
+int api_player_pos_from_camera(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    Scene::CameraView cv;
+    glm::vec3 eye = c.player.eye();
+    if (c.cinematic_view(cv)) eye = cv.position;
+    const glm::vec3 feet = eye - glm::vec3(0, 0, c.player.radius.z + c.player.eye_height);
+    lua_pushnumber(L, feet.x), lua_pushnumber(L, feet.y), lua_pushnumber(L, feet.z);
+    return 3;
+}
 int api_enable_interact(lua_State* L) {
     if (auto* o = obj(L, 1)) o->interact_enabled = lua_isnoneornil(L, 2) || lua_toboolean(L, 2);
     return 0;
@@ -610,6 +621,7 @@ const Entry kImplemented[] = {
     {"GetState", api_get_state},
     {"Object_GetPosition", api_get_position},
     {"Object_SetPosition", api_set_position},
+    {"GetPlayerPositionFromCameraPosition", api_player_pos_from_camera},
     {"EnableInteract", api_enable_interact},
     {"LockDoor", api_lock_door},
     {"UnlockDoor", api_unlock_door},

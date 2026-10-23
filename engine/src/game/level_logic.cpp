@@ -280,6 +280,10 @@ void LevelLogic::start(bool keep_player) {
     // UpdateVisibility); only teleports set it. A section reload (LoadLevelSections) puts
     // the player back where it was; the level's start script runs again, the spawn's does not.
     scene.zones().force_zone(ZoneSystem::kNone);
+    // The player starts at the level's start spawn point, whose script plays the intro and
+    // then moves them on (Scene's start position skips ahead for runs without scripts).
+    if (!keep_player && start_spawn_id_ >= 0)
+        if (const Object* sp = object(start_spawn_id_)) teleport_player(*sp);
     if (properties_id_ >= 0) start_script("Obj" + std::to_string(properties_id_) + "_OnEnter", properties_id_);
     if (start_spawn_id_ >= 0 && !keep_player) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
 }

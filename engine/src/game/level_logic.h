@@ -150,6 +150,10 @@ public:
     void end_cinematic(int id);
     bool cinematic_view(Scene::CameraView& out) const;
     bool player_locked() const;      // no player control (a cinematic is running)
+    bool cinematic_active() const {   // a cinematic holds the view
+        Scene::CameraView v;
+        return cinematic_view(v);
+    }
     bool cinematic_mode = false;     // StartCinematic .. EndCinematic
     // PlayerLookTo(waypoint, ms): turn the player's view to a point.
     void player_look_to(const glm::vec3& at, float seconds);
