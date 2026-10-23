@@ -35,6 +35,12 @@ Frustum Frustum::from_view_proj(const glm::mat4& m) {
     return f;
 }
 
+bool Frustum::sees_box(const glm::vec3& lo, const glm::vec3& hi) const {
+    const glm::vec3 corners[8] = {{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+                                  {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z}};
+    return sees(corners, 8);
+}
+
 bool Frustum::sees(const glm::vec3* points, size_t n) const {
     for (const glm::vec4& p : planes) {
         size_t outside = 0;
@@ -54,12 +60,14 @@ void ZoneSystem::build(const Level& level, const Gol& gol) {
 
     // Membership: an object belongs to the zone (or meta zone) record before it.
     int current = kNone;
+    std::vector<std::pair<int, int>> occlusions;   // portal id pairs (CZonesManager::AddOcclusion)
     std::vector<std::pair<int, std::vector<int>>> meta_children;   // zone index, child zone ids
     for (size_t i = 0; i < level.objects.size(); ++i) {
         const LevelObject& o = level.objects[i];
         if ((o.kind == "zone" || o.kind == "meta_zone") && o.base) {
             Zone z;
             z.id = o.base->id;
+            z.meta = o.kind == "meta_zone";
             if (o.kind == "zone" && o.fields.size() >= 9 && o.fields[1].i != 0) {
                 // Fog colour as an SColor's bytes (B, G, R, A), like the level properties.
                 auto byte = [&](size_t k) { return float(uint8_t(o.fields[k].i)) / 255.0f; };
@@ -81,6 +89,10 @@ void ZoneSystem::build(const Level& level, const Gol& gol) {
         }
         if (o.kind == "zone_end") {
             current = kNone;
+            continue;
+        }
+        if (o.kind == "link" && o.fields.size() >= 2) {   // record 0xBB9: two portals that hide each other
+            occlusions.emplace_back(o.fields[0].i, o.fields[1].i);
             continue;
         }
         if (o.kind == "portal" && o.base && o.fields.size() >= 5) {
@@ -123,6 +135,16 @@ void ZoneSystem::build(const Level& level, const Gol& gol) {
         kept.push_back(p);
     }
     portals_ = std::move(kept);
+    for (auto [a, b] : occlusions) {
+        int ia = -1, ib = -1;
+        for (size_t i = 0; i < portals_.size(); ++i) {
+            if (portals_[i].id == a) ia = int(i);
+            if (portals_[i].id == b) ib = int(i);
+        }
+        if (ia < 0 || ib < 0) continue;
+        portals_[size_t(ia)].occludes.push_back(ib);
+        portals_[size_t(ib)].occludes.push_back(ia);
+    }
     visible_.assign(zones_.size(), 1);
     portal_in_path_.assign(portals_.size(), 0);
 }
@@ -135,12 +157,17 @@ void ZoneSystem::grow(size_t object, const glm::vec3& min, const glm::vec3& max)
 }
 
 int ZoneSystem::zone_at(const glm::vec3& p) const {
-    // CZonesManager::GetZoneFromPos: the first zone whose bounds contain the point.
+    // CZonesManager::GetZoneFromPos: the first zone whose bounds contain the point. Meta
+    // zones are in the game's list too, but it normally gets the start zone from the spawn
+    // teleport; a meta zone has no portals to leave by, so prefer a real zone here.
+    int meta = kNone;
     for (size_t i = 0; i < zones_.size(); ++i) {
         const Zone& z = zones_[i];
-        if (glm::all(glm::greaterThanEqual(p, z.min)) && glm::all(glm::lessThanEqual(p, z.max))) return int(i);
+        if (!glm::all(glm::greaterThanEqual(p, z.min)) || !glm::all(glm::lessThanEqual(p, z.max))) continue;
+        if (!z.meta) return int(i);
+        if (meta == kNone) meta = int(i);
     }
-    return kNone;
+    return meta;
 }
 
 void ZoneSystem::make_quad(Portal& p, const glm::mat4& m, float w, float h) {
@@ -187,14 +214,28 @@ bool ZoneSystem::set_portal_enabled(int id, bool on) {
     return false;
 }
 
+bool ZoneSystem::box_visible(int zone, const glm::vec3& lo, const glm::vec3& hi) const {
+    if (!culling_) return visible(zone);
+    if (lo.x > hi.x) return visible(zone);   // no bounds
+    if (zone == kNone) return view_.sees_box(lo, hi);
+    if (!visible(zone)) return false;
+    for (const Frustum& f : frustums_[size_t(zone)])
+        if (f.sees_box(lo, hi)) return true;
+    return false;
+}
+
 void ZoneSystem::reach(int zone, const Frustum& frustum, int via, const glm::vec3& camera, int depth) {
     visible_[size_t(zone)] = 1;
+    if (frustums_[size_t(zone)].size() < 8) frustums_[size_t(zone)].push_back(frustum);
     for (int c : zones_[size_t(zone)].children)
         if (!visible_[size_t(c)]) reach(c, frustum, kNone, camera, depth + 1);
     if (depth >= kMaxPortalDepth) return;
     for (int pi : zones_[size_t(zone)].portals) {
         Portal& p = portals_[size_t(pi)];
         if (pi == via || !p.enabled || portal_in_path_[size_t(pi)]) continue;
+        // CZone::SetVisible: a portal paired with the one we came through is not followed.
+        if (via != kNone && std::find(portals_[size_t(via)].occludes.begin(), portals_[size_t(via)].occludes.end(), pi) !=
+                                portals_[size_t(via)].occludes.end()) continue;
         if (!frustum.sees(p.corners.data(), 4)) continue;
         const int other = p.zone[0] == zone ? p.zone[1] : p.zone[0];
         // Narrow the frustum to the portal (CZonePortal::IntersectsFrustum): planes through
@@ -216,6 +257,7 @@ void ZoneSystem::reach(int zone, const Frustum& frustum, int via, const glm::vec
 }
 
 void ZoneSystem::update(const glm::vec3& camera, const glm::mat4& view_proj) {
+    culling_ = false;
     if (!enabled || zones_.empty()) {
         visible_.assign(zones_.size(), 1);
         return;
@@ -254,7 +296,10 @@ void ZoneSystem::update(const glm::vec3& camera, const glm::mat4& view_proj) {
         return;
     }
     visible_.assign(zones_.size(), 0);
-    reach(current_, Frustum::from_view_proj(view_proj), kNone, camera, 0);
+    frustums_.assign(zones_.size(), {});
+    view_ = Frustum::from_view_proj(view_proj);
+    reach(current_, view_, kNone, camera, 0);
+    culling_ = true;
 }
 
 }  // namespace nova

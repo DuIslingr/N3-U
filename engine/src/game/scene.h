@@ -137,6 +137,18 @@ private:
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
     };
 
+    // A material whose FadeFactor follows the camera's distance from a node's XZ plane
+    // (CGameObject::Update with mesh flags 4/8; fadeNear=/fadeFar= in the node properties).
+    struct DistanceFade {
+        std::vector<ParamOverride>* values = nullptr;   // the draws' overrides
+        size_t slot = 0;                                // FadeFactor in them
+        const AnimatedInstance* anim = nullptr;         // node moves with this, if animated
+        int node = -1;
+        glm::vec3 position{0}, axis{0, 1, 0};
+        float near = 1, far = 10;
+        bool fade_in = false;                           // flag 4: 0 up close; flag 8: 0 far away
+    };
+
     // A placed model with distance-dependent LOD sets.
     struct LodInstance {
         const LoadedModel* model = nullptr;
@@ -201,6 +213,8 @@ private:
     uint32_t section_ = 1;
     std::vector<std::unique_ptr<AnimatedInstance>> animated_;
     std::vector<LodInstance> lod_instances_;
+    std::vector<DistanceFade> fades_;
+    std::deque<std::vector<ParamOverride>> fade_values_;   // overrides of fading draws on static instances
     std::unordered_map<std::string, std::unique_ptr<AnimationLibrary>> animations_;   // by lowercase name
     std::unordered_map<std::string, LoadedModel> models_;            // by lowercase file name
     std::unordered_map<std::string, const GpuTexture*> textures_;    // by lowercase stem

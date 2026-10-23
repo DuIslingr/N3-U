@@ -24,6 +24,7 @@ struct Frustum {
     std::vector<glm::vec4> planes;   // inside: dot(xyz, p) + w >= 0
     static Frustum from_view_proj(const glm::mat4& view_proj);
     bool sees(const glm::vec3* points, size_t n) const;   // not entirely outside any plane
+    bool sees_box(const glm::vec3& min, const glm::vec3& max) const;
 };
 
 class ZoneSystem {
@@ -37,6 +38,7 @@ public:
     };
     struct Zone {
         int id = 0;
+        bool meta = false;
         std::vector<int> children;   // meta zones shown with this zone
         glm::vec3 min{std::numeric_limits<float>::max()}, max{-std::numeric_limits<float>::max()};
         Fog fog;
@@ -50,6 +52,7 @@ public:
         glm::vec3 center{0};
         glm::vec4 plane{0};
         size_t door = std::numeric_limits<size_t>::max();   // level object of a door portal
+        std::vector<int> occludes;   // portals not looked through after entering through this one
     };
 
     // Build from the level: membership, portals, meta zones. Bounds come from
@@ -63,6 +66,9 @@ public:
     // Track the camera and compute the visible zones.
     void update(const glm::vec3& camera, const glm::mat4& view_proj);
     bool visible(int zone) const { return zone == kNone || (size_t(zone) < visible_.size() && visible_[size_t(zone)]); }
+    // An object's bounds seen through one of the frustums its zone was reached by (CZone
+    // keeps them); global objects are tested against the camera's frustum.
+    bool box_visible(int zone, const glm::vec3& min, const glm::vec3& max) const;
     int current() const { return current_; }
 
     bool set_portal_enabled(int id, bool enabled);
@@ -87,6 +93,9 @@ private:
     std::unordered_map<int, int> zone_index_;   // zone id -> index
     std::vector<int> object_zone_;
     std::vector<uint8_t> visible_, portal_in_path_;
+    std::vector<std::vector<Frustum>> frustums_;   // per zone, this frame
+    Frustum view_;
+    bool culling_ = false;                         // frustums are valid this frame
     int current_ = kNone;
     glm::vec3 last_camera_{0};
     bool have_camera_ = false;

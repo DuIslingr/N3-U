@@ -1,5 +1,6 @@
 #include "game/scene.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -233,6 +234,26 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         }
     }
 
+    // Distance fade (CGameObject::InitFadeParams): the first node with properties on each
+    // branch from the roots sets fadeNear/fadeFar.
+    const bool fades = p && (p->mesh_flags & 0xC) != 0;
+    float fade_near = 1, fade_far = 10;
+    if (fades) {
+        std::vector<int> todo(m.cpu.roots.begin(), m.cpu.roots.end());
+        while (!todo.empty()) {
+            const ModelNode& node = m.cpu.nodes[size_t(todo.back())];
+            todo.pop_back();
+            if (node.properties.empty()) {
+                todo.insert(todo.end(), node.children.begin(), node.children.end());
+                continue;
+            }
+            if (auto at = node.properties.find("fadeNear="); at != std::string::npos)
+                fade_near = std::strtof(node.properties.c_str() + at + 9, nullptr);
+            if (auto at = node.properties.find("fadeFar="); at != std::string::npos)
+                fade_far = std::strtof(node.properties.c_str() + at + 8, nullptr);
+        }
+    }
+
     LodInstance lods;
     lods.model = &m;
     if (!m.lod_sets.empty()) lods.node_pos.assign(m.cpu.nodes.size(), glm::vec3(0));
@@ -312,6 +333,25 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                 d.sky = sky;
                 if (anim && range.material >= 0 && !anim->overrides[size_t(range.material)].empty())
                     d.overrides = &anim->overrides[size_t(range.material)];
+                if (fades && range.material >= 0) {
+                    const auto& params = m.cpu.materials[range.material].params;
+                    if (std::any_of(params.begin(), params.end(), [](const MaterialParam& mp) { return mp.name == "FadeFactor"; })) {
+                        DistanceFade f;
+                        // Animated: share the material's overrides (filled before any draw points at them).
+                        f.values = anim ? &anim->overrides[size_t(range.material)] : &fade_values_.emplace_back();
+                        auto it = std::find_if(f.values->begin(), f.values->end(), [](const ParamOverride& o) { return o.param == "FadeFactor"; });
+                        f.slot = size_t(it - f.values->begin());
+                        if (it == f.values->end()) f.values->push_back({"FadeFactor", 0, 1, glm::vec4(1)});
+                        d.overrides = f.values;
+                        f.anim = anim.get();
+                        f.node = ni;
+                        f.position = glm::vec3(world[3]);
+                        f.axis = glm::vec3(world * glm::vec4(0, 1, 0, 0));
+                        f.near = fade_near, f.far = fade_far;
+                        f.fade_in = (p->mesh_flags & 4) != 0;
+                        fades_.push_back(f);
+                    }
+                }
                 draw_materials_.push_back(gm);
                 if (anim) anim->draws.push_back({draws_.size(), ni, skin});
                 if (!v.lod_nodes.empty()) lods.draws.push_back({draws_.size(), v.lod_nodes});
@@ -321,6 +361,12 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         for (int c : node.children) stack.push_back({c, world, v.lod_nodes});
     }
     if (anim) {
+        // A fade may have added overrides to a material drawn earlier.
+        for (const auto& ad : anim->draws) {
+            DrawItem& d = draws_[ad.item];
+            if (d.range.material >= 0 && !anim->overrides[size_t(d.range.material)].empty())
+                d.overrides = &anim->overrides[size_t(d.range.material)];
+        }
         pose(*anim);
         inst.anim = anim.get();
         lods.anim = anim.get();
@@ -521,6 +567,23 @@ void Scene::update(float dt, const glm::vec3& camera) {
         pose(*a);
     }
     for (LodInstance& li : lod_instances_) select_lods(li, camera);
+    for (DistanceFade& f : fades_) {
+        if (f.anim) {
+            const glm::mat4& w = f.anim->world[size_t(f.node)];
+            f.position = glm::vec3(w[3]);
+            f.axis = glm::vec3(w * glm::vec4(0, 1, 0, 0));
+        }
+        const float d = std::abs(glm::dot(f.axis, camera) - glm::dot(f.axis, f.position));
+        float v = 1;
+        if (f.fade_in) {
+            if (!(d > f.near)) v = 0;
+            else if (d < f.far) v = (d - f.near) / (f.far - f.near);
+        } else {
+            if (d > f.far) v = 0;
+            else if (d > f.near) v = (f.far - d) / (f.far - f.near);
+        }
+        (*f.values)[f.slot].value.x = v;
+    }
     for (size_t i = 0; i < light_sources_.size(); ++i) {
         const LightSource& s = light_sources_[i];
         if (s.anim) lights_[i].position = glm::vec3(s.anim->world[size_t(s.node)][3]);
@@ -588,6 +651,8 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     stats_.irradiance_volumes = irradiance_.size();
     animated_.clear();
     lod_instances_.clear();
+    fades_.clear();
+    fade_values_.clear();
     instances_.clear();
     skyboxes_.clear();
     zones_.build(level_, gol_);
@@ -714,7 +779,8 @@ size_t Scene::hide_models(const std::string& substring) {
 void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj) {
     zones_.update(camera, view_proj);
     for (const Instance& inst : instances_) {
-        const bool hidden = !zones_.visible(inst.zone);
+        if (inst.draw_count && draws_[inst.first_draw].sky) continue;
+        const bool hidden = !zones_.box_visible(inst.zone, inst.world_min, inst.world_max);
         for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].zone_hidden = hidden;
     }
 }

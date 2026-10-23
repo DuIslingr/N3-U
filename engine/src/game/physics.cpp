@@ -201,6 +201,11 @@ glm::vec3 CollisionWorld::collide(int depth, Data& d, const glm::vec3& pos, cons
         const glm::vec3 dir = glm::normalize(vel);
         new_base = d.base_point + dir * (d.nearest - very_close);
         d.intersection -= dir * very_close;
+    } else {
+        // Already touching (or a hair inside): Irrlicht keeps the position, so a surface
+        // touched exactly blocks every later move. Restore the gap along the contact normal.
+        const glm::vec3 away = d.base_point - d.intersection;
+        if (glm::length(away) > 1e-6f) new_base = d.intersection + glm::normalize(away) * (1.0f + very_close);
     }
     const glm::vec3 slide_origin = d.intersection;
     const glm::vec3 diff = new_base - d.intersection;
@@ -283,6 +288,18 @@ bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& 
         }
     }
     return any;
+}
+
+std::vector<uint32_t> CollisionWorld::owners_near(const glm::vec3& p, float radius) const {
+    std::vector<uint32_t> cand, out;
+    candidates(p - glm::vec3(radius), p + glm::vec3(radius), cand);
+    for (uint32_t i : cand) {
+        const Triangle& t = tris_[i];
+        const glm::vec3 lo = glm::min(glm::min(t.a, t.b), t.c), hi = glm::max(glm::max(t.a, t.b), t.c);
+        if (glm::any(glm::greaterThan(lo, p + glm::vec3(radius))) || glm::any(glm::lessThan(hi, p - glm::vec3(radius)))) continue;
+        if (std::find(out.begin(), out.end(), t.owner) == out.end()) out.push_back(t.owner);
+    }
+    return out;
 }
 
 }  // namespace nova

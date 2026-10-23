@@ -299,6 +299,26 @@ int main(int argc, char** argv) {
                                     player.center.y, player.center.z, player.on_ground ? "ground" : "air");
                     }
                 }
+                if (travelled < 0.5f) {   // stuck: what is around
+                    float floor_z = 0;
+                    if (scene.collision().ray_down(player.center + glm::vec3(0, 0, 2), 10, floor_z))
+                        std::printf("  centre z %.3f, feet %.3f, floor below at %.3f\n", player.center.z, player.center.z - player.radius.z, floor_z);
+                    for (float h : {-0.8f, -0.4f, 0.0f, 0.6f, 1.2f}) {
+                        std::printf("  rays at %+.1f m:", h);
+                        for (int k = 0; k < 8; ++k) {
+                            const float a = glm::radians(45.0f * k);
+                            const glm::vec3 from = player.center + glm::vec3(0, 0, h);
+                            float t = 1;
+                            const bool hit = scene.collision().raycast(from, from + 5.0f * glm::vec3(std::cos(a), std::sin(a), 0), t);
+                            std::printf(" %.2f", hit ? t * 5 : 9.0f);
+                        }
+                        std::printf("\n");
+                    }
+                    for (uint32_t owner : scene.collision().owners_near(player.center, 1.5f)) {
+                        const LevelObject& o = scene.level().objects.at(owner);
+                        std::printf("  stuck near object %u: %s %s id %d\n", owner, o.kind.c_str(), o.name.c_str(), o.base ? o.base->id : -1);
+                    }
+                }
                 std::printf("walk test: start z %.2f, end z %.2f, horizontal distance %.2f m, %s\n", start.z,
                             player.center.z, travelled, player.on_ground ? "on ground" : "in the air");
                 cam.position = player.eye();

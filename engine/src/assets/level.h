@@ -58,6 +58,7 @@ struct LevelObject {
     std::string name;          // object type name from gol.bin
     std::optional<Transform> base;
     std::string model;         // per-instance mesh component model
+    uint32_t mesh_flags = 0;   // its flags (4: fade in, 8: fade out with distance; CGameObject::InitComponentMesh)
     std::map<int, Value> components;
     Value fields;              // structure-type fields
     NavMesh nav;
@@ -86,6 +87,7 @@ const Value* resolved_template(const GolType& type, const Gol& gol, int comp);
 struct Placement {
     size_t object_index = 0;   // into Level::objects
     std::string model;
+    uint32_t mesh_flags = 0;   // LevelObject::mesh_flags, or the template's
     Transform transform;
     std::string object;
     std::string anim_file;     // from the animation component, if any

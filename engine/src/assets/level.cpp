@@ -65,7 +65,11 @@ const std::string& template_spec(int comp) {
 }
 
 Transform read_base(DictStream& st) { return transform_from_values(st.spec(kBaseSpec)); }
-std::string read_mesh(DictStream& st) { return st.spec(kMeshSpec)[0].s; }
+void read_mesh(DictStream& st, LevelObject& o) {
+    const Value v = st.spec(kMeshSpec);
+    o.model = v[0].s;
+    o.mesh_flags = uint32_t(v[1].i);
+}
 
 std::string strip(std::string s) {
     const auto b = s.find_first_not_of(" \t\r\n");
@@ -151,12 +155,12 @@ const std::unordered_map<int, std::pair<const char*, Reader>>& level_types() {
          }}},
         {0xBC1, {"occluder", [](DictStream& st, LevelObject& o) {
              o.base = read_base(st);
-             o.model = read_mesh(st);
+             read_mesh(st, o);
              o.fields = st.spec("f");
          }}},
         {0x1011, {"irradiance_volume", [](DictStream& st, LevelObject& o) {
              o.base = read_base(st);
-             o.model = read_mesh(st);
+             read_mesh(st, o);
              o.fields = st.spec("c f c f f f");
          }}},
     };
@@ -172,7 +176,7 @@ void read_game_object(DictStream& st, const GolType& type, const Gol& gol, Level
         } else if (comp == kCompBase) {
             o.base = read_base(st);
         } else if (comp == kCompMesh) {
-            o.model = read_mesh(st);
+            read_mesh(st, o);
         } else if (auto p = per_instance_specs().find(comp); p != per_instance_specs().end()) {
             o.components[comp] = st.spec(p->second);
         } else {
@@ -309,14 +313,19 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
         auto g = gol.find(o.type);
         if (g == gol.end()) continue;
         std::string model = o.model;
+        uint32_t mesh_flags = o.mesh_flags;
         if (model.empty() && library) {
-            if (const Value* t = resolved_template(g->second, gol, kCompMesh)) model = (*t)[0].s;
+            if (const Value* t = resolved_template(g->second, gol, kCompMesh)) {
+                model = (*t)[0].s;
+                if (t->size() > 1) mesh_flags = uint32_t((*t)[1].i);
+            }
         }
         auto tf = library ? object_transform(o, g->second, gol) : o.base;
         if (model.empty() || !tf || is_helper_model(model)) continue;
         Placement p;
         p.object_index = index;
         p.model = model;
+        p.mesh_flags = mesh_flags;
         p.transform = *tf;
         p.object = o.name;
         const Value* anim = nullptr;
