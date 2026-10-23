@@ -713,6 +713,25 @@ int api_qte_fire(lua_State* L) {
     return 0;
 }
 
+// GiveSplashDamage(object, damage, radius): a blast at the object.
+int api_give_splash_damage(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* o = obj(L, 1); o && c.combat)
+        c.combat->splash_damage(o->position + glm::vec3(0, 0, 0.5f), float(lua_tonumber(L, 2)), std::max(float(lua_tonumber(L, 3)), 0.1f), false);
+    return 0;
+}
+// PlayAnimation(object, clip): play the clip once and wait for its length.
+int api_play_animation(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const LevelLogic::Object* o = obj(L, 1);
+    if (!o || !c.scene.play_clip(o->index, str_arg(L, 2), false)) return 0;
+    Scene::ClipState cs;
+    lua_pushinteger(L, 2);
+    lua_pushinteger(L, c.scene.clip_state(o->index, cs) ? lua_Integer(cs.length) : 0);
+    return lua_yield(L, 2);
+}
+int api_ignore(lua_State*) { return 0; }   // LoadTexture (preloading), SetDSPPreset (reverb)
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -836,6 +855,10 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"GiveSplashDamage", api_give_splash_damage},
+    {"PlayAnimation", api_play_animation},
+    {"LoadTexture", api_ignore},
+    {"SetDSPPreset", api_ignore},
     {"QTEAddSlowTime", api_qte_add_slow_time},
     {"QTEStart", api_qte_start},
     {"QTEStop", api_qte_stop},

@@ -229,7 +229,10 @@ void Combat::update_grenades(float dt) {
 void Combat::explode(const glm::vec3& at) {
     effect(grenade_def_.effect, at);
     sound(grenade_def_.explode_sounds, &at);
-    const float r = grenade_def_.radius;
+    splash_damage(at, grenade_def_.damage, grenade_def_.radius, true);
+}
+
+void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_player) {
     for (Target& t : targets_) {
         if (!alive(t)) continue;
         const LevelLogic::Object* o = logic_.object(t.id);
@@ -237,11 +240,11 @@ void Combat::explode(const glm::vec3& at) {
         const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
         const float d = glm::distance(at, c);
         if (d >= r || !line_clear(at + glm::vec3(0, 0, 0.2f), c)) continue;
-        apply_damage(t, grenade_def_.damage * (1 - d / r), true);
+        apply_damage(t, damage * (1 - d / r), by_player);
     }
     const float d = glm::distance(at, player_center());
     if (d < r && line_clear(at + glm::vec3(0, 0, 0.2f), player_.eye())) {
-        damage_player(grenade_def_.damage * 0.5f * (1 - d / r), at);
+        damage_player(damage * 0.5f * (1 - d / r), at);
     }
     if (d < r * 3) logic_.shake(400, 1.5f * (1 - d / (r * 3)));
 }

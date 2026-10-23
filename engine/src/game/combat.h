@@ -109,6 +109,8 @@ public:
     void kill_all_enemies();
     void set_invulnerable(int id, bool on);
     void damage_player(float amount, const glm::vec3& from);
+    // Damage falling off to nothing at `radius` (grenades, GiveSplashDamage), behind cover none.
+    void splash_damage(const glm::vec3& at, float damage, float radius, bool by_player);
 
     bool shoot_enabled = true;         // EnableShootControl
     // SetGlobalAwarenessFactor: how fast NPCs notice their enemies (0: not at all).
