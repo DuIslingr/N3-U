@@ -1,4 +1,3 @@
-#include <cstdio>
 #include "assets/bdae.h"
 
 #include <algorithm>
