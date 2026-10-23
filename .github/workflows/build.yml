@@ -1,0 +1,59 @@
+# Builds the engine on Linux, Windows (MSVC) and macOS, every library from pinned sources
+# (glslc too where the machine has none), and keeps the packages. No game data here, so
+# nothing is run.
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build glslc
+      - name: Configure
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOVA3_VENDORED=ON -DNOVA3_SHADERCROSS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -B build/package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova3-linux
+          path: build/package/*.tar.gz
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -B build/package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova3-windows
+          path: build/package/*.zip
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install ninja
+      - name: Configure
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -B build/package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova3-macos
+          path: build/package/*.tar.gz

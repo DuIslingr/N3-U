@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <algorithm>
 #include <string>
@@ -22,6 +23,9 @@
 #include "core/zipfile.h"
 #include "shader/glsl_translate.h"
 #include "shader/shader_compiler.h"
+#ifdef NOVA3_SHADERCROSS
+#include <SDL3_shadercross/SDL_shadercross.h>
+#endif
 
 using namespace nova;
 
@@ -211,6 +215,28 @@ std::string read_text(const Vfs& vfs, const std::string& name) {
     return std::string(b.begin(), b.end());
 }
 
+// SPIR-V (SDL's Vulkan layout) to MSL and HLSL, as the Metal and Direct3D 12 renderers would
+// get it; the first error, or empty. Without SDL_shadercross in the build: nothing to check.
+// `dump`: also write them to <dump>.msl / <dump>.hlsl.
+std::string cross_check(const std::vector<uint32_t>& spirv, bool vertex, const std::string& dump = {}) {
+#ifdef NOVA3_SHADERCROSS
+    SDL_ShaderCross_SPIRV_Info info{};
+    info.bytecode = reinterpret_cast<const Uint8*>(spirv.data());
+    info.bytecode_size = spirv.size() * 4;
+    info.entrypoint = "main";
+    info.shader_stage = vertex ? SDL_SHADERCROSS_SHADERSTAGE_VERTEX : SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
+    for (bool msl : {true, false}) {
+        void* out = msl ? SDL_ShaderCross_TranspileMSLFromSPIRV(&info) : SDL_ShaderCross_TranspileHLSLFromSPIRV(&info);
+        if (!out) return std::string(msl ? "MSL: " : "HLSL: ") + SDL_GetError();
+        if (!dump.empty()) std::ofstream(dump + (msl ? ".msl" : ".hlsl")) << static_cast<const char*>(out);
+        SDL_free(out);
+    }
+#else
+    (void)spirv, (void)vertex, (void)dump;
+#endif
+    return {};
+}
+
 int cmd_shaders(const std::string& dir, const std::string& dump_dir) {
     Vfs vfs;
     vfs.mount_directory(dir);
@@ -240,6 +266,13 @@ int cmd_shaders(const std::string& dir, const std::string& dump_dir) {
                         const CompiledProgram prog = compiler.compile(read_text(vfs, p.vertex_shader), p.vertex_defines,
                                                                       read_text(vfs, p.fragment_shader), p.fragment_defines,
                                                                       skinned);
+                        for (bool vertex : {true, false}) {
+                            const std::string dump = dump_dir.empty() ? std::string()
+                                                     : dump_dir + "/" + fx.id + "." + t.name + (skinned ? ".skinned" : "") +
+                                                           (vertex ? ".vert" : ".frag");
+                            const std::string err = cross_check(vertex ? prog.vertex_spirv : prog.fragment_spirv, vertex, dump);
+                            if (!err.empty()) throw std::runtime_error((vertex ? "vertex " : "fragment ") + err);
+                        }
                         if (!dump_dir.empty() && !skinned) {
                             std::ofstream f(dump_dir + "/" + fx.id + "." + t.name + ".txt");
                             for (const auto* st : {&prog.vertex, &prog.fragment}) {
@@ -268,7 +301,28 @@ int cmd_shaders(const std::string& dir, const std::string& dump_dir) {
 
 }  // namespace
 
+// The renderer's own shaders (DIR/*.spv) through the same conversions.
+int cmd_cross(const std::string& dir) {
+    size_t n = 0, failed = 0;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) {
+        if (e.path().extension() != ".spv") continue;
+        std::ifstream f(e.path(), std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(f)), {});
+        std::vector<uint32_t> code(bytes.size() / 4);
+        std::memcpy(code.data(), bytes.data(), code.size() * 4);
+        const bool vertex = e.path().filename().string().find(".vert.") != std::string::npos;
+        ++n;
+        if (const std::string err = cross_check(code, vertex); !err.empty())
+            ++failed, std::printf("FAIL %s: %s\n", e.path().filename().string().c_str(), err.c_str());
+    }
+    std::printf("%zu shaders, %zu failed\n", n, failed);
+    return failed ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
+#ifdef NOVA3_SHADERCROSS
+    if (!SDL_ShaderCross_Init()) std::fprintf(stderr, "SDL_ShaderCross_Init: %s\n", SDL_GetError());
+#endif
     if (argc < 3) {
         std::fprintf(stderr, "usage: nova3-check vfs DATA_DIR\n");
         return 2;
@@ -278,6 +332,7 @@ int main(int argc, char** argv) {
         if (cmd == "vfs") return cmd_vfs(argv[2]);
         if (cmd == "textures") return cmd_textures(argv[2]);
         if (cmd == "shaders") return cmd_shaders(argv[2], argc >= 4 ? argv[3] : "");
+        if (cmd == "cross") return cmd_cross(argv[2]);
         if (cmd == "models" && argc >= 4) return cmd_models(argv[2], argv[3]);
         if (cmd == "nodes" && argc >= 4) return cmd_nodes(argv[2], argv[3]);
         if (cmd == "levels" && argc >= 4) return cmd_levels(argv[2], argv[3]);

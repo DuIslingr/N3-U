@@ -56,6 +56,11 @@ int main(int argc, char** argv) {
     int rc = 0;
     try {
         Vfs vfs;
+        // A packaged game: the data folder beside the executable.
+        if (!opt.data_given && !std::filesystem::is_directory(opt.data)) {
+            const std::filesystem::path beside = std::filesystem::path(SDL_GetBasePath()) / "data";
+            if (std::filesystem::is_directory(beside)) opt.data = beside.string();
+        }
         // Without the Android data, the iOS build's on its own (work/ios/ipa/Payload/nova3.app).
         if (!std::filesystem::is_directory(opt.data)) {
             const std::filesystem::path ios = std::filesystem::path(opt.data).lexically_normal().parent_path() / "ios" / "ipa" / "Payload" / "nova3.app";

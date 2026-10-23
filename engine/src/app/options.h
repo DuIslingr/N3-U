@@ -32,7 +32,8 @@
 namespace nova {
 
 struct Options {
-    std::string data = "work/data";
+    std::string data = "work/data";     // else data/ beside the executable (a packaged game)
+    bool data_given = false;
     // Other versions' archives, mounted after the main data to fill what it lacks; by
     // default the iOS build's app folder beside it (<data>/../ios/ipa/Payload/nova3.app).
     std::vector<std::string> extra_data;

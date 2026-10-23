@@ -253,6 +253,9 @@ private:
 
     SDL_Window* window_ = nullptr;
     SDL_GPUDevice* device_ = nullptr;
+    bool spirv_ = true;        // the device takes SPIR-V (Vulkan); else shaders go through SDL_shadercross
+    // A shader from SPIR-V in SDL's Vulkan layout, for whichever backend the device runs.
+    SDL_GPUShader* make_shader(const uint8_t* code, size_t size, SDL_GPUShaderStage stage, uint32_t samplers, uint32_t uniforms);
     SDL_GPUShader* vs_ = nullptr;
     SDL_GPUShader* vs_skinned_ = nullptr;
     SDL_GPUShader* fs_ = nullptr;

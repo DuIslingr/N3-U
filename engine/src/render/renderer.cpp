@@ -8,6 +8,9 @@
 #include <fstream>
 #include <stdexcept>
 
+#ifdef NOVA3_SHADERCROSS
+#include <SDL3_shadercross/SDL_shadercross.h>
+#endif
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -220,8 +223,15 @@ std::vector<uint8_t> read_binary(const std::string& path) {
 }  // namespace
 
 Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(window) {
-    device_ = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
+    // Vulkan takes the SPIR-V as it is; Direct3D 12 and Metal get it through SDL_shadercross.
+    SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV;
+#ifdef NOVA3_SHADERCROSS
+    if (SDL_ShaderCross_Init()) formats |= SDL_ShaderCross_GetSPIRVShaderFormats();
+#endif
+    device_ = SDL_CreateGPUDevice(formats, false, nullptr);
     if (!device_) fail("SDL_CreateGPUDevice");
+    spirv_ = (SDL_GetGPUShaderFormats(device_) & SDL_GPU_SHADERFORMAT_SPIRV) != 0;
+    std::printf("gpu: %s\n", SDL_GetGPUDeviceDriver(device_));
     if (window_ && !SDL_ClaimWindowForGPUDevice(device_, window_)) fail("SDL_ClaimWindowForGPUDevice");
     if (window_) SDL_SetGPUSwapchainParameters(device_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_VSYNC);
 
@@ -341,34 +351,50 @@ Renderer::~Renderer() {
     SDL_ReleaseGPUShader(device_, fs_);
     if (window_) SDL_ReleaseWindowFromGPUDevice(device_, window_);
     SDL_DestroyGPUDevice(device_);
+#ifdef NOVA3_SHADERCROSS
+    SDL_ShaderCross_Quit();
+#endif
+}
+
+SDL_GPUShader* Renderer::make_shader(const uint8_t* code, size_t size, SDL_GPUShaderStage stage, uint32_t samplers,
+                                    uint32_t uniforms) {
+    if (spirv_) {
+        SDL_GPUShaderCreateInfo ci{};
+        ci.code_size = size;
+        ci.code = code;
+        ci.entrypoint = "main";
+        ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        ci.stage = stage;
+        ci.num_samplers = samplers;
+        ci.num_uniform_buffers = uniforms;
+        return SDL_CreateGPUShader(device_, &ci);
+    }
+#ifdef NOVA3_SHADERCROSS
+    SDL_ShaderCross_SPIRV_Info info{};
+    info.bytecode = code;
+    info.bytecode_size = size;
+    info.entrypoint = "main";
+    info.shader_stage = stage == SDL_GPU_SHADERSTAGE_VERTEX ? SDL_SHADERCROSS_SHADERSTAGE_VERTEX : SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
+    SDL_ShaderCross_GraphicsShaderResourceInfo resources{};
+    resources.num_samplers = samplers;
+    resources.num_uniform_buffers = uniforms;
+    return SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(device_, &info, &resources, 0);
+#else
+    SDL_SetError("this build only has Vulkan shaders");
+    return nullptr;
+#endif
 }
 
 SDL_GPUShader* Renderer::load_shader(const std::string& path, SDL_GPUShaderStage stage, uint32_t samplers, uint32_t uniforms) {
     const auto code = read_binary(path);
-    SDL_GPUShaderCreateInfo ci{};
-    ci.code_size = code.size();
-    ci.code = code.data();
-    ci.entrypoint = "main";
-    ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
-    ci.stage = stage;
-    ci.num_samplers = samplers;
-    ci.num_uniform_buffers = uniforms;
-    SDL_GPUShader* s = SDL_CreateGPUShader(device_, &ci);
+    SDL_GPUShader* s = make_shader(reinterpret_cast<const uint8_t*>(code.data()), code.size(), stage, samplers, uniforms);
     if (!s) fail("SDL_CreateGPUShader " + path);
     return s;
 }
 
 SDL_GPUShader* Renderer::create_shader(const std::vector<uint32_t>& spirv, SDL_GPUShaderStage stage, uint32_t samplers,
                                       uint32_t uniforms) {
-    SDL_GPUShaderCreateInfo ci{};
-    ci.code_size = spirv.size() * 4;
-    ci.code = reinterpret_cast<const Uint8*>(spirv.data());
-    ci.entrypoint = "main";
-    ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
-    ci.stage = stage;
-    ci.num_samplers = samplers;
-    ci.num_uniform_buffers = uniforms;
-    return SDL_CreateGPUShader(device_, &ci);
+    return make_shader(reinterpret_cast<const uint8_t*>(spirv.data()), spirv.size() * 4, stage, samplers, uniforms);
 }
 
 const GpuProgram* Renderer::create_program(const CompiledProgram& c) {

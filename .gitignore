@@ -10,6 +10,8 @@ work/
 
 # Build output
 engine/build/
+engine/build-*/
+engine/build*.log
 build/
 compile_commands.json
 

@@ -34,7 +34,8 @@ public:
 
     size_t compiled = 0, cache_hits = 0;   // shader stages, for statistics
 
-    // Default cache location: $XDG_CACHE_HOME/nova3/shaders (or ~/.cache/...).
+    // Default cache location: $XDG_CACHE_HOME/nova3/shaders, %LOCALAPPDATA%\nova3\shaders,
+    // ~/Library/Caches/nova3/shaders (macOS) or ~/.cache/nova3/shaders.
     static std::string default_cache_dir();
 
 private:

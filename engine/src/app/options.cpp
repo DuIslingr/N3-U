@@ -13,7 +13,7 @@ Options parse_options(int argc, char** argv) {
             if (i + 1 >= argc) throw std::runtime_error("missing value for " + a);
             return argv[++i];
         };
-        if (a == "--data") o.data = next();
+        if (a == "--data") o.data = next(), o.data_given = true;
         else if (a == "--extra-data") o.extra_data.push_back(next());
         else if (a == "--level") o.level = next(), o.level_given = true;
         else if (a == "--main-menu") o.main_menu_keys = next();
