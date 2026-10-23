@@ -600,6 +600,8 @@ int main(int argc, char** argv) {
                     for (const glm::vec3& g : combat.grenade_threats()) hud.draw_grenade_warning(hud_sprites, f.view, g, w, h);
                 if (opt.scripts && logic.timer >= 0 && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_timer(hud_sprites, objective_text, logic.timer, w, h);
+                if (const Combat::PickupInfo& pi = combat.pickup_info(); pi.time > 0 && opt.scripts && !logic.player_locked() && logic.hud_enabled)
+                    hud.draw_pickup(hud_sprites, objective_text, pi.sprite, pi.amount, w, h);
                 if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked() && !menu.open) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});

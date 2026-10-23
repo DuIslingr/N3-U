@@ -308,6 +308,14 @@ void Hud::draw_timer(ParticleList& out, TextRenderer& text, float seconds, int w
     text.draw(out, line, {float(w) * 0.5f, y}, w, glm::vec4(1), {0.5f, 0.5f});
 }
 
+void Hud::draw_pickup(ParticleList& out, TextRenderer& text, const std::string& name, int amount, int w, int h) {
+    set_screen(w, h);
+    const float sx = float(w) / 480, sy = float(h) / 320;
+    const glm::vec2 at(float(w) - 40 * sx, 120 * sy);
+    if (const Sprite* s = sprite(name)) draw_frame(out, *s, 0, at, sprite_scale(name), glm::vec4(1));
+    if (amount > 0) text.draw(out, std::to_string(amount), at + glm::vec2(0, 20 * sy), w, glm::vec4(1), {0.5f, 1.0f});
+}
+
 void Hud::draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w,
                       int h, bool metric) {
     set_screen(w, h);

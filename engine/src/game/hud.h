@@ -52,6 +52,9 @@ public:
     void draw_grenade_warning(ParticleList& out, const glm::mat4& view, const glm::vec3& at, int w, int h);
     // ILevelInterface::DrawTimer: the time (MM:SS) centred at (W/2, 72) on Chatboard frame 230.
     void draw_timer(ParticleList& out, TextRenderer& text, float seconds, int w, int h);
+    // A pick-up taken (CLevelInterfaceNormal::Draw, ShowPowerUpInfo): its icon (frame 0 of
+    // `sprite`) at (W - 40, 120) of 480x320, what it gave under it.
+    void draw_pickup(ParticleList& out, TextRenderer& text, const std::string& sprite, int amount, int w, int h);
     // CLevel::RenderObjective: the guide marker (Chatboard.bsprite) over a point with its
     // distance; off screen, an arrow at the edge pointing its way.
     void draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w, int h,

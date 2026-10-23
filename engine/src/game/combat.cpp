@@ -26,6 +26,7 @@ constexpr int kCompWeapon = 0x47;
 constexpr int kCompNpcWeapon = 0x48;
 constexpr int kCompNpc = 0x4b;
 constexpr int kCompAi = 0x4e;
+constexpr int kCompPowerUp = 0x4a;
 constexpr int kCompActorsCollision = 0x0d;
 constexpr int kCompTargetable = 0x8d;
 constexpr int kPlayerTeamBit = 1 << 1;   // the player's team (1) in awareness masks
@@ -460,6 +461,7 @@ void Combat::refill_weapons() {
 
 bool Combat::unlock_weapon(const std::string& name) {
     if (lower(name) == "grenade") return grenades_enabled = true;
+    if (lower(name) == "mines") return mines_enabled = true;
     const int i = find_weapon(name);
     if (i < 0) return false;
     if (!owned_[size_t(i)]) {   // a new weapon comes loaded, with full reserves
@@ -473,6 +475,10 @@ bool Combat::unlock_weapon(const std::string& name) {
 bool Combat::lock_weapon(const std::string& name) {
     if (lower(name) == "grenade") {
         grenades_enabled = false;
+        return true;
+    }
+    if (lower(name) == "mines") {
+        mines_enabled = false;
         return true;
     }
     const int i = find_weapon(name);
@@ -648,6 +654,7 @@ void Combat::start(bool keep_stats) {
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
+    pickups_.clear(), pickup_info_ = {};
     if (keep_stats) {   // counted again below
         stats_.targets = stats_.actors = stats_.hostile = 0;
     } else {
@@ -680,6 +687,10 @@ void Combat::start(bool keep_stats) {
             spawners_.push_back(std::move(m));
             continue;
         }
+        if (const Value* pu = component(o, kCompPowerUp)) {
+            load_pickup(id, o, *pu);
+            continue;
+        }
         const Value* health = component(o, kCompHealth);
         if (!health || !component(o, kCompTargetable)) continue;
         Target t;
@@ -710,7 +721,7 @@ void Combat::start(bool keep_stats) {
     }
     load_covers();
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
-        std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, nav mesh " +
+        std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, nav mesh " +
         std::to_string(nav_.triangle_count()) + " triangles");
     for (const WeaponDef& w : weapons_) {
         char line[160];
@@ -1688,6 +1699,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     last_eye_ = eye;
     last_aim_ = aim;
     update_spawners(dt);
+    update_pickups(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     since_shot_ += dt;

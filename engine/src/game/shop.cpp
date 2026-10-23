@@ -51,7 +51,7 @@ bool Shop::can_buy(int i, const Combat& combat, const Settings& s) const {
     switch (it->index) {
         case 0: case 1: case 2: if (!combat.core_allowed()) return false; break;
         case 3: if (combat.grenades + int(it->modifier) > kMaxGrenades) return false; break;
-        case 4: if (!combat.mines_enabled) return false; break;
+        case 4: return false;   // mines are not thrown in this port yet
         case 5: if (!combat.can_refill()) return false; break;
         default: break;
     }

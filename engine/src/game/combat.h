@@ -217,9 +217,18 @@ public:
     // and reserve; allowed while one is short.
     bool can_refill() const;
     void refill_weapons();
-    // Mines (the Mine Pack) are not in this port yet.
+    // Mines: counted (pick-ups, the Mine Pack) once unlocked (UnlockWeapon("Mines")), but
+    // not yet thrown in this port.
     bool mines_enabled = false;
     int mines = 0;
+    // The last pick-up taken (CLevelInterfaceNormal::ShowPowerUpInfo): its icon (frame 0 of
+    // the .bsprite) and what it gave, for 2 s.
+    struct PickupInfo {
+        std::string sprite;
+        int amount = 0;
+        float time = 0;   // left to show
+    };
+    const PickupInfo& pickup_info() const { return pickup_info_; }
     // Repel's reach scaled (the Repel Upgrade, CPhysicsObjectComponent::ComputeRepel) and
     // damage added to the Paralyze shot (the Paralyze Upgrade, CProjectileComponent::GetDamage).
     float repel_scale = 1, paralyze_damage = 0;
@@ -490,6 +499,24 @@ private:
     std::vector<std::string> powers_{"Repel"};
     int power_index_ = 0;
     void repel(const glm::vec3& eye, const glm::vec3& aim);
+    // Pick-ups (CPowerUpComponent, gol comp 0x4a: weapon, power, ?, ammo only, amount,
+    // radius, seconds to come back, sound, ?, switch to it): walked into, they give a weapon's
+    // ammunition (and the weapon, unless ammo only), or grenades or mines (pickups.cpp).
+    struct Pickup {
+        int id = 0;
+        int weapon = -1;            // in the arsenal
+        int power = -1;             // 1 grenades, 2 mines
+        bool unlocks = true, switch_to = false;
+        int amount = 0;
+        float radius = 2, regenerate = -1;
+        std::string sound;
+        float gone = -1;            // seconds since taken, while it comes back
+    };
+    std::vector<Pickup> pickups_;
+    PickupInfo pickup_info_;
+    void load_pickup(int id, const LevelObject& o, const Value& v);
+    void update_pickups(float dt);
+    bool take_pickup(const Pickup& p);
     void paralyze(const glm::vec3& eye, const glm::vec3& aim);
     void use_selected_power(const glm::vec3& eye, const glm::vec3& aim);
     bool throw_started_ = false;
