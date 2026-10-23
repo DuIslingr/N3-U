@@ -138,8 +138,9 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     auto soft = [](const State* s) {
         if (!s || s->loop) return true;
         switch (s->type) {
-            case 3: case 4: case 10: case 11: case 24: case 26: case 37: case 38: case 42: return true;
-            default: return s->name == "Attack";
+            case 3: case 4: case 10: case 11: case 24: case 26: case 37: case 38: return true;
+            // 42 also holds GetWeapon and Weapon_Show_Off, which play through.
+            default: return s->name == "Attack" || s->name == "StartRush" || s->name == "EndRush" || s->name == "AimToRush";
         }
     };
     if (in.weapon != weapon_) {   // switched: the new weapon comes up
@@ -166,8 +167,12 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     was_reloading_ = in.reloading;
     cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
     const bool busy = left_ > 0 && !soft(cur);
+    // CWeaponManager::StartLanding plays only over an idle state (type 3), StartJump over an
+    // idle or walking one (4).
     if (!movement_.empty()) {
-        if (!busy && !lowered_ && !in.reloading) play(c, movement_);
+        const bool landing = movement_.rfind("Landing", 0) == 0;
+        const int type = cur && (cur->loop || left_ > 0) ? cur->type : 3;
+        if (!lowered_ && !in.reloading && (type == 3 || (!landing && type == 4))) play(c, movement_);
         movement_.clear();
     }
 
