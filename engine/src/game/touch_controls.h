@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -48,6 +49,7 @@ public:
     } shown;
     glm::vec2 pad_anchor() const { return pad_; }
     bool power_ready = true;   // else the power's icon shows red (recharging)
+    std::string power = "Repel";   // the selected power, for its icon
     glm::vec2 fire_anchor() const { return cluster_; }   // the fire, power, aim and jump buttons
 
 private:

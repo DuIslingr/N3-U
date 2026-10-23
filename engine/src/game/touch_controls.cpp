@@ -158,7 +158,12 @@ void TouchControls::draw(ParticleList& out) {
     if (shown.power) {
         const bool power = held(Part::Power) != nullptr;
         hud_.draw_frame(out, *s, power ? kPowerPressed : kPower, cluster_, scale_, white);
-        hud_.draw_frame(out, *s, !power_ready ? kPowerIconRecharging : power ? kPowerIconPressed : kPowerIcon, cluster_, scale_, white);
+        // The selected power's icon: idle, pressed, recharging (Repel 4/5/13, Paralyze
+        // 21/22/23, Slow 24/25/26).
+        const int base = this->power == "Paralyze" ? 21 : this->power == "Slow" ? 24 : -1;
+        const int icon = base < 0 ? (!power_ready ? kPowerIconRecharging : power ? kPowerIconPressed : kPowerIcon)
+                                  : (!power_ready ? base + 2 : power ? base + 1 : base);
+        hud_.draw_frame(out, *s, icon, cluster_, scale_, white);
     }
     if (shown.aim) hud_.draw_frame(out, *s, aim_ ? kAimOn : kAim, cluster_, scale_, white);
     if (shown.jump) hud_.draw_frame(out, *s, held(Part::Jump) ? kJumpPressed : kJump, cluster_, scale_, white);
