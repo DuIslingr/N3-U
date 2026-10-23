@@ -217,6 +217,8 @@ public:
     bool take_power_used() { return std::exchange(power_used_, false); }
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
     bool take_grenade_throw() { return std::exchange(throw_started_, false); }
+    // CLevel::DrawGrenades: enemy grenades that can reach the player (where they are).
+    std::vector<glm::vec3> grenade_threats() const;
     float since_shot() const { return since_shot_; }   // seconds since the last shot
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
@@ -294,6 +296,9 @@ private:
         bool aggr_locked = false;
         struct Band {
             float threshold = 0, range_min = 15, range_max = 25, pause_min = 1, pause_max = 1;
+        // Weights of what it does from cover (UpdateLowCover's fuzzy actions): fire, lean,
+        // blind fire, peek, throw a grenade.
+        float fire = 100, lean = 0, blind = 0, peek = 0, grenade = 0;
         };
         std::vector<Band> bands;
         // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
@@ -311,6 +316,9 @@ private:
         float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds
         float stand_height = 1.9f;
         bool crouched = false;
+        // Grenades (CComponentNPC [4] type, [5] how many, [6]/[7] throw range).
+        int grenades = 0;
+        float grenade_min = 20, grenade_max = 50, throw_at = -1;   // throw_at: seconds until the grenade leaves the hand
         enum class State { Idle, Chase, Attack, Melee, Hurt, Dying, Dead } state = State::Idle;
         bool aware = false;
         float timer = 0, fire_timer = 0, repath = 0, hurt_cooldown = 0, lost_sight = 0;
@@ -437,15 +445,22 @@ private:
     };
     struct Grenade {
         size_t object = size_t(-1);
+        const GrenadeDef* def = nullptr;
+        bool npc = false;              // an enemy's (NPC_Grenade): it hurts the player, the HUD warns of it
         glm::vec3 pos{0}, vel{0};
         float fuse = 0, bounce_wait = 0, spin = 0;
         int trail = -1;
         bool live = false;
     };
     void load_grenade();
+    static GrenadeDef read_grenade(const Gol& gol, int type);
     void throw_grenade(const glm::vec3& eye, const glm::vec3& aim);
+    void launch_grenade(const GrenadeDef& def, const glm::vec3& at, const glm::vec3& vel, bool npc);
+    // An NPC's throw (CNPCComponent::ThrowGrenadeFromCover): lobbed to land at the target.
+    void npc_throw_grenade(Target& t, const glm::vec3& target);
+    GrenadeDef npc_grenade_def_;
     void update_grenades(float dt);
-    void explode(const glm::vec3& at);
+    void explode(const Grenade& g);
     GrenadeDef grenade_def_;
     std::vector<Grenade> live_grenades_;
     float throw_delay_ = -1, grenade_cooldown_ = 0;

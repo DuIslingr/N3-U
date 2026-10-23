@@ -364,7 +364,7 @@ void LevelLogic::start(StartMode mode) {
     if (mode == StartMode::New && start_spawn_id_ >= 0)
         if (const Object* sp = object(start_spawn_id_)) teleport_player(*sp);
     if (properties_id_ >= 0) start_script("Obj" + std::to_string(properties_id_) + "_OnEnter", properties_id_);
-    if (start_spawn_id_ >= 0 && mode == StartMode::New) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
+    if (start_spawn_id_ >= 0 && mode == StartMode::New && !skip_intro) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
 }
 
 // --- linked objects -------------------------------------------------------------------

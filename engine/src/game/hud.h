@@ -43,6 +43,9 @@ public:
         bool primary = false, done = false;
     };
     void draw_objectives(ParticleList& out, TextRenderer& text, const std::vector<ObjectiveLine>& lines, float alpha, int w, int h);
+    // CLevel::DrawGrenades: an enemy grenade that can reach the player: hud3d's grenade icon
+    // (frame 15) on a ring 110 px (at 640 high) round the middle, its way.
+    void draw_grenade_warning(ParticleList& out, const glm::mat4& view, const glm::vec3& at, int w, int h);
     // ILevelInterface::DrawTimer: the time (MM:SS) centred at (W/2, 72) on Chatboard frame 230.
     void draw_timer(ParticleList& out, TextRenderer& text, float seconds, int w, int h);
     // CLevel::RenderObjective: the guide marker (Chatboard.bsprite) over a point with its

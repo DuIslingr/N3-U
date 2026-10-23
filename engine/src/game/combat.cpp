@@ -157,49 +157,83 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
     load_grenade();
 }
 
+Combat::GrenadeDef Combat::read_grenade(const Gol& gol, int id) {
+    GrenadeDef d;
+    auto it = gol.find(id);
+    if (it == gol.end()) return d;
+    d.type = id;
+    // CComponentGrenade: fuse (ms), damage, ?, damage radius, throw speed, ?, sticky, ...,
+    // explosion effect, explosion object, ..., bounce sound, ..., explosion sounds.
+    if (const Value* g = resolved_template(it->second, gol, 0x26); g && g->size() > 18) {
+        d.fuse = num(*g, 0, 2300) / 1000.0f;
+        d.damage = num(*g, 1, 40);
+        d.radius = num(*g, 3, 10);
+        d.speed = num(*g, 4, 25);
+        if (!str(*g, 10).empty()) d.effect = str(*g, 10);
+        d.bounce_sound = str(*g, 15);
+        d.explode_sounds = sound_list((*g)[18]);
+    }
+    if (const Value* fx = resolved_template(it->second, gol, 0x92); fx && fx->size() > 0 && (*fx)[0].size() > 0)
+        d.trail = str((*fx)[0][0], 0);
+    return d;
+}
+
 void Combat::load_grenade() {
     for (const auto& [id, type] : gol_) {
-        if (type.name != "Grenade_Player") continue;
-        grenade_def_.type = id;
-        // CComponentGrenade: fuse (ms), damage, ?, damage radius, throw speed, ?, sticky, ...,
-        // explosion effect, explosion object, ..., bounce sound, ..., explosion sounds.
-        if (const Value* g = resolved_template(type, gol_, 0x26); g && g->size() > 18) {
-            grenade_def_.fuse = num(*g, 0, 2300) / 1000.0f;
-            grenade_def_.damage = num(*g, 1, 40);
-            grenade_def_.radius = num(*g, 3, 10);
-            grenade_def_.speed = num(*g, 4, 25);
-            if (!str(*g, 10).empty()) grenade_def_.effect = str(*g, 10);
-            grenade_def_.bounce_sound = str(*g, 15);
-            grenade_def_.explode_sounds = sound_list((*g)[18]);
-        }
-        if (const Value* fx = resolved_template(type, gol_, 0x92); fx && fx->size() > 0 && (*fx)[0].size() > 0)
-            grenade_def_.trail = str((*fx)[0][0], 0);
-        break;
+        if (type.name == "Grenade_Player") grenade_def_ = read_grenade(gol_, id);
+        if (type.name == "NPC_Grenade") npc_grenade_def_ = read_grenade(gol_, id);
     }
 }
 
 void Combat::throw_grenade(const glm::vec3& eye, const glm::vec3& aim) {
-    if (grenade_def_.type < 0) return;
+    // Out of the right hand, along the view and a little up.
+    const glm::vec3 right = glm::normalize(glm::cross(aim, glm::vec3(0, 0, 1)) + glm::vec3(1e-4f));
+    glm::vec3 at = eye + aim * 0.4f + right * 0.2f - glm::vec3(0, 0, 0.15f);
+    float t = 1;
+    if (scene_.collision().raycast(eye, at, t)) at = eye;   // too close to a wall
+    launch_grenade(grenade_def_, at, aim * (grenade_def_.speed * 0.6f) + glm::vec3(0, 0, 3.5f), false);
+}
+
+void Combat::launch_grenade(const GrenadeDef& def, const glm::vec3& at, const glm::vec3& vel, bool npc) {
+    if (def.type < 0) return;
     Grenade* g = nullptr;
     for (Grenade& x : live_grenades_)
-        if (!x.live) g = &x;
+        if (!x.live && x.def == &def) g = &x;
     if (!g) {
         live_grenades_.push_back({});
         g = &live_grenades_.back();
-        g->object = scene_.spawn_object(grenade_def_.type, -3000 - int(live_grenades_.size()), eye, 0);
+        g->object = scene_.spawn_object(def.type, -3000 - int(live_grenades_.size()), at, 0);
     }
-    // Out of the right hand, along the view and a little up.
-    const glm::vec3 right = glm::normalize(glm::cross(aim, glm::vec3(0, 0, 1)) + glm::vec3(1e-4f));
-    g->pos = eye + aim * 0.4f + right * 0.2f - glm::vec3(0, 0, 0.15f);
-    float t = 1;
-    if (scene_.collision().raycast(eye, g->pos, t)) g->pos = eye;   // too close to a wall
-    g->vel = aim * (grenade_def_.speed * 0.6f) + glm::vec3(0, 0, 3.5f);
-    g->fuse = grenade_def_.fuse;
+    g->def = &def, g->npc = npc;
+    g->pos = at, g->vel = vel;
+    g->fuse = def.fuse;
     g->bounce_wait = 0;
     g->live = true;
     scene_.set_object_visible(g->object, true);
     scene_.move_object(g->object, g->pos);
-    g->trail = grenade_def_.trail.empty() ? -1 : scene_.particles().start(grenade_def_.trail, glm::translate(glm::mat4(1), g->pos));
+    g->trail = def.trail.empty() ? -1 : scene_.particles().start(def.trail, glm::translate(glm::mat4(1), g->pos));
+}
+
+void Combat::npc_throw_grenade(Target& t, const glm::vec3& target) {
+    if (t.grenades <= 0) return;
+    --t.grenades;
+    const float y = glm::radians(t.yaw);
+    const glm::vec3 hand = t.pos + glm::vec3(0, 0, t.stand_height * 0.9f) + glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.2f);
+    // A lob landing at the target: across in a time set by the throw speed, with gravity.
+    constexpr float kGravity = 12.0f;
+    const glm::vec3 d = target - hand;
+    const float across = glm::length(glm::vec2(d));
+    const float time = std::clamp(across / std::max(npc_grenade_def_.speed * 0.6f, 1.0f), 0.6f, 2.5f);
+    const glm::vec3 vel(d.x / time, d.y / time, (d.z + 0.5f * kGravity * time * time) / time);
+    launch_grenade(npc_grenade_def_, hand, vel, true);
+    if (logic_.trace) log(std::to_string(t.id) + " throws a grenade (" + std::to_string(t.grenades) + " left)");
+}
+
+std::vector<glm::vec3> Combat::grenade_threats() const {
+    std::vector<glm::vec3> out;
+    for (const Grenade& g : live_grenades_)
+        if (g.live && g.npc && g.def && glm::distance(g.pos, player_center()) < g.def->radius) out.push_back(g.pos);
+    return out;
 }
 
 void Combat::update_grenades(float dt) {
@@ -216,7 +250,7 @@ void Combat::update_grenades(float dt) {
             const float speed = glm::length(g.vel);
             g.vel = glm::reflect(g.vel, n) * 0.4f;
             if (n.z > 0.7f && glm::length(g.vel) < 1.0f) g.vel = glm::vec3(0);   // at rest
-            if (speed > 2.0f && g.bounce_wait <= 0) sound(grenade_def_.bounce_sound, &g.pos), g.bounce_wait = 0.15f;
+            if (speed > 2.0f && g.bounce_wait <= 0) sound(g.def->bounce_sound, &g.pos), g.bounce_wait = 0.15f;
         } else {
             g.pos = to;
         }
@@ -227,7 +261,7 @@ void Combat::update_grenades(float dt) {
             g.live = false;
             scene_.set_object_visible(g.object, false);
             if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
-            explode(g.pos);
+            explode(g);
         }
     }
 }
@@ -331,10 +365,16 @@ void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
     }
 }
 
-void Combat::explode(const glm::vec3& at) {
-    effect(grenade_def_.effect, at);
-    sound(grenade_def_.explode_sounds, &at);
-    splash_damage(at, grenade_def_.damage, grenade_def_.radius, true);
+void Combat::explode(const Grenade& g) {
+    if (logic_.trace) {
+        char line[128];
+        std::snprintf(line, sizeof line, "grenade explodes at (%.1f %.1f %.1f), %.1f m from the player", g.pos.x, g.pos.y, g.pos.z,
+                      glm::distance(g.pos, player_center()));
+        log(line);
+    }
+    effect(g.def->effect, g.pos);
+    sound(g.def->explode_sounds, &g.pos);
+    splash_damage(g.pos, g.def->damage, g.def->radius, !g.npc);
 }
 
 void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_player) {
@@ -349,7 +389,7 @@ void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_p
     }
     const float d = glm::distance(at, player_center());
     if (d < r && line_clear(at + glm::vec3(0, 0, 0.2f), player_.eye())) {
-        damage_player(damage * 0.5f * (1 - d / r), at);
+        damage_player(damage * (by_player ? 0.5f : 1.0f) * (1 - d / r), at);   // the player's own: half
     }
     if (d < r * 3) logic_.shake(400, 1.5f * (1 - d / (r * 3)));
 }
@@ -741,6 +781,8 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     t.sweep_r = t.sweep_max;
     t.stand_height = t.height;
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 7 && npc_grenade_def_.type >= 0 && (*npc)[4].i == npc_grenade_def_.type)
+        t.grenades = (*npc)[5].i, t.grenade_min = num(*npc, 6, 20), t.grenade_max = num(*npc, 7, 50);
     t.fire_range = std::min(t.sight, 35.0f);
     t.melee_damage = t.ranged ? 15.0f : 8.0f;
 

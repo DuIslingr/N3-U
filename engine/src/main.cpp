@@ -10,6 +10,7 @@
 //   nova3 ... --skybox ID                                          start with another of the level's skyboxes
 //   nova3 ... --no-scripts                                         do not run the level scripts
 //   nova3 ... --trace-scripts                                      log every script function that starts
+//   nova3 ... --skip-intro                                         (testing) the start spawn point's script does not run
 //   nova3 ... --spawn-at ID|X,Y,Z,YAW                              start at a level object, spawn point, waypoint or position
 //   nova3 ... --exec "LUA"                                         run a script snippet once the level has started
 //   nova3 ... --hide-models SUBSTR                                 (debugging) hide placements whose model matches
@@ -83,6 +84,7 @@ struct Options {
     float end_screen = -1;      // headless: draw the end-of-level screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
+    bool skip_intro = false;    // the start spawn point's script (the intro) does not run
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
     float time = 0;           // advance animations by this many seconds before a screenshot
     bool have_eye = false;
@@ -126,6 +128,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--skybox") o.skybox = std::stoi(next());
         else if (a == "--no-scripts") o.scripts = false;
         else if (a == "--trace-scripts") o.trace_scripts = true;
+        else if (a == "--skip-intro") o.skip_intro = true;
         else if (a == "--run") o.run = std::stof(next());
         else if (a == "--spawn-at") o.spawn_at = next();
         else if (a == "--exec") o.exec.push_back(next());
@@ -448,6 +451,7 @@ int main(int argc, char** argv) {
             if (opt.scripts) post_params = &logic.post, zfar = &logic.zfar;
             logic.auto_qte = headless;   // nobody to press the QTE buttons
             logic.trace = opt.trace_scripts;
+            logic.skip_intro = opt.skip_intro;
             logic.log = [&opt](const std::string& line) {
                 if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
                 std::printf("[script] %s\n", line.c_str());
@@ -580,6 +584,8 @@ int main(int argc, char** argv) {
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
                                     glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);
+                if (opt.scripts && !logic.player_locked() && logic.hud_enabled)
+                    for (const glm::vec3& g : combat.grenade_threats()) hud.draw_grenade_warning(hud_sprites, f.view, g, w, h);
                 if (opt.scripts && logic.timer >= 0 && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_timer(hud_sprites, objective_text, logic.timer, w, h);
                 if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked() && !menu.open) {

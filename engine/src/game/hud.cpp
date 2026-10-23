@@ -280,6 +280,18 @@ void Hud::draw_objectives(ParticleList& out, TextRenderer& text, const std::vect
     }
 }
 
+void Hud::draw_grenade_warning(ParticleList& out, const glm::mat4& view, const glm::vec3& at, int w, int h) {
+    set_screen(w, h);
+    const Sprite* s = sprite("hud3d.bsprite");
+    if (!s) return;
+    const glm::vec4 v = view * glm::vec4(at, 1);
+    const float a = std::atan2(v.x, -v.z);   // 0 ahead, positive to the right
+    const float r = 110.0f * float(h) / 640.0f, scale = sprite_scale("hud3d.bsprite");
+    const glm::vec4 b = frame_bounds(*s, 15) * scale;
+    const glm::vec2 c(float(w) * 0.5f + std::sin(a) * r, float(h) * 0.5f - std::cos(a) * r);
+    draw_frame(out, *s, 15, c - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f, scale, glm::vec4(1));
+}
+
 void Hud::draw_timer(ParticleList& out, TextRenderer& text, float seconds, int w, int h) {
     set_screen(w, h);
     // In the 960x640 sheet's pixels (the game draws at the device's resolution); the glow

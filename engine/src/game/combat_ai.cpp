@@ -63,6 +63,8 @@ void Combat::read_ai(Target& t, const Value& ai) {
             band.threshold = field(b, 1, 0);
             band.range_min = field(b, 2, 15), band.range_max = field(b, 3, 25);
             band.pause_min = field(b, 22, 1000) / 1000.0f, band.pause_max = field(b, 23, 1000) / 1000.0f;
+            band.fire = field(b, 13, 100), band.lean = field(b, 14, 0), band.blind = field(b, 15, 0);
+            band.peek = field(b, 16, 0), band.grenade = field(b, 18, 0);
             t.bands.push_back(band);
         }
 }
@@ -205,9 +207,34 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
             [[fallthrough]];
         case Target::CoverPhase::Hidden:
             face(t, target, dt);
+            if (t.throw_at >= 0) {   // a grenade on its way out of the hand (its clip playing)
+                if ((t.throw_at -= dt) < 0) npc_throw_grenade(t, target);
+                return true;
+            }
             if (c.low) set_crouched(t, true), play(t, clip("CrouchIdle", t.clip_alert), true);
             else play(t, clip("HighCoverIdle", t.clip_alert), true);
             if ((t.cover_timer -= dt) > 0) return true;
+            {
+                // UpdateLowCover state 0 (CFuzzyActions): fire (rising, leaning or blind), peek
+                // (hidden a while longer) or throw a grenade (one enemy grenade about at a time,
+                // within its throw range, if it has any), by the band's weights.
+                bool grenade_out = false;
+                for (const Grenade& g : live_grenades_) grenade_out |= g.live && g.npc;
+                const float d = glm::distance(t.pos, target);
+                const float w_fire = b ? b->fire + b->lean + b->blind : 100.0f, w_peek = b ? b->peek : 0.0f;
+                const float w_grenade = b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f;
+                const float roll = std::uniform_real_distribution<float>(0.0f, std::max(w_fire + w_peek + w_grenade, 1e-3f))(rng_);
+                if (roll >= w_fire + w_peek) {
+                    play(t, clip(c.low ? "LowCoverRightThrowGrenade" : "AttackGrenade", clip("AttackGrenade", t.clip_alert)), false);
+                    t.throw_at = 0.6f;
+                    t.cover_timer = std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
+                    return true;
+                }
+                if (roll >= w_fire) {
+                    t.cover_timer = std::uniform_real_distribution<float>(0.5f, 1.5f)(rng_);
+                    return true;
+                }
+            }
             {
                 // Up to fire needs one of the attack tokens at the player (else wait a moment).
                 int shooters = 0;

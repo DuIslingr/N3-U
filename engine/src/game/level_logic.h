@@ -163,6 +163,7 @@ public:
     const std::deque<Message>& messages() const { return messages_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function
+    bool skip_intro = false;         // (testing) the start spawn point's script does not run
     bool level_ended = false;        // EndLevel() was called
     bool level_success = true;       // EndLevel(false): the mission failed
     bool fog_locked = false;         // Fog_SetLock: zone changes keep the current fog
