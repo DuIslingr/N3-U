@@ -734,6 +734,13 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
             wp_id = logic_.next_waypoint(wp_id);
             if (wp_id == arg) break;   // a loop: once round
         }
+    } else if (order == "teleport") {   // NPCSuperSpeedToWaypoint
+        const LevelLogic::Object* wp = logic_.object(arg);
+        if (!wp) return false;
+        NpcGoal g;
+        g.kind = NpcGoal::Kind::Teleport, g.pos = wp->position, g.id = -1;
+        t->goals.clear();
+        t->goals.push_back(g);
     } else if (order == "set_target") {   // 0: the player
         return lock_target(npc, arg, true);
     } else if (order == "take_cover") {

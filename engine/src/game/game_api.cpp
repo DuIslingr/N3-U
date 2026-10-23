@@ -377,6 +377,22 @@ int api_remove_objective(lua_State* L) {
     v.erase(std::remove_if(v.begin(), v.end(), [id](const LevelLogic::ObjectiveMarker& m) { return m.id == id; }), v.end());
     return 0;
 }
+// SetAttractionDirection(x, y, z): a pull on the player (CLevel's attraction), m/s.
+int api_set_attraction(lua_State* L) {
+    ctx(L).player.push = glm::vec3(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)));
+    return 0;
+}
+int api_vehicle_deactivate(lua_State* L) {   // Vehicle_Deactivate(): out of the vehicle
+    ctx(L).leave_vehicle();
+    return 0;
+}
+// NPCSuperSpeedToWaypoint(npc, waypoint): CNPCComponent::TrySSToPosition, the Volterites'
+// blur-fast dash; taken here as a jump there at once.
+int api_npc_super_speed(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->npc_order(int(lua_tointeger(L, 1)), "teleport", int(lua_tointeger(L, 2)), true);
+    return 0;
+}
 int api_heat_haze_start(lua_State* L) {   // PostEffect_HeatHazeStart(ms, object)
     ctx(L).heat_haze(true, float(lua_tointeger(L, 1)), lua_isnumber(L, 2) ? int(lua_tointeger(L, 2)) : -1);
     return 0;
@@ -1126,6 +1142,9 @@ const Entry kImplemented[] = {
     {"PlayerLookTo", api_player_look_to},
     {"PlayerLookToDirection", api_player_look_to_direction},
     {"AddObjective", api_add_objective},
+    {"SetAttractionDirection", api_set_attraction},
+    {"Vehicle_Deactivate", api_vehicle_deactivate},
+    {"NPCSuperSpeedToWaypoint", api_npc_super_speed},
     {"PostEffect_HeatHazeStart", api_heat_haze_start},
     {"PostEffect_HeatHazeStop", api_heat_haze_stop},
     {"RemoveObjective", api_remove_objective},

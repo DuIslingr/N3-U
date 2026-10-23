@@ -297,6 +297,7 @@ void LevelLogic::start(bool keep_player) {
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
         zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
         player.jetpack = false;
+        player.push = glm::vec3(0);
         grading_ = Grading{};
         if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_, log("colour grading: " + default_lut_);
     }

@@ -22,6 +22,7 @@ public:
     float step_snap = 0.3f;         // when grounded, follow the floor down this far per step
 
     glm::vec3 center{0};
+    glm::vec3 push{0};              // an outside pull, m/s (SetAttractionDirection), added to the walk
     float yaw = 0, pitch = 0;       // degrees; yaw 0 looks along +Y, positive turns left
     float vertical_speed = 0;
     bool on_ground = false;
