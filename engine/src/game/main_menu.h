@@ -33,6 +33,7 @@ public:
     int unlocked = 1;   // chapters the player has reached
     int difficulty = 1;           // 0 Easy, 1 Normal, 2 Hard: the last chosen, and the choice
     bool hard_unlocked = false;   // Menu_IsHardDiffUnlocked
+    int credits = 0;              // shown where the sheet has a credits bar (the iOS one)
     // String lookup (MAIN table ids such as "FPS_CAMPAIGN").
     std::function<std::string(const std::string&)> text = [](const std::string& id) { return id; };
 

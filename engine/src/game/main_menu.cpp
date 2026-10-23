@@ -279,7 +279,13 @@ void MainMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer&
     std::vector<glm::vec2> texts;
     for (int i = lf.first; i < lf.first + lf.count; ++i) {
         const Sprite::FModule& fm = s->fmodules[size_t(i)];
-        if ((fm.flags & 16) && fm.module == 3) texts.push_back({float(fm.x), float(fm.y)});
+        if ((fm.flags & 16) && fm.module == 3 && fm.x <= 480)   // the credits bar's text (iOS)
+            small.draw(out, std::to_string(credits), px({float(fm.x) + 30, float(fm.y) + 8}), int(W), kWhite, {0.0f, 0.5f});
+    }
+    for (int i = lf.first; i < lf.first + lf.count; ++i) {
+        const Sprite::FModule& fm = s->fmodules[size_t(i)];
+        // The info panel's markers, right of centre (the iOS sheet adds one at the top left).
+        if ((fm.flags & 16) && fm.module == 3 && fm.x > 480) texts.push_back({float(fm.x), float(fm.y)});
     }
     std::sort(texts.begin(), texts.end(), [](glm::vec2 a, glm::vec2 b) { return a.y < b.y; });
     if (selected_ < chapters() && texts.size() >= 6) {

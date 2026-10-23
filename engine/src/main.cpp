@@ -315,6 +315,11 @@ int main(int argc, char** argv) {
     int rc = 0;
     try {
         Vfs vfs;
+        // Without the Android data, the iOS build's on its own (work/ios/ipa/Payload/nova3.app).
+        if (!std::filesystem::is_directory(opt.data)) {
+            const std::filesystem::path ios = std::filesystem::path(opt.data).lexically_normal().parent_path() / "ios" / "ipa" / "Payload" / "nova3.app";
+            if (std::filesystem::is_directory(ios)) opt.data = ios.string();
+        }
         if (vfs.mount_directory(opt.data) == 0) throw std::runtime_error("no .gla archives in " + opt.data);
         std::vector<std::string> extra = opt.extra_data;
         if (extra.empty()) {
@@ -1169,7 +1174,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (!opt.main_menu_keys.empty()) {   // the main menu instead of the view
-                    main_menu.unlocked = std::max(1, int(campaign.size()) / 2);
+                    main_menu.unlocked = std::max(1, int(campaign.size()) / 2), main_menu.credits = settings.credits;
                     main_menu.show();
                     for (char c : opt.main_menu_keys) {
                         using K = MainMenu::Key;
@@ -1567,7 +1572,7 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
-                    main_menu.unlocked = settings.chapters, main_menu.hard_unlocked = settings.hard_unlocked;
+                    main_menu.unlocked = settings.chapters, main_menu.hard_unlocked = settings.hard_unlocked, main_menu.credits = settings.credits;
                     if (!main_menu.open) main_menu.difficulty = settings.difficulty;
                     // The title music (Application::PlayTitleMusic, m_title.vxn): its "mmenu"
                     // state in the menus, "loading" on the loading screen (GS_Loading); the
