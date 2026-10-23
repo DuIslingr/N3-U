@@ -42,6 +42,7 @@
 #include "game/level_logic.h"
 #include "game/scene.h"
 #include "render/renderer.h"
+#include "render/text.h"
 
 using namespace nova;
 
@@ -299,6 +300,19 @@ int main(int argc, char** argv) {
             combat.player_invulnerable = opt.god;
             logic.combat = &combat;
             Overlay overlay;
+            // Subtitles: the latest script message, bottom centre.
+            TextRenderer subtitles(vfs, renderer, "Days.ttf", std::max(16.0f, float(opt.height) * 0.032f));
+            ParticleList hud_sprites;
+            auto draw_text = [&](FrameParams& f, int w, int h) {
+                hud_sprites.vertices.clear();
+                hud_sprites.batches.clear();
+                if (opt.scripts && !logic.messages().empty()) {
+                    const LevelLogic::Message& m = logic.messages().back();
+                    const float a = std::clamp(m.seconds_left / 0.4f, 0.0f, 1.0f);
+                    subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, float(h) * 0.8f}, int(float(w) * 0.7f), {1, 1, 1, a});
+                }
+                f.sprites = &hud_sprites;
+            };
             if (opt.scripts) {
                 logic.start();
                 const auto& ls = logic.stats();
@@ -544,6 +558,7 @@ int main(int argc, char** argv) {
                 overlay.clear();
                 if (opt.scripts) combat.draw(overlay, shot.camera, opt.width, opt.height);
                 shot.overlay = &overlay;
+                draw_text(shot, opt.width, opt.height);
                 scene.cull(shot.camera, shot.proj * shot.view);
                 if (opt.trace_zones) {
                     const ZoneSystem& z = scene.zones();
@@ -686,6 +701,7 @@ int main(int argc, char** argv) {
                     overlay.clear();
                     if (opt.scripts && !flying) combat.draw(overlay, f.camera, w, h);
                     f.overlay = &overlay;
+                    draw_text(f, w, h);
                     renderer.render_to_window(scene.draws(), f);
                 }
             }

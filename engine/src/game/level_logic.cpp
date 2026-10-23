@@ -73,6 +73,10 @@ void LevelLogic::load_objects() {
                 while (!music_event_.empty() && music_event_.back() == ' ') music_event_.pop_back();
                 music_gap_min_ = o.fields[43].as_float(), music_gap_max_ = o.fields[44].as_float();
             }
+            // The level's string table (CComponentLevelProperties [24]), after MAIN.
+            strings = StringTable();
+            strings.load(scene.vfs(), "MAIN");
+            if (o.fields.size() > 24 && o.fields[24].type == Value::String) strings.load(scene.vfs(), o.fields[24].s);
             continue;
         }
         if (o.kind == "waypoint" && o.fields.size() > 4) {
@@ -293,10 +297,16 @@ void LevelLogic::show(Object& o, bool on) {
     if (o.door < 0 || doors_[size_t(o.door)].state == Door::State::Closed) scene.set_object_collision(o.index, on);
 }
 
-void LevelLogic::message(const std::string& text, float seconds) {
-    messages_.push_back({text, seconds});
+void LevelLogic::message(const std::string& id, float seconds) {
+    std::string text = strings.find(id);
+    if (const std::string prefix = "Objective: "; text.empty() && id.rfind(prefix, 0) == 0) {
+        const std::string t = strings.find(id.substr(prefix.size()));
+        if (!t.empty()) text = prefix + t;
+    }
+    if (text.empty()) text = id;
+    messages_.push_back({id, text, seconds});
     while (messages_.size() > 8) messages_.pop_front();
-    log("message: " + text);
+    log("message: " + id + (text != id ? " \"" + text + "\"" : ""));
 }
 
 void LevelLogic::teleport_player(const Object& spawn) {

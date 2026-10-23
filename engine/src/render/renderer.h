@@ -142,6 +142,7 @@ struct FrameParams {
     const Overlay* overlay = nullptr;
     const PostParams* post = nullptr;
     const ParticleList* particles = nullptr;
+    const ParticleList* sprites = nullptr;   // HUD: textured quads in pixels (origin top left), alpha
 };
 
 class Renderer {
@@ -175,13 +176,14 @@ private:
         SDL_GPUGraphicsPipeline* particles_alpha = nullptr;
         SDL_GPUGraphicsPipeline* effects = nullptr;    // overlay: world, additive
         SDL_GPUGraphicsPipeline* hud = nullptr;        // overlay: screen, alpha
+        SDL_GPUGraphicsPipeline* sprites = nullptr;    // screen, textured, alpha
     };
     void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
     // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).
     void encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
                       const std::vector<DrawItem>& items, const FrameParams& frame, bool hud);
     void draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const Pipelines& pipes, uint32_t w,
-                             uint32_t h, const Overlay& o);
+                             uint32_t h, const Overlay* o, const ParticleList* sprites);
     void ensure_post_targets(uint32_t w, uint32_t h);
     struct PostPipelines {
         SDL_GPUGraphicsPipeline* blur = nullptr;
@@ -205,10 +207,14 @@ private:
     SDL_GPUShader* fs_ = nullptr;
     SDL_GPUShader* vs_particle_ = nullptr;
     SDL_GPUShader* fs_particle_ = nullptr;
-    SDL_GPUBuffer* particle_buffer_ = nullptr;
-    SDL_GPUTransferBuffer* particle_transfer_ = nullptr;
-    uint32_t particle_capacity_ = 0;
-    void upload_particles(SDL_GPUCommandBuffer* cmd, const ParticleList& p);
+    // Vertices into a growing GPU buffer (with its upload buffer), before a render pass.
+    struct DynamicBuffer {
+        SDL_GPUBuffer* buffer = nullptr;
+        SDL_GPUTransferBuffer* transfer = nullptr;
+        uint32_t capacity = 0;   // vertices
+    };
+    void upload_vertices(SDL_GPUCommandBuffer* cmd, const ParticleList& p, DynamicBuffer& b);
+    DynamicBuffer particle_buffer_, sprite_buffer_;
     SDL_GPUShader* vs_post_ = nullptr;
     SDL_GPUShader* fs_post_blur_ = nullptr;
     SDL_GPUShader* fs_post_final_ = nullptr;

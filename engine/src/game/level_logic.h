@@ -20,6 +20,7 @@
 #include <glm/glm.hpp>
 
 #include "assets/level.h"
+#include "assets/strings.h"
 #include "render/renderer.h"
 #include "script/lua_runtime.h"
 
@@ -47,9 +48,10 @@ public:
 
     // Script messages (ShowMessage, print, errors), for the HUD/console.
     struct Message {
-        std::string text;
+        std::string id, text;        // the script's id, and its text (or the id when untranslated)
         float seconds_left = 0;
     };
+    StringTable strings;             // MAIN and the level's table (English)
     const std::deque<Message>& messages() const { return messages_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function

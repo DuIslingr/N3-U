@@ -16,6 +16,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
 # The game embeds Lua 5.1.4; its level scripts rely on 5.1 semantics.
 pkg_check_modules(LUA51 REQUIRED IMPORTED_TARGET lua5.1)
+pkg_check_modules(SDL3_TTF REQUIRED IMPORTED_TARGET sdl3-ttf)
 
 # Engine core: file system, asset decoders and the game-shader compiler (no rendering).
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS src/core/*.cpp src/assets/*.cpp src/shader/*.cpp src/script/*.cpp)
@@ -43,7 +44,7 @@ add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 file(GLOB VIEWER_SOURCES CONFIGURE_DEPENDS src/main.cpp src/render/*.cpp src/game/*.cpp src/audio/*.cpp)
 if(VIEWER_SOURCES)
     add_executable(nova3 ${VIEWER_SOURCES})
-    target_link_libraries(nova3 PRIVATE nova3core SDL3::SDL3)
+    target_link_libraries(nova3 PRIVATE nova3core SDL3::SDL3 PkgConfig::SDL3_TTF)
     target_compile_options(nova3 PRIVATE -Wall -Wextra)
     add_dependencies(nova3 shaders)
 endif()

@@ -86,6 +86,7 @@ public:
     // empty or not found (or the object is not animated).
     glm::mat4 object_matrix(size_t object, const std::string& node = {}) const;
     const SceneStats& stats() const { return stats_; }
+    const Vfs& vfs() const { return vfs_; }
 
     // Particle effects (levels/effects.bin); updated with the scene, cleared on load.
     ParticleSystem& particles() { return particles_; }
