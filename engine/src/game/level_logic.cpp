@@ -993,6 +993,7 @@ void LevelLogic::player_look_to(const glm::vec3& at, float seconds) {
     look_at_ = at;
     look_total_ = look_left_ = std::max(seconds, 0.01f);
     look_from_yaw_ = player.yaw, look_from_pitch_ = player.pitch;
+    look_aimed_ = false;
 }
 
 void LevelLogic::camera_look_to(const glm::vec3& at, float seconds) {
@@ -1028,13 +1029,16 @@ bool LevelLogic::look_target(float& yaw, float& pitch) {
         return true;
     }
     if (look_left_ <= 0 && !camera_held_) return false;
-    const glm::vec3 d = look_at_ - player.eye();
-    const float ty = glm::degrees(std::atan2(-d.x, d.y));
-    const float tp = glm::degrees(std::atan2(d.z, glm::length(glm::vec2(d))));
+    if (!look_aimed_) {
+        const glm::vec3 d = look_at_ - player.eye();
+        look_to_yaw_ = glm::degrees(std::atan2(-d.x, d.y));
+        look_to_pitch_ = glm::degrees(std::atan2(d.z, glm::length(glm::vec2(d))));
+        look_aimed_ = true;
+    }
     const float k = look_left_ > 0 ? 1 - look_left_ / look_total_ : 1;
-    float dy = std::fmod(ty - look_from_yaw_ + 540.0f, 360.0f) - 180.0f;
+    float dy = std::fmod(look_to_yaw_ - look_from_yaw_ + 540.0f, 360.0f) - 180.0f;
     yaw = look_from_yaw_ + dy * k;
-    pitch = look_from_pitch_ + (tp - look_from_pitch_) * k;
+    pitch = look_from_pitch_ + (look_to_pitch_ - look_from_pitch_) * k;
     return true;
 }
 

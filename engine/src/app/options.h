@@ -18,6 +18,7 @@
 //   nova3 ... --section N                                          load level section N (as LoadLevelSections)
 //   nova3 ... --screenshot OUT.bmp --trace-zones                   print the zones, portals and what is visible
 //   nova3 ... --screenshot OUT.bmp --run SECONDS                    run the level logic (standing still) first
+//   nova3 ... --screenshot OUT.bmp --run SECONDS --every S          also save OUT_000.bmp, ... every S seconds of it
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
 // (Space/Ctrl then move up/down), E to use, G to switch game/built-in shaders, Z to toggle
@@ -77,6 +78,7 @@ struct Options {
     int skybox = -1;          // show this skybox id (as the level script's SetSkybox would)
     bool scripts = true, trace_scripts = false;
     float run = 0;            // headless: seconds of level logic before the screenshot
+    float every = 0;          // headless: also save a frame every this many seconds of the run
     std::string spawn_at;
     std::vector<std::string> exec;
     std::vector<std::string> hide_models;

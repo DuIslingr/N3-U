@@ -82,6 +82,7 @@ private:
     int run_audit();
     void run_walk_test();
     int run_screenshot();
+    FrameParams shot_frame(Camera base);
 
     // The window (game_window.cpp).
     void run_window();

@@ -155,8 +155,30 @@ void Game::run_walk_test() {
     cam.yaw = player.yaw;
 }
 
+// The screenshot's frame from `base`: the cinematic or limited-control camera while one is
+// on, with the overlay, HUD and text over it.
+FrameParams Game::shot_frame(Camera base) {
+    if (Scene::CameraView cv; opt.scripts && !opt.have_eye && logic.cinematic_view(cv)) {   // --eye wins
+        base.position = cv.position, base.directed = true, base.direction = cv.forward, base.up = cv.up;
+        base.fov = glm::degrees(cv.fov), base.game_fov = false;
+    } else if (opt.scripts && !opt.have_eye && logic.limited_view(cv)) {   // the limited-control rig's camera
+        base.position = cv.position, base.directed = true, base.direction = cv.forward, base.up = cv.up;
+    } else if (opt.scripts && !opt.have_eye) {
+        base.jolt(viewmodel.camera_offset());
+    }
+    FrameParams shot = frame(base, opt.width, opt.height);
+    overlay.clear();
+    if (opt.scripts && !logic.player_locked()) combat.draw(overlay, shot.camera, opt.width, opt.height);
+    if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
+    shot.overlay = &overlay;
+    draw_text(shot, opt.width, opt.height);
+    scene.cull(shot.camera, shot.proj * shot.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
+    return shot;
+}
+
 int Game::run_screenshot() {
     float report = 0;
+    int shots = 0;   // --every: frames saved along the run
     const float run_time = std::max(opt.run, opt.combat_test);
     glm::vec3 touch_from{0};
     float touch_yaw = 0;
@@ -268,6 +290,18 @@ int Game::run_screenshot() {
         if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw, eye.pitch = player.pitch;
         const FrameParams rf = frame(eye, opt.width, opt.height);
         scene.cull(rf.camera, rf.proj * rf.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
+        if (opt.every > 0 && t + kPhysicsStep >= float(shots) * opt.every) {   // OUT_000.bmp, OUT_001.bmp, ...
+            const FrameParams sf = shot_frame(eye);
+            const Image img = renderer.render_to_image(scene.draws(), sf, opt.width, opt.height);
+            std::string path = opt.screenshot;
+            char n[16];
+            std::snprintf(n, sizeof n, "_%03d", shots++);
+            const size_t dot = path.rfind('.');
+            path.insert(dot == std::string::npos ? path.size() : dot, n);
+            if (!save_bmp(img, path)) throw std::runtime_error("cannot write " + path);
+            std::printf("t=%.2f %s: eye (%.1f %.1f %.1f) yaw %.0f pitch %.0f\n", t, path.c_str(), sf.camera.x, sf.camera.y,
+                        sf.camera.z, player.yaw, player.pitch);
+        }
     }
     if (!opt.sound_render.empty() && logic.audio) {
         if (!save_wav(rendered, logic.audio->rate(), opt.sound_render)) throw std::runtime_error("cannot write " + opt.sound_render);
@@ -293,18 +327,7 @@ int Game::run_screenshot() {
         vm.reloading = combat.reloading();
         viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
     }
-    Camera shot_cam = cam;
-    if (Scene::CameraView cv; opt.scripts && !opt.have_eye && logic.cinematic_view(cv)) {   // --eye wins
-        shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
-        shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
-    } else if (opt.scripts && !opt.have_eye && logic.limited_view(cv)) {   // the limited-control rig's camera
-        shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
-    } else if (opt.scripts && !opt.have_eye) {
-        shot_cam.jolt(viewmodel.camera_offset());
-    }
-    FrameParams shot = frame(shot_cam, opt.width, opt.height);
     bool scene_hidden = false;
-    overlay.clear();
     if (!opt.menu_keys.empty()) {
         menu.show();
         for (char c : opt.menu_keys) {
@@ -315,11 +338,7 @@ int Game::run_screenshot() {
         }
         menu.update(1.0f);
     }
-    if (opt.scripts && !logic.player_locked()) combat.draw(overlay, shot.camera, opt.width, opt.height);
-    if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
-    shot.overlay = &overlay;
-    draw_text(shot, opt.width, opt.height);
-    scene.cull(shot.camera, shot.proj * shot.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
+    FrameParams shot = shot_frame(cam);
     if (opt.trace_zones) {
         const ZoneSystem& z = scene.zones();
         std::printf("camera %.1f %.1f %.1f zone %d (id %d); visible:", shot.camera.x, shot.camera.y, shot.camera.z,

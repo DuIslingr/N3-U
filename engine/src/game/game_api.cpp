@@ -314,7 +314,7 @@ int api_motion_speed(lua_State* L) {
 }
 
 // Cinematics: StartCinematicObject(id[, skip]), EndCinematicObject(id),
-// StartCinematic()/EndCinematic(), PlayCameraAnim(obj, clip[, loop]), PlayerLookTo(wp, ms).
+// StartCinematic()/EndCinematic(), PlayCameraAnim(obj, clip[, loop]) (waits for the clip), PlayerLookTo(wp, ms).
 // StartCinematicObject waits until the cinematic has ended ("CinematicEnd_<id>").
 int api_start_cinematic_object(lua_State* L) {
     LevelLogic& c = ctx(L);
@@ -342,7 +342,14 @@ int api_play_camera_anim(lua_State* L) {
     if (LevelLogic::Object* o = c.object(int(lua_tointeger(L, 1)))) {
         if (o->index == std::numeric_limits<size_t>::max()) return 0;
         if (!o->visible) c.show(*o, true);
-        c.scene.play_clip(o->index, str_arg(L, 2), lua_toboolean(L, 3) != 0);
+        // The script waits out the clip, once through even when it loops
+        // (CAnimationComponent::GetCurrentAnimationLength).
+        Scene::ClipState cs;
+        if (c.scene.play_clip(o->index, str_arg(L, 2), lua_toboolean(L, 3) != 0) && c.scene.clip_state(o->index, cs)) {
+            lua_pushinteger(L, 2);
+            lua_pushinteger(L, lua_Integer(cs.length));
+            return lua_yield(L, 2);
+        }
     }
     return 0;
 }

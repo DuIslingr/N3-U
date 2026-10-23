@@ -28,6 +28,7 @@ Options parse_options(int argc, char** argv) {
         else if (a == "--trace-scripts") o.trace_scripts = true;
         else if (a == "--skip-intro") o.skip_intro = true;
         else if (a == "--run") o.run = std::stof(next());
+        else if (a == "--every") o.every = std::stof(next());
         else if (a == "--spawn-at") o.spawn_at = next();
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--effect") o.effects.push_back(next());

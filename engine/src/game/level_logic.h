@@ -525,6 +525,10 @@ private:
     bool have_handover_ = false;
     float look_left_ = 0, look_total_ = 0;
     float look_from_yaw_ = 0, look_from_pitch_ = 0;
+    // The view's goal, aimed once from where the player is at the first update after the call
+    // (PlayerComponent::UpdateLookAt): moving on doesn't turn it.
+    bool look_aimed_ = false;
+    float look_to_yaw_ = 0, look_to_pitch_ = 0;
     bool camera_held_ = false, restore_view_ = false;
     float held_yaw_ = 0, held_pitch_ = 0;
     void update_movers(float dt);
