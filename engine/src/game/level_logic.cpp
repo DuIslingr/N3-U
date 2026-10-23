@@ -284,6 +284,8 @@ void LevelLogic::start(bool keep_player) {
     level_fog_density_ = scene.fog_density;
     load_objects();
     if (!keep_player) {
+        fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
+        zfar = 8000, move_sensitivity = 1, player_rush = true;
         grading_ = Grading{};
         if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
     }
@@ -1016,6 +1018,7 @@ void LevelLogic::primary_objective_complete() {
 
 void LevelLogic::update(float dt) {
     update_grading(dt);
+    fov_t_ += dt;
     objectives.show = std::max(objectives.show - dt, 0.0f);
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);

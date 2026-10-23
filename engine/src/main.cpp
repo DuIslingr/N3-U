@@ -183,12 +183,16 @@ bool focus_camera(const Scene& scene, const Gol& gol, const std::string& spec, g
     return false;
 }
 
-constexpr float kFov = 65, kAimFov = 42;   // vertical, degrees; aim mode narrows the view
+// The game's field of view (CLevel::SetTargetFov: the camera gets fov * height / width
+// degrees vertically; 70 by default). Aim mode narrows it.
+constexpr float kFov = 70, kAimZoom = 0.65f;
 
 struct Camera {
     glm::vec3 position{0};
     float yaw = 0, pitch = 0;   // degrees; yaw 0 looks along +Y, positive yaw turns left (game convention)
     float fov = kFov;
+    bool game_fov = true;       // fov in the game's units (else vertical degrees: cinematic cameras)
+    float zfar = 8000;
     // A camera that looks along a given direction (cinematics) instead of yaw/pitch.
     bool directed = false;
     glm::vec3 direction{0, 1, 0}, up{0, 0, 1};
@@ -203,7 +207,8 @@ struct Camera {
         f.view = glm::lookAt(position, position + forward(), directed ? up : glm::vec3(0, 0, 1));
         // Reversed depth (near -> 1, far -> 0) spreads the float depth buffer's precision
         // evenly; near and far are swapped on purpose.
-        f.proj = glm::perspectiveRH_ZO(glm::radians(fov), float(w) / float(std::max(h, 1)), 8000.0f, 0.05f);
+        const float vertical = game_fov ? fov * float(h) / float(std::max(w, 1)) : fov;
+        f.proj = glm::perspectiveRH_ZO(glm::radians(vertical), float(w) / float(std::max(h, 1)), zfar, 0.05f);
         f.camera = position;
         return f;
     }
@@ -290,8 +295,11 @@ int main(int argc, char** argv) {
                         scene.shader_compiler().compiled, scene.shader_compiler().cache_hits);
             float clock = opt.time;
             const PostParams* post_params = nullptr;   // the level logic's, once it exists
+            const float* zfar = nullptr;               // the level logic's far plane (SetZFar), once it exists
             ParticleList particle_list;
-            auto frame = [&](const Camera& cam, int w, int h) {
+            auto frame = [&](const Camera& cam_in, int w, int h) {
+                Camera cam = cam_in;
+                if (zfar) cam.zfar = *zfar;
                 FrameParams f = cam.frame(w, h);
                 scene.build_particles(f.camera, particle_list);
                 f.particles = &particle_list;
@@ -327,7 +335,7 @@ int main(int argc, char** argv) {
                 };
             }
             std::vector<float> rendered;   // --sound-render
-            if (opt.scripts) post_params = &logic.post;
+            if (opt.scripts) post_params = &logic.post, zfar = &logic.zfar;
             logic.trace = opt.trace_scripts;
             logic.log = [&opt](const std::string& line) {
                 if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
@@ -685,7 +693,7 @@ int main(int argc, char** argv) {
                 Camera shot_cam = cam;
                 if (Scene::CameraView cv; opt.scripts && logic.cinematic_view(cv)) {
                     shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
-                    shot_cam.fov = glm::degrees(cv.fov);
+                    shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
                 }
                 FrameParams shot = frame(shot_cam, opt.width, opt.height);
                 overlay.clear();
@@ -827,7 +835,7 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
                             combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
                         if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || !logic.controls.rotate))) {
-                            const float k = 0.12f * cam.fov / kFov;   // slower while aiming
+                            const float k = 0.12f * cam.fov / kFov;   // slower while aiming (and zoomed in)
                             cam.yaw -= e.motion.xrel * k;
                             cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k, -89.0f, 89.0f);
                         }
@@ -863,7 +871,8 @@ int main(int argc, char** argv) {
                     const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead && logic.controls.aim &&
                                         (touch_mode ? touch_in.aim : aim_held);
                     {
-                        const float target = aiming ? kAimFov : kFov;
+                        const float base = opt.scripts ? logic.game_fov() : kFov;
+                        const float target = aiming ? base * kAimZoom : base;
                         cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
                     }
                     if (flying) {
@@ -882,12 +891,13 @@ int main(int argc, char** argv) {
                         const bool locked = opt.scripts && logic.player_locked();   // cinematics
                         if (!locked) {
                             const LevelLogic::Controls& lc = logic.controls;   // all on without scripts
-                            if (lc.move) {
+                            if (lc.move) {   // SetMoveSensitivity scales walking
                                 in.forward = glm::clamp(float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]) + touch_in.forward, -1.0f, 1.0f);
                                 in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
+                                in.forward *= logic.move_sensitivity, in.right *= logic.move_sensitivity;
                             }
                             in.jump = lc.jump && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
-                            in.run = lc.rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
+                            in.run = lc.rush && logic.player_rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
                             if (lc.rotate) {
                                 const float k = cam.fov / kFov;
                                 cam.yaw += touch_in.look.x * k;
@@ -963,7 +973,7 @@ int main(int argc, char** argv) {
                     const bool cinematic = opt.scripts && logic.cinematic_view(cv);
                     if (cinematic) {
                         view.position = cv.position, view.directed = true, view.direction = cv.forward, view.up = cv.up;
-                        view.fov = glm::degrees(cv.fov);
+                        view.fov = glm::degrees(cv.fov), view.game_fov = false;
                     }
                     FrameParams f = frame(view, w, h);
                     scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);

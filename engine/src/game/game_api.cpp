@@ -673,6 +673,27 @@ int api_disable_color_grading(lua_State* L) {
     return 0;
 }
 
+int api_set_fov(lua_State* L) {   // SetFOV(fov, ms)
+    ctx(L).set_fov(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+int api_reset_fov(lua_State* L) {   // ResetFOV(ms): back to 70
+    ctx(L).set_fov(70, float(lua_tonumber(L, 1)));
+    return 0;
+}
+int api_set_zfar(lua_State* L) {
+    ctx(L).zfar = std::max(float(lua_tonumber(L, 1)), 10.0f);
+    return 0;
+}
+int api_set_move_sensitivity(lua_State* L) {
+    ctx(L).move_sensitivity = std::clamp(float(lua_tonumber(L, 1)), 0.0f, 1.0f);
+    return 0;
+}
+int api_player_enable_rush(lua_State* L) {
+    ctx(L).player_rush = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -796,6 +817,11 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"SetFOV", api_set_fov},
+    {"ResetFOV", api_reset_fov},
+    {"SetZFar", api_set_zfar},
+    {"SetMoveSensitivity", api_set_move_sensitivity},
+    {"PlayerEnableRush", api_player_enable_rush},
     {"SetColorGrading", api_set_color_grading},
     {"DisableColorGrading", api_disable_color_grading},
     {"LockTarget", api_lock_target},

@@ -94,6 +94,12 @@ public:
     // ms) blends to another over ms, DisableColorGrading turns it off). Fills post.grading.
     void set_color_grading(const std::string& lut, float ms);
     void disable_color_grading() { grading_.on = false, grading_.dirty = true; }
+    // SetFOV(fov, ms) / ResetFOV(ms): the field of view moves to a target (game units, 70
+    // by default). SetZFar, SetMoveSensitivity, PlayerEnableRush.
+    void set_fov(float fov, float ms) { fov_from_ = game_fov(), fov_to_ = fov, fov_len_ = ms / 1000.0f, fov_t_ = 0; }
+    float game_fov() const { return fov_len_ > 0 && fov_t_ < fov_len_ ? fov_from_ + (fov_to_ - fov_from_) * fov_t_ / fov_len_ : fov_to_; }
+    float zfar = 8000, move_sensitivity = 1;
+    bool player_rush = true;
     void set_primary_objective(const std::string& id);
     void add_secondary_objective(const std::string& id);
     void secondary_objective_complete(const std::string& id);
@@ -323,6 +329,7 @@ private:
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
     float time_factor_ = 1, time_factor_left_ = 0;
+    float fov_from_ = 70, fov_to_ = 70, fov_len_ = 0, fov_t_ = 0;
     struct Grading {
         std::string current, previous;
         float left = 0, total = 0;   // blend from previous to current (seconds)
