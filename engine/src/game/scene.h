@@ -93,6 +93,13 @@ public:
     void set_clip_speed(size_t object, float speed);
     // Show or hide one of the object's nodes (by name or id) regardless of its animation.
     void set_node_visible(size_t object, const std::string& node, bool visible);
+    // A camera in the object's (animated) model, e.g. a cinematic's: where it is, where it
+    // looks (Collada cameras look down -Z with +Y up) and its field of view (radians).
+    struct CameraView {
+        glm::vec3 position{0}, forward{0, 1, 0}, up{0, 0, 1};
+        float fov = 1;
+    };
+    bool camera_view(size_t object, CameraView& out) const;
     // World position of one of the object's nodes (by name or id), e.g. Bip01_Head.
     bool node_position(size_t object, const std::string& node, glm::vec3& out) const;
     // World transform of one of the object's nodes; the object's placement if `node` is

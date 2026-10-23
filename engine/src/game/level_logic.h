@@ -23,6 +23,7 @@
 #include "assets/level.h"
 #include "assets/strings.h"
 #include "render/renderer.h"
+#include "game/scene.h"
 #include "script/lua_runtime.h"
 
 namespace nova {
@@ -141,6 +142,18 @@ public:
     bool motion_start(int id);
     void motion_stop(int id, int at_waypoint = -1);
     void motion_max_speed(int id, float speed);
+    // Cinematics (CCinematicComponent 0x41): StartCinematicObject plays the object's clips
+    // and runs its timed script events (Obj<id>_<track>_<n>_OnScriptEvent); a camera in its
+    // model takes over the view meanwhile. StartCinematic/EndCinematic take the player's
+    // control away and give it back.
+    bool start_cinematic(int id);
+    void end_cinematic(int id);
+    bool cinematic_view(Scene::CameraView& out) const;
+    bool player_locked() const;      // no player control (a cinematic is running)
+    bool cinematic_mode = false;     // StartCinematic .. EndCinematic
+    // PlayerLookTo(waypoint, ms): turn the player's view to a point.
+    void player_look_to(const glm::vec3& at, float seconds);
+    bool look_target(float& yaw, float& pitch) const;   // the view while turning (degrees)
     // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame): the game saves and
     // reloads there when the player dies. Here the world stays as it is: the player comes
     // back at the checkpoint's spawn point, whose Obj<id>_Default script runs again.
@@ -218,6 +231,20 @@ private:
     };
     std::vector<Mover> movers_;
     int checkpoint_ = -1;
+    struct Cinematic {
+        int id = 0;
+        size_t index = 0;
+        float time = 0, duration = 0;   // ms
+        std::vector<std::pair<float, std::string>> events;   // start ms, script function
+        size_t next = 0;
+        bool was_visible = true;
+    };
+    std::vector<Cinematic> cinematics_;
+    void update_cinematics(float dt);
+    const Value* object_component(const Object& o, int comp) const;
+    glm::vec3 look_at_{0};
+    float look_left_ = 0, look_total_ = 0;
+    float look_from_yaw_ = 0, look_from_pitch_ = 0;
     void update_movers(float dt);
     void mover_state(Mover& m, const std::string& state);
     bool fading_ = false, fade_in_ = true;

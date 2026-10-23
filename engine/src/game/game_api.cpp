@@ -286,6 +286,46 @@ int api_motion_speed(lua_State* L) {
     return 0;
 }
 
+// Cinematics: StartCinematicObject(id[, skip]), EndCinematicObject(id),
+// StartCinematic()/EndCinematic(), PlayCameraAnim(obj, clip[, loop]), PlayerLookTo(wp, ms).
+// StartCinematicObject waits until the cinematic has ended ("CinematicEnd_<id>").
+int api_start_cinematic_object(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const int id = int(lua_tointeger(L, 1));
+    if (!c.start_cinematic(id)) {
+        c.log("StartCinematicObject: no cinematic " + std::to_string(id));
+        return 0;
+    }
+    lua_pushinteger(L, 4);
+    lua_pushstring(L, ("CinematicEnd_" + std::to_string(id)).c_str());
+    lua_pushinteger(L, id);
+    return lua_yield(L, 3);
+}
+int api_end_cinematic_object(lua_State* L) {
+    ctx(L).end_cinematic(int(lua_tointeger(L, 1)));
+    return 0;
+}
+template <bool On>
+int api_cinematic_mode(lua_State* L) {
+    ctx(L).cinematic_mode = On;
+    return 0;
+}
+int api_play_camera_anim(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (LevelLogic::Object* o = c.object(int(lua_tointeger(L, 1)))) {
+        if (o->index == std::numeric_limits<size_t>::max()) return 0;
+        if (!o->visible) c.show(*o, true);
+        c.scene.play_clip(o->index, str_arg(L, 2), lua_toboolean(L, 3) != 0);
+    }
+    return 0;
+}
+int api_player_look_to(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
+        c.player_look_to(wp->position, float(lua_tointeger(L, 2)) / 1000.0f);
+    return 0;
+}
+
 // SaveGame(spawn point): a checkpoint. ShowProgressSavedMessage().
 int api_save_game(lua_State* L) {
     ctx(L).save_checkpoint(int(lua_tointeger(L, 1)));
@@ -618,6 +658,12 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_objective},
     // Accepted without effect: saving, persistence of state the engine does not have yet.
     {"SaveGame", api_save_game},
+    {"StartCinematicObject", api_start_cinematic_object},
+    {"EndCinematicObject", api_end_cinematic_object},
+    {"StartCinematic", api_cinematic_mode<true>},
+    {"EndCinematic", api_cinematic_mode<false>},
+    {"PlayCameraAnim", api_play_camera_anim},
+    {"PlayerLookTo", api_player_look_to},
     {"ShowProgressSavedMessage", api_progress_saved},
     {"Fog_SetLock", api_fog_lock},
     {"EnablePortal", api_portal<true>},

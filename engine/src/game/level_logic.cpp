@@ -25,6 +25,7 @@ constexpr int kCompEffects = 0x92;        // CEffectsComponent: [[effect, node, 
 constexpr int kCompEffectBuiltIn = 0xAE;  // CEffectBuiltInComponent: effect, ?, node, autostart, ?
 constexpr int kCompBuiltinBox = 0xA6;     // CComponentBuiltinBox: width, depth, height
 constexpr int kCompBuiltinCylinder = 0xA8;   // CComponentBuiltinCylinder: radius, height
+constexpr int kCompCinematic = 0x41;      // CCinematicComponent: length ms, ..., [11] script event tracks, [13] object clips
 constexpr int kCompPath = 0x15;            // CPathComponent: id, ?, first waypoint, last waypoint, ?
 constexpr int kCompMotionOnPath = 0x16;    // CMotionOnPathComponent: node, path id, max speed, accel, brake, loop
 
@@ -241,6 +242,7 @@ void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
     movers_.clear(), waypoint_next_.clear(), path_first_.clear();
     if (!keep_player) checkpoint_ = -1;
+    cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
@@ -534,6 +536,120 @@ glm::vec2 LevelLogic::shake_offset() const {
                      std::cos(shake_clock_ * 53.0f) + 0.5f * std::sin(shake_clock_ * 77.0f)) * a;
 }
 
+const Value* LevelLogic::object_component(const Object& o, int comp) const {
+    if (o.index >= scene.level().objects.size()) return nullptr;
+    const LevelObject& lo = scene.level().objects[o.index];
+    if (auto it = lo.components.find(comp); it != lo.components.end()) return &it->second;
+    auto g = gol.find(lo.type);
+    return g == gol.end() ? nullptr : resolved_template(g->second, gol, comp);
+}
+
+namespace {
+
+// Script events in a cinematic's tracks: [start ms, end ms, "function Name(...) ..."].
+void collect_events(const Value& v, std::vector<std::pair<float, std::string>>& out) {
+    if (v.type != Value::List) return;
+    if (v.size() >= 3 && v[0].type == Value::Int && v[2].type == Value::String) {
+        const std::string& s = v[2].s;
+        const size_t f = s.find("function ");
+        if (f != std::string::npos) {
+            const size_t a = f + 9, b = s.find('(', a);
+            if (b != std::string::npos) out.push_back({float(v[0].i), s.substr(a, b - a)});
+        }
+        return;
+    }
+    for (const Value& x : v.list) collect_events(x, out);
+}
+
+}  // namespace
+
+bool LevelLogic::start_cinematic(int id) {
+    Object* o = object(id);
+    if (!o) return false;
+    const Value* c = object_component(*o, kCompCinematic);
+    if (!c || c->size() < 1) return false;
+    end_cinematic(id);
+    Cinematic cin;
+    cin.id = id, cin.index = o->index;
+    cin.duration = (*c)[0].as_float();
+    cin.was_visible = o->visible;
+    if (c->size() > 11) collect_events((*c)[11], cin.events);
+    std::sort(cin.events.begin(), cin.events.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    if (!o->enabled) enable(*o, true);
+    else show(*o, true);
+    // The clips it plays on objects ([13]: object, [[clip, ...]]), else the object's own.
+    bool own = false;
+    if (c->size() > 13)
+        for (const Value& e : (*c)[13].list) {
+            if (e.size() < 2 || e[1].size() == 0 || e[1][0].size() == 0) continue;
+            Object* t = object(e[0].i);
+            if (!t || t->index == std::numeric_limits<size_t>::max()) continue;
+            if (!t->visible) show(*t, true);
+            scene.play_clip(t->index, e[1][0][0].s, false);
+            own = own || t == o;
+        }
+    if (!own)
+        if (const Value* anim = object_component(*o, kCompAnimation); anim && anim->size() > 1 && (*anim)[1].type == Value::String)
+            scene.play_clip(o->index, (*anim)[1].s, false);
+    if (trace) log("cinematic " + std::to_string(id) + " for " + std::to_string(int(cin.duration)) + " ms, " +
+                   std::to_string(cin.events.size()) + " events");
+    cinematics_.push_back(std::move(cin));
+    return true;
+}
+
+void LevelLogic::end_cinematic(int id) {
+    for (auto it = cinematics_.begin(); it != cinematics_.end(); ++it) {
+        if (it->id != id) continue;
+        if (Object* o = object(id); o && !it->was_visible) show(*o, false);
+        cinematics_.erase(it);
+        runtime_.send_event("CinematicEnd_" + std::to_string(id), id);
+        return;
+    }
+}
+
+void LevelLogic::update_cinematics(float dt) {
+    for (size_t i = 0; i < cinematics_.size();) {
+        Cinematic& c = cinematics_[i];
+        c.time += dt * 1000.0f;
+        while (c.next < c.events.size() && c.events[c.next].first <= c.time) start_script(c.events[c.next++].second, c.id);
+        if (c.time >= c.duration) {
+            if (trace) log("cinematic " + std::to_string(c.id) + " ended");
+            end_cinematic(c.id);   // (erases it)
+            continue;
+        }
+        ++i;
+    }
+}
+
+bool LevelLogic::cinematic_view(Scene::CameraView& out) const {
+    for (auto it = cinematics_.rbegin(); it != cinematics_.rend(); ++it)
+        if (scene.camera_view(it->index, out)) return true;
+    return false;
+}
+
+bool LevelLogic::player_locked() const {
+    Scene::CameraView v;
+    return cinematic_mode || cinematic_view(v);
+}
+
+void LevelLogic::player_look_to(const glm::vec3& at, float seconds) {
+    look_at_ = at;
+    look_total_ = look_left_ = std::max(seconds, 0.01f);
+    look_from_yaw_ = player.yaw, look_from_pitch_ = player.pitch;
+}
+
+bool LevelLogic::look_target(float& yaw, float& pitch) const {
+    if (look_left_ <= 0) return false;
+    const glm::vec3 d = look_at_ - player.eye();
+    const float ty = glm::degrees(std::atan2(-d.x, d.y));
+    const float tp = glm::degrees(std::atan2(d.z, glm::length(glm::vec2(d))));
+    const float k = 1 - look_left_ / look_total_;
+    float dy = std::fmod(ty - look_from_yaw_ + 540.0f, 360.0f) - 180.0f;
+    yaw = look_from_yaw_ + dy * k;
+    pitch = look_from_pitch_ + (tp - look_from_pitch_) * k;
+    return true;
+}
+
 void LevelLogic::save_checkpoint(int spawn_id) {
     if (spawn_id <= 0 || !object(spawn_id)) {
         log("SaveGame: no spawn point " + std::to_string(spawn_id));
@@ -705,6 +821,8 @@ void LevelLogic::update(float dt) {
     update_music(dt);
     update_dialog(dt);
     update_movers(dt);
+    update_cinematics(dt);
+    look_left_ = std::max(look_left_ - dt, 0.0f);
     if (fading_) {
         fade_left_ = std::max(fade_left_ - dt, 0.0f);
         if (fade_left_ <= 0 && fade_in_) fading_ = false;   // faded out stays covered

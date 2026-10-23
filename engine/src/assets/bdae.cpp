@@ -14,6 +14,7 @@ namespace {
 
 // Root (glitch::collada::SCollada) collections: (count offset, pointer offset, stride).
 constexpr Coll kLights{0x60, 0x64, 0x30};
+constexpr Coll kCameras{0x50, 0x54, 0x30};   // +0 id, +8 field of view (radians), +0xC aspect, near, far
 constexpr Coll kImages{0x68, 0x6C, 0x10};
 constexpr Coll kMaterials{0x78, 0x7C, 0x24};
 constexpr Coll kGeometries{0x84, 0x88, 0x10};
@@ -26,6 +27,7 @@ constexpr Coll kMaterialParams{0x10, 0x14, 0x18};
 constexpr Coll kSubmeshes{0x38, 0x3C, 0x38};
 
 constexpr uint32_t kGeometryMesh = 0;
+constexpr uint32_t kInstanceCamera = 1;
 constexpr uint32_t kInstanceController = 2;
 constexpr uint32_t kInstanceGeometry = 3;
 constexpr uint32_t kInstanceLight = 4;
@@ -307,6 +309,12 @@ private:
             std::string url = b.cstr(ip + 4);
             if (!url.empty() && url[0] == '#') url.erase(0, 1);
             int m = -1;
+            if (type == kInstanceCamera) {
+                for (uint32_t c : b.array(b.root, kCameras))
+                    if (b.cstr(c) == url) node.camera_fov = b.f32(c + 8);
+                if (node.camera_fov <= 0) node.camera_fov = 1.0f;
+                continue;
+            }
             if (type == kInstanceLight) {
                 for (size_t li = 0; li < model.lights.size(); ++li)
                     if (model.lights[li].id == url) node.lights.push_back(int(li));

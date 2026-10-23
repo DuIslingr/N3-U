@@ -1013,6 +1013,22 @@ void Scene::set_node_visible(size_t object, const std::string& node, bool visibl
     pose(a);
 }
 
+bool Scene::camera_view(size_t object, CameraView& out) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a) return false;
+    const auto& nodes = a->model->cpu.nodes;
+    for (size_t n = 0; n < nodes.size(); ++n) {
+        if (nodes[n].camera_fov <= 0) continue;
+        const glm::mat4& w = a->world[n];
+        out.position = glm::vec3(w[3]);
+        out.forward = glm::normalize(-glm::vec3(w[2]));
+        out.up = glm::normalize(glm::vec3(w[1]));
+        out.fov = nodes[n].camera_fov;
+        return true;
+    }
+    return false;
+}
+
 glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {
     if (const AnimatedInstance* a = node.empty() ? nullptr : object_anim(object)) {
         if (const int n = find_node(*a->model, node); n >= 0) return a->world[size_t(n)];

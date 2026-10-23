@@ -87,6 +87,7 @@ struct ModelNode {
     std::vector<int> children;
     std::vector<int> meshes;         // indices into Model::meshes drawn at this node
     std::vector<int> lights;         // indices into Model::lights placed at this node
+    float camera_fov = 0;            // a camera at this node: its field of view (radians); 0: none
 };
 
 struct Model {

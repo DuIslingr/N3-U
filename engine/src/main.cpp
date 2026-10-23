@@ -175,17 +175,22 @@ bool focus_camera(const Scene& scene, const Gol& gol, const std::string& spec, g
 struct Camera {
     glm::vec3 position{0};
     float yaw = 0, pitch = 0;   // degrees; yaw 0 looks along +Y, positive yaw turns left (game convention)
+    float fov = 65;             // vertical, degrees
+    // A camera that looks along a given direction (cinematics) instead of yaw/pitch.
+    bool directed = false;
+    glm::vec3 direction{0, 1, 0}, up{0, 0, 1};
 
     glm::vec3 forward() const {
+        if (directed) return direction;
         const float y = glm::radians(yaw), p = glm::radians(pitch);
         return {-std::sin(y) * std::cos(p), std::cos(y) * std::cos(p), std::sin(p)};
     }
     FrameParams frame(int w, int h) const {
         FrameParams f;
-        f.view = glm::lookAt(position, position + forward(), {0, 0, 1});
+        f.view = glm::lookAt(position, position + forward(), directed ? up : glm::vec3(0, 0, 1));
         // Reversed depth (near -> 1, far -> 0) spreads the float depth buffer's precision
         // evenly; near and far are swapped on purpose.
-        f.proj = glm::perspectiveRH_ZO(glm::radians(65.0f), float(w) / float(std::max(h, 1)), 8000.0f, 0.05f);
+        f.proj = glm::perspectiveRH_ZO(glm::radians(fov), float(w) / float(std::max(h, 1)), 8000.0f, 0.05f);
         f.camera = position;
         return f;
     }
@@ -574,9 +579,14 @@ int main(int argc, char** argv) {
                     if (opt.combat_test > 0) cam.pitch = player.pitch;
                 }
                 scene.update(opt.time, cam.position);
-                FrameParams shot = frame(cam, opt.width, opt.height);
+                Camera shot_cam = cam;
+                if (Scene::CameraView cv; opt.scripts && logic.cinematic_view(cv)) {
+                    shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
+                    shot_cam.fov = glm::degrees(cv.fov);
+                }
+                FrameParams shot = frame(shot_cam, opt.width, opt.height);
                 overlay.clear();
-                if (opt.scripts) combat.draw(overlay, shot.camera, opt.width, opt.height);
+                if (opt.scripts && !logic.player_locked()) combat.draw(overlay, shot.camera, opt.width, opt.height);
                 if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
                 shot.overlay = &overlay;
                 draw_text(shot, opt.width, opt.height);
@@ -655,7 +665,7 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
                         }
-                        if (e.type == SDL_EVENT_MOUSE_MOTION) {
+                        if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && logic.player_locked())) {
                             cam.yaw -= e.motion.xrel * 0.12f;
                             cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * 0.12f, -89.0f, 89.0f);
                         }
@@ -695,10 +705,14 @@ int main(int argc, char** argv) {
                         step_logic(dt);
                     } else {
                         PlayerInput in;
-                        in.forward = float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]);
-                        in.right = float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]);
-                        in.jump = keys[SDL_SCANCODE_SPACE];
-                        in.run = keys[SDL_SCANCODE_LSHIFT];
+                        const bool locked = opt.scripts && logic.player_locked();   // cinematics
+                        if (!locked) {
+                            in.forward = float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]);
+                            in.right = float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]);
+                            in.jump = keys[SDL_SCANCODE_SPACE];
+                            in.run = keys[SDL_SCANCODE_LSHIFT];
+                        }
+                        if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
                         player.yaw = cam.yaw;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
                             player.update(scene.collision(), in, kPhysicsStep);
@@ -706,7 +720,7 @@ int main(int argc, char** argv) {
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         if (opt.scripts) {
-                            combat_in.fire = fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
+                            combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
                             combat.update(dt, combat_in, player.eye(), cam.forward());
                             combat.push_player_out();
                             combat_in = {};
@@ -732,10 +746,16 @@ int main(int argc, char** argv) {
                     clock += dt;
                     Camera view = cam;
                     if (opt.scripts) view.yaw += logic.shake_offset().x, view.pitch += logic.shake_offset().y;
+                    Scene::CameraView cv;
+                    const bool cinematic = opt.scripts && logic.cinematic_view(cv);
+                    if (cinematic) {
+                        view.position = cv.position, view.directed = true, view.direction = cv.forward, view.up = cv.up;
+                        view.fov = glm::degrees(cv.fov);
+                    }
                     FrameParams f = frame(view, w, h);
                     scene.cull(f.camera, f.proj * f.view);
                     overlay.clear();
-                    if (opt.scripts && !flying) combat.draw(overlay, f.camera, w, h);
+                    if (opt.scripts && !flying && !logic.player_locked()) combat.draw(overlay, f.camera, w, h);
                     if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, w, h, glm::vec4(logic.fade_color, logic.fade_alpha()));
                     f.overlay = &overlay;
                     draw_text(f, w, h);
