@@ -16,6 +16,7 @@
 #include <glm/glm.hpp>
 
 #include "assets/sound_bank.h"
+#include "core/bytes.h"
 
 struct SDL_AudioStream;
 struct SDL_Mutex;
@@ -73,7 +74,12 @@ public:
 private:
     struct Clip {
         std::vector<float> samples;   // stereo, interleaved, at the device rate
+        size_t loop_start = 0, loop_end = 0;   // frames; looping voices repeat this part
     };
+    // Decode a WAV image to device-format samples (appended to `out`); false on failure.
+    bool decode_wav(const Bytes& wav, std::vector<float>& out) const;
+    // .vxn (VoxN): its segments decoded in order; loops repeat the second segment.
+    std::shared_ptr<Clip> decode_vxn(const Bytes& data) const;
     struct Voice {
         int handle = 0;
         std::shared_ptr<const Clip> clip;

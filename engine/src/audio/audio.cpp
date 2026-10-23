@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -22,6 +23,8 @@ struct Lock {
 }  // namespace
 
 Audio::Audio(const Vfs& vfs, bool device) : vfs_(vfs) {
+    SDL_SetHint(SDL_HINT_WAVE_TRUNCATION, "dropframe");   // keep partial last blocks (vxn segments)
+    SDL_SetHint(SDL_HINT_WAVE_FACT_CHUNK, "ignore");
     if (vfs_.exists("NOVA3_VOX_SDD.xml")) {
         const Bytes xml = vfs_.read("NOVA3_VOX_SDD.xml");
         table_ = parse_sound_table(std::string(xml.begin(), xml.end()));
@@ -57,7 +60,7 @@ size_t Audio::voice_count() const {
 std::vector<std::string> Audio::check_all() {
     std::vector<std::string> failed;
     for (const SoundDef& s : table_.sounds) {
-        if (s.uid < 0 || s.format == "vxn") continue;
+        if (s.uid < 0) continue;
         auto c = clip(s);
         if (!c || c->samples.empty()) failed.push_back(s.label + " (" + s.filename + ")");
         clips_.clear();   // keep memory flat
@@ -65,29 +68,117 @@ std::vector<std::string> Audio::check_all() {
     return failed;
 }
 
+bool Audio::decode_wav(const Bytes& wav, std::vector<float>& out) const {
+    SDL_AudioSpec src{};
+    Uint8* buf = nullptr;
+    Uint32 len = 0;
+    if (!SDL_LoadWAV_IO(SDL_IOFromConstMem(wav.data(), wav.size()), true, &src, &buf, &len)) return false;
+    const SDL_AudioSpec dst{SDL_AUDIO_F32, 2, rate_};
+    Uint8* conv = nullptr;
+    int conv_len = 0;
+    const bool ok = SDL_ConvertAudioSamples(&src, buf, int(len), &dst, &conv, &conv_len);
+    if (ok) {
+        const size_t at = out.size();
+        out.resize(at + size_t(conv_len) / sizeof(float));
+        std::memcpy(out.data() + at, conv, size_t(conv_len));
+        SDL_free(conv);
+    }
+    SDL_free(buf);
+    return ok;
+}
+
+namespace {
+
+uint32_t rd32(const Bytes& d, size_t p) { return p + 4 <= d.size() ? uint32_t(d[p] | d[p + 1] << 8 | d[p + 2] << 16 | uint32_t(d[p + 3]) << 24) : 0; }
+uint16_t rd16(const Bytes& d, size_t p) { return p + 2 <= d.size() ? uint16_t(d[p] | d[p + 1] << 8) : 0; }
+
+void put32(Bytes& b, uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
+void put16(Bytes& b, uint16_t v) { b.push_back(uint8_t(v)), b.push_back(uint8_t(v >> 8)); }
+
+}  // namespace
+
+std::shared_ptr<Audio::Clip> Audio::decode_vxn(const Bytes& d) const {
+    // "VoxN", u32 16, version, u32 file size, u32 header size; then chunks (id, u32 size):
+    // Afmt {u16 format (1 PCM, 2 MS ADPCM, 0x11 IMA ADPCM), u16 channels, u32 rate,
+    // u16 block align, u16 bits}, Msae (MS ADPCM: samples per block, coefficients),
+    // Segm {u32 count, {u32 byte offset, u32 byte size, u32 samples, 3 x u32}}, interactive
+    // music rules, Data (the sound).
+    if (d.size() < 0x18 || std::memcmp(d.data(), "VoxN", 4) != 0) return nullptr;
+    uint16_t format = 0, channels = 0, block = 0, bits = 0;
+    uint32_t rate = 0;
+    Bytes msae;
+    std::vector<std::array<uint32_t, 3>> segments;
+    size_t data = 0, data_size = 0;
+    for (size_t p = 0x18; p + 8 <= d.size();) {
+        const uint32_t n = rd32(d, p + 4);
+        const char* id = reinterpret_cast<const char*>(d.data() + p);
+        if (std::memcmp(id, "Afmt", 4) == 0) {
+            format = rd16(d, p + 8), channels = rd16(d, p + 10), rate = rd32(d, p + 12);
+            block = rd16(d, p + 16), bits = rd16(d, p + 18);
+        } else if (std::memcmp(id, "Msae", 4) == 0) {
+            msae.assign(d.begin() + long(p + 8), d.begin() + long(std::min(d.size(), p + 8 + n)));
+        } else if (std::memcmp(id, "Segm", 4) == 0) {
+            for (uint32_t i = 0; i < rd32(d, p + 8); ++i)
+                segments.push_back({rd32(d, p + 12 + 24 * i), rd32(d, p + 16 + 24 * i), rd32(d, p + 20 + 24 * i)});
+        } else if (std::memcmp(id, "Data", 4) == 0) {
+            data = p + 8, data_size = std::min<size_t>(n, d.size() - data);
+            break;
+        }
+        p += 8 + n;
+    }
+    if (!data || !channels || !rate) return nullptr;
+    if (segments.empty()) segments.push_back({0, uint32_t(data_size), 0});
+    // A WAV header for one segment's bytes.
+    auto wav = [&](size_t off, size_t size) {
+        Bytes fmt;
+        uint16_t spb = 0;
+        if (format == 2) spb = rd16(msae, 0);
+        if (format == 0x11) spb = uint16_t((block - 4 * channels) * 8 / (4 * channels) + 1);
+        put16(fmt, format), put16(fmt, channels), put32(fmt, rate);
+        put32(fmt, format == 1 ? rate * block : uint32_t(uint64_t(rate) * block / std::max<uint16_t>(spb, 1)));
+        put16(fmt, block), put16(fmt, format == 1 ? bits : 4);
+        if (format == 2) put16(fmt, uint16_t(msae.size())), fmt.insert(fmt.end(), msae.begin(), msae.end());
+        if (format == 0x11) put16(fmt, 2), put16(fmt, spb);
+        Bytes w;
+        for (char c : std::string("RIFF")) w.push_back(uint8_t(c));
+        put32(w, uint32_t(4 + 8 + fmt.size() + 8 + size));
+        for (char c : std::string("WAVEfmt ")) w.push_back(uint8_t(c));
+        put32(w, uint32_t(fmt.size()));
+        w.insert(w.end(), fmt.begin(), fmt.end());
+        for (char c : std::string("data")) w.push_back(uint8_t(c));
+        put32(w, uint32_t(size));
+        w.insert(w.end(), d.begin() + long(data + off), d.begin() + long(data + off + size));
+        return w;
+    };
+    auto c = std::make_shared<Clip>();
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& [off, size, samples] = segments[i];
+        if (off >= data_size) continue;
+        const size_t at = c->samples.size() / 2;
+        std::vector<float> seg;
+        if (!decode_wav(wav(off, std::min<size_t>(size, data_size - off)), seg)) return nullptr;
+        // Trim (or pad) to the segment's stated length, at the device rate.
+        if (samples) seg.resize(size_t(double(samples) * rate_ / rate) * 2, 0.0f);
+        c->samples.insert(c->samples.end(), seg.begin(), seg.end());
+        if (i == 1) c->loop_start = at, c->loop_end = c->samples.size() / 2;
+    }
+    if (c->loop_end <= c->loop_start) c->loop_start = 0, c->loop_end = c->samples.size() / 2;
+    return c;
+}
+
 std::shared_ptr<const Audio::Clip> Audio::clip(const SoundDef& def) {
     if (auto it = clips_.find(def.filename); it != clips_.end()) return it->second;
     std::shared_ptr<Clip> c;
-    if (def.format == "vxn" || def.filename.size() < 4 || def.filename.compare(def.filename.size() - 4, 4, ".vxn") == 0) {
-        if (warned_.insert(def.filename).second) std::fprintf(stderr, "audio: %s: .vxn streams are not supported yet\n", def.filename.c_str());
-    } else if (!vfs_.exists(def.filename)) {
+    if (!vfs_.exists(def.filename)) {
         if (warned_.insert(def.filename).second) std::fprintf(stderr, "audio: no file %s\n", def.filename.c_str());
     } else {
         const Bytes data = vfs_.read(def.filename);
-        SDL_AudioSpec src{};
-        Uint8* buf = nullptr;
-        Uint32 len = 0;
-        if (SDL_LoadWAV_IO(SDL_IOFromConstMem(data.data(), data.size()), true, &src, &buf, &len)) {
-            const SDL_AudioSpec dst{SDL_AUDIO_F32, 2, rate_};
-            Uint8* out = nullptr;
-            int out_len = 0;
-            if (SDL_ConvertAudioSamples(&src, buf, int(len), &dst, &out, &out_len)) {
-                c = std::make_shared<Clip>();
-                c->samples.resize(size_t(out_len) / sizeof(float));
-                std::memcpy(c->samples.data(), out, c->samples.size() * sizeof(float));
-                SDL_free(out);
-            }
-            SDL_free(buf);
+        if (data.size() >= 4 && std::memcmp(data.data(), "VoxN", 4) == 0) {
+            c = decode_vxn(data);
+        } else {
+            c = std::make_shared<Clip>();
+            if (!decode_wav(data, c->samples)) c.reset();
+            else c->loop_end = c->samples.size() / 2;
         }
         if (!c && warned_.insert(def.filename).second) std::fprintf(stderr, "audio: %s: %s\n", def.filename.c_str(), SDL_GetError());
     }
@@ -272,12 +363,12 @@ void Audio::mix(float* out, int frames) {
     const float smooth = 1.0f / 256.0f;   // 3D gain changes glide over ~5 ms
     for (Voice& v : voices_) {
         const std::vector<float>& s = v.clip->samples;
-        const size_t length = s.size() / 2;
+        const size_t length = v.loop ? v.clip->loop_end : s.size() / 2;
         const float g = v.gain * v.bus * master;
         for (int f = 0; f < frames; ++f) {
             if (v.frame >= length) {
                 if (!v.loop) break;
-                v.frame = 0;
+                v.frame = v.clip->loop_start;
             }
             if (v.fade != v.fade_target) {
                 v.fade = v.fade < v.fade_target ? std::min(v.fade + v.fade_step, v.fade_target)
