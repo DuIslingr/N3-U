@@ -228,6 +228,9 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     fs_ = load_shader(shader_dir + "/mesh.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
     vs_color_ = load_shader(shader_dir + "/color.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs_color_ = load_shader(shader_dir + "/color.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
+    vs_post_ = load_shader(shader_dir + "/post.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    fs_post_blur_ = load_shader(shader_dir + "/post_blur.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
 
     SDL_GPUSamplerCreateInfo si{};
     si.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -239,6 +242,12 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     si.enable_anisotropy = true;
     sampler_ = SDL_CreateGPUSampler(device_, &si);
     if (!sampler_) fail("SDL_CreateGPUSampler");
+    SDL_GPUSamplerCreateInfo csi{};   // post effects: screen images, no wrapping or mips
+    csi.min_filter = csi.mag_filter = SDL_GPU_FILTER_LINEAR;
+    csi.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    csi.address_mode_u = csi.address_mode_v = csi.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    clamp_sampler_ = SDL_CreateGPUSampler(device_, &csi);
+    if (!clamp_sampler_) fail("SDL_CreateGPUSampler (clamp)");
 
     Image white{1, 1, {255, 255, 255, 255}};
     white_ = *upload_texture(white);
@@ -302,6 +311,16 @@ Renderer::~Renderer() {
     SDL_ReleaseGPUShader(device_, fs_color_);
     if (depth_) SDL_ReleaseGPUTexture(device_, depth_);
     SDL_ReleaseGPUSampler(device_, sampler_);
+    SDL_ReleaseGPUSampler(device_, clamp_sampler_);
+    for (auto& [fmt, p] : post_pipelines_) {
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.blur);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.final);
+    }
+    for (SDL_GPUTexture* t : {scene_color_, blur_a_, blur_b_})
+        if (t) SDL_ReleaseGPUTexture(device_, t);
+    SDL_ReleaseGPUShader(device_, vs_post_);
+    SDL_ReleaseGPUShader(device_, fs_post_blur_);
+    SDL_ReleaseGPUShader(device_, fs_post_final_);
     SDL_ReleaseGPUShader(device_, vs_);
     SDL_ReleaseGPUShader(device_, vs_skinned_);
     SDL_ReleaseGPUShader(device_, fs_);
@@ -498,7 +517,7 @@ void Renderer::ensure_depth(uint32_t w, uint32_t h) {
     SDL_GPUTextureCreateInfo ti{};
     ti.type = SDL_GPU_TEXTURETYPE_2D;
     ti.format = kDepthFormat;
-    ti.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+    ti.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;   // post effects read it
     ti.width = w;
     ti.height = h;
     ti.layer_count_or_depth = 1;
@@ -597,8 +616,8 @@ const GpuTexture* Renderer::upload_texture(const Image& image) {
     return textures_.back().get();
 }
 
-void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
-                      uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
+void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
+                            uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame, bool hud) {
     ensure_depth(w, h);
     const Pipelines& pipes = pipelines_for(format);
     const Overlay* overlay = frame.overlay && (!frame.overlay->world.empty() || !frame.overlay->screen.empty()) ? frame.overlay : nullptr;
@@ -752,16 +771,115 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
             SDL_PushGPUVertexUniformData(cmd, 0, &view_proj, sizeof view_proj);
             SDL_DrawGPUPrimitives(pass, uint32_t(overlay->world.size()), 1, 0, 0);
         }
-        if (!overlay->screen.empty()) {
-            // Pixels, origin top-left (SDL GPU clip space has +Y up).
-            const glm::mat4 pixels = glm::mat4(glm::vec4(2.0f / float(w), 0, 0, 0), glm::vec4(0, -2.0f / float(h), 0, 0),
-                                               glm::vec4(0, 0, 1, 0), glm::vec4(-1, 1, 0, 1));
-            SDL_BindGPUGraphicsPipeline(pass, pipes.hud);
-            SDL_PushGPUVertexUniformData(cmd, 0, &pixels, sizeof pixels);
-            SDL_DrawGPUPrimitives(pass, uint32_t(overlay->screen.size()), 1, uint32_t(overlay->world.size()), 0);
-        }
+        if (hud) draw_screen_overlay(pass, cmd, pipes, w, h, *overlay);
     }
     SDL_EndGPURenderPass(pass);
+}
+
+void Renderer::draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const Pipelines& pipes, uint32_t w,
+                                   uint32_t h, const Overlay& o) {
+    if (o.screen.empty()) return;
+    // Pixels, origin top-left (SDL GPU clip space has +Y up).
+    const glm::mat4 pixels = glm::mat4(glm::vec4(2.0f / float(w), 0, 0, 0), glm::vec4(0, -2.0f / float(h), 0, 0),
+                                       glm::vec4(0, 0, 1, 0), glm::vec4(-1, 1, 0, 1));
+    SDL_GPUBufferBinding vb{overlay_buffer_, 0};
+    SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+    SDL_BindGPUGraphicsPipeline(pass, pipes.hud);
+    SDL_PushGPUVertexUniformData(cmd, 0, &pixels, sizeof pixels);
+    SDL_DrawGPUPrimitives(pass, uint32_t(o.screen.size()), 1, uint32_t(o.world.size()), 0);
+}
+
+void Renderer::ensure_post_targets(uint32_t w, uint32_t h) {
+    if (scene_color_ && post_w_ == w && post_h_ == h) return;
+    for (SDL_GPUTexture** t : {&scene_color_, &blur_a_, &blur_b_})
+        if (*t) SDL_ReleaseGPUTexture(device_, *t), *t = nullptr;
+    auto make = [&](uint32_t tw, uint32_t th) {
+        SDL_GPUTextureCreateInfo ti{};
+        ti.type = SDL_GPU_TEXTURETYPE_2D;
+        ti.format = kOffscreenFormat;
+        ti.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        ti.width = std::max(tw, 1u);
+        ti.height = std::max(th, 1u);
+        ti.layer_count_or_depth = 1;
+        ti.num_levels = 1;
+        SDL_GPUTexture* t = SDL_CreateGPUTexture(device_, &ti);
+        if (!t) fail("post-effect target");
+        return t;
+    };
+    scene_color_ = make(w, h);
+    blur_a_ = make(w / 4, h / 4);   // the blur works at a quarter of the screen size
+    blur_b_ = make(w / 4, h / 4);
+    post_w_ = w, post_h_ = h;
+}
+
+const Renderer::PostPipelines& Renderer::post_pipelines_for(SDL_GPUTextureFormat format) {
+    auto it = post_pipelines_.find(int(format));
+    if (it != post_pipelines_.end()) return it->second;
+    auto make = [&](SDL_GPUShader* fs, SDL_GPUTextureFormat target) {
+        SDL_GPUColorTargetDescription ct{};
+        ct.format = target;
+        SDL_GPUGraphicsPipelineCreateInfo pi{};
+        pi.vertex_shader = vs_post_;
+        pi.fragment_shader = fs;
+        pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pi.target_info.color_target_descriptions = &ct;
+        pi.target_info.num_color_targets = 1;
+        SDL_GPUGraphicsPipeline* p = SDL_CreateGPUGraphicsPipeline(device_, &pi);
+        if (!p) fail("SDL_CreateGPUGraphicsPipeline (post)");
+        return p;
+    };
+    return post_pipelines_[int(format)] = PostPipelines{make(fs_post_blur_, kOffscreenFormat), make(fs_post_final_, format)};
+}
+
+void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
+                      uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
+    const PostParams* post = frame.post && frame.post->active() ? frame.post : nullptr;
+    if (!post) return encode_scene(cmd, target, format, w, h, items, frame, true);
+
+    // Scene to a texture, then the blur (quarter size, horizontal then vertical, as the
+    // game's RenderBlur), then everything combined into the target, then the HUD.
+    ensure_post_targets(w, h);
+    encode_scene(cmd, scene_color_, kOffscreenFormat, w, h, items, frame, false);
+    const PostPipelines& pp = post_pipelines_for(format);
+    auto run = [&](SDL_GPUTexture* out, uint32_t ow, uint32_t oh, SDL_GPUGraphicsPipeline* pipe,
+                   std::initializer_list<SDL_GPUTexture*> inputs, const void* uniforms, uint32_t size, bool hud) {
+        SDL_GPUColorTargetInfo ct{};
+        ct.texture = out;
+        ct.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        ct.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &ct, 1, nullptr);
+        SDL_GPUViewport vp{0, 0, float(ow), float(oh), 0, 1};
+        SDL_SetGPUViewport(pass, &vp);
+        SDL_BindGPUGraphicsPipeline(pass, pipe);
+        std::vector<SDL_GPUTextureSamplerBinding> tex;
+        for (SDL_GPUTexture* t : inputs) tex.push_back({t, clamp_sampler_});
+        SDL_BindGPUFragmentSamplers(pass, 0, tex.data(), uint32_t(tex.size()));
+        SDL_PushGPUFragmentUniformData(cmd, 0, uniforms, size);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        if (hud && frame.overlay) draw_screen_overlay(pass, cmd, pipelines_for(format), w, h, *frame.overlay);
+        SDL_EndGPURenderPass(pass);
+    };
+    const bool blur = post->dof && post->blur_step > 0;
+    if (blur) {
+        const float bw = float(std::max(w / 4, 1u)), bh = float(std::max(h / 4, 1u));
+        const glm::vec4 hstep(1.3846154f * post->blur_step / bw, 0, 3.2307692f * post->blur_step / bw, 0);
+        const glm::vec4 vstep(0, 1.3846154f * post->blur_step / bh, 0, 3.2307692f * post->blur_step / bh);
+        run(blur_a_, uint32_t(bw), uint32_t(bh), pp.blur, {scene_color_}, &hstep, sizeof hstep, false);
+        run(blur_b_, uint32_t(bw), uint32_t(bh), pp.blur, {blur_a_}, &vstep, sizeof vstep, false);
+    }
+    struct {
+        glm::mat4 inv_view_proj;
+        glm::vec4 camera, forward, dof, fog, fog_color;
+    } u;
+    u.inv_view_proj = glm::inverse(frame.proj * frame.view);
+    u.camera = glm::vec4(frame.camera, 1);
+    u.forward = glm::vec4(-glm::vec3(glm::transpose(frame.view)[2]), 0);   // the view looks down -Z
+    u.dof = {post->dof_focus, post->dof_range, post->dof_factor, post->dof ? 1.0f : 0.0f};
+    u.fog = {post->fog_top, post->fog_bottom, post->fog_opacity, post->height_fog ? 1.0f : 0.0f};
+    u.fog_color = glm::vec4(post->fog_color, 1);
+    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_}, &u, sizeof u, true);
 }
 
 void Renderer::upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o) {

@@ -222,6 +222,31 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
+// Post effects (PostEffect_Enable / SetVar / SetParam): DOF and HEIGHTFOG.
+int api_post_enable(lua_State* L) {
+    const std::string name = str_arg(L, 1);
+    const bool on = lua_toboolean(L, 2) != 0;
+    if (name == "DOF") ctx(L).post.dof = on;
+    else if (name == "HEIGHTFOG") ctx(L).post.height_fog = on;
+    return 0;
+}
+int api_post_set_var(lua_State* L) {   // (effect, var, value [, seconds]) or (effect, var, from, to, seconds)
+    const int n = lua_gettop(L);
+    const std::string effect = str_arg(L, 1), var = str_arg(L, 2);
+    if (n >= 5) {
+        const float from = float(lua_tonumber(L, 3));
+        ctx(L).set_post_var(effect, var, float(lua_tonumber(L, 4)), float(lua_tonumber(L, 5)), &from);
+    } else {
+        ctx(L).set_post_var(effect, var, float(lua_tonumber(L, 3)), n >= 4 ? float(lua_tonumber(L, 4)) : 0.0f);
+    }
+    return 0;
+}
+int api_post_set_param(lua_State* L) {   // ("HEIGHTFOG", "FogColor", r, g, b): bytes
+    if (str_arg(L, 1) == "HEIGHTFOG" && str_arg(L, 2) == "FogColor")
+        ctx(L).post.fog_color = glm::vec3(float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4)), float(lua_tonumber(L, 5))) / 255.0f;
+    return 0;
+}
+
 // Combat (game/combat.cpp): enemies, damage, the player's health.
 int api_get_no_enemies(lua_State* L) {   // CAIController::GetNoOpponentsByTeams: living hostile actors
     Combat* c = ctx(L).combat;
@@ -333,6 +358,9 @@ const Entry kImplemented[] = {
     {"IsLowDeviceForEffects", api_false},
     {"IsServer", api_false},
     {"GetNoEnemies", api_get_no_enemies},
+    {"PostEffect_Enable", api_post_enable},
+    {"PostEffect_SetVar", api_post_set_var},
+    {"PostEffect_SetParam", api_post_set_param},
     {"GetEnemies", api_get_enemies},
     {"KillAllEnemies", api_kill_all_enemies},
     {"GiveDamage", api_give_damage},

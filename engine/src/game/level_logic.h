@@ -20,6 +20,7 @@
 #include <glm/glm.hpp>
 
 #include "assets/level.h"
+#include "render/renderer.h"
 #include "script/lua_runtime.h"
 
 namespace nova {
@@ -108,6 +109,11 @@ public:
     Player& player;
     Combat* combat = nullptr;        // enemies and damage, if the game runs combat
     std::vector<glm::vec3> actor_positions;   // moving actors (doors open for them too)
+    // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
+    PostParams post;
+    // A post-effect variable ("DOF"/"HEIGHTFOG" and fFocus, fRange, fBlurStep, FogTop, ...),
+    // reaching `to` in `seconds`; false if unknown.
+    bool set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from = nullptr);
     bool door_passable(int id) {     // for actors' paths: doors that are not locked
         const Object* o = object(id);
         return !o || o->door < 0 || !doors_[size_t(o->door)].locked || doors_[size_t(o->door)].keep_unlocked;
@@ -131,6 +137,11 @@ private:
         float seconds;
     };
     std::vector<DelayedEvent> delayed_;
+    struct PostFade {
+        float* value;
+        float from, to, elapsed, duration;
+    };
+    std::vector<PostFade> post_fades_;
     struct FogFade {
         glm::vec4 from{0}, to{0};
         float elapsed = 0, duration = 0;

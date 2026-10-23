@@ -145,8 +145,30 @@ void LevelLogic::load_objects() {
     stats_.objects = objects_.size();
 }
 
+bool LevelLogic::set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from) {
+    float* v = nullptr;
+    if (effect == "DOF") {
+        if (var == "fFocus") v = &post.dof_focus;
+        else if (var == "fRange") v = &post.dof_range;
+        else if (var == "fFactor") v = &post.dof_factor;
+        else if (var == "fBlurStep") v = &post.blur_step;
+    } else if (effect == "HEIGHTFOG") {
+        if (var == "FogTop") v = &post.fog_top;
+        else if (var == "FogBottom") v = &post.fog_bottom;
+        else if (var == "FogOpacity") v = &post.fog_opacity;
+    }
+    if (!v) return false;
+    post_fades_.erase(std::remove_if(post_fades_.begin(), post_fades_.end(), [&](const PostFade& f) { return f.value == v; }),
+                      post_fades_.end());
+    if (from) *v = *from;
+    if (seconds <= 0) *v = to;
+    else post_fades_.push_back({v, *v, to, 0, seconds});
+    return true;
+}
+
 void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
+    if (!keep_player) post = PostParams{}, post_fades_.clear();
     objects_.clear();
     triggers_.clear();
     doors_.clear();
@@ -406,6 +428,14 @@ bool LevelLogic::use() {
 }
 
 void LevelLogic::update(float dt) {
+    // PostEffects::Update: variables move linearly to their targets.
+    for (PostFade& f : post_fades_) {
+        f.elapsed += dt;
+        const float t = std::min(f.elapsed / f.duration, 1.0f);
+        *f.value = f.from + (f.to - f.from) * t;
+    }
+    post_fades_.erase(std::remove_if(post_fades_.begin(), post_fades_.end(), [](const PostFade& f) { return f.elapsed >= f.duration; }),
+                      post_fades_.end());
     for (auto it = delayed_.begin(); it != delayed_.end();) {
         it->seconds -= dt;
         if (it->seconds <= 0) {

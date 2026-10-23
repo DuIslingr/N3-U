@@ -99,6 +99,16 @@ struct Overlay {
     void clear() { world.clear(), screen.clear(); }
 };
 
+// Post effects (the game's PostEffects, enabled and tuned by level scripts).
+struct PostParams {
+    bool dof = false;                  // DOF: blur by distance from the focus depth
+    float dof_focus = 0, dof_range = 0, dof_factor = 1, blur_step = 0;   // blur step: texels of the blur target
+    bool height_fog = false;           // HEIGHTFOG: fog below a height
+    float fog_top = 0, fog_bottom = 0, fog_opacity = 0;
+    glm::vec3 fog_color{1};
+    bool active() const { return dof || height_fog; }
+};
+
 struct FrameParams {
     glm::mat4 view{1};
     glm::mat4 proj{1};
@@ -114,6 +124,7 @@ struct FrameParams {
     float time = 0;                             // seconds
     std::vector<PointLight> lights;
     const Overlay* overlay = nullptr;
+    const PostParams* post = nullptr;
 };
 
 class Renderer {
@@ -147,6 +158,17 @@ private:
         SDL_GPUGraphicsPipeline* hud = nullptr;        // overlay: screen, alpha
     };
     void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
+    // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).
+    void encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
+                      const std::vector<DrawItem>& items, const FrameParams& frame, bool hud);
+    void draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const Pipelines& pipes, uint32_t w,
+                             uint32_t h, const Overlay& o);
+    void ensure_post_targets(uint32_t w, uint32_t h);
+    struct PostPipelines {
+        SDL_GPUGraphicsPipeline* blur = nullptr;
+        SDL_GPUGraphicsPipeline* final = nullptr;
+    };
+    const PostPipelines& post_pipelines_for(SDL_GPUTextureFormat format);
     const Pipelines& pipelines_for(SDL_GPUTextureFormat format);
     SDL_GPUShader* load_shader(const std::string& path, SDL_GPUShaderStage stage, uint32_t samplers, uint32_t uniforms);
     void ensure_depth(uint32_t w, uint32_t h);
@@ -162,6 +184,15 @@ private:
     SDL_GPUShader* vs_ = nullptr;
     SDL_GPUShader* vs_skinned_ = nullptr;
     SDL_GPUShader* fs_ = nullptr;
+    SDL_GPUShader* vs_post_ = nullptr;
+    SDL_GPUShader* fs_post_blur_ = nullptr;
+    SDL_GPUShader* fs_post_final_ = nullptr;
+    SDL_GPUSampler* clamp_sampler_ = nullptr;
+    SDL_GPUTexture* scene_color_ = nullptr;             // post effects: the scene, then two blur targets
+    SDL_GPUTexture* blur_a_ = nullptr;
+    SDL_GPUTexture* blur_b_ = nullptr;
+    uint32_t post_w_ = 0, post_h_ = 0;
+    std::unordered_map<int, PostPipelines> post_pipelines_;
     SDL_GPUShader* vs_color_ = nullptr;
     SDL_GPUShader* fs_color_ = nullptr;
     SDL_GPUBuffer* overlay_buffer_ = nullptr;

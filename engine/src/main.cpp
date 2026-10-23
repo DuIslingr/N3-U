@@ -224,6 +224,7 @@ int main(int argc, char** argv) {
                         ms.materials, ms.fallback, ms.programs, ms.failed_programs, ms.missing_effects,
                         scene.shader_compiler().compiled, scene.shader_compiler().cache_hits);
             float clock = opt.time;
+            const PostParams* post_params = nullptr;   // the level logic's, once it exists
             auto frame = [&](const Camera& cam, int w, int h) {
                 FrameParams f = cam.frame(w, h);
                 f.fog_color = scene.fog_color;
@@ -232,6 +233,7 @@ int main(int argc, char** argv) {
                 f.fog_density = scene.fog_density;
                 f.time = clock;
                 f.lights = scene.lights();
+                f.post = post_params;
                 return f;
             };
             std::printf("%s: %zu placements, %zu models (%zu missing), %zu textures (%zu missing), %zu draws, "
@@ -243,6 +245,7 @@ int main(int argc, char** argv) {
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             LevelLogic logic(scene, player, gol);
+            if (opt.scripts) post_params = &logic.post;
             logic.trace = opt.trace_scripts;
             logic.log = [&opt](const std::string& line) {
                 if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
