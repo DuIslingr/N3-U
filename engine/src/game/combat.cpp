@@ -305,7 +305,9 @@ void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
         const glm::vec3 to = c - eye;
         const float d = glm::length(to);
         if (d > 12.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.7f || !line_clear(eye, c)) continue;
+        killing_repel_ = true;
         apply_damage(t, 6.0f * (1 - d / 14.0f), true);
+        killing_repel_ = false;
         // Knocked back along the push, kept on the walkable area.
         if (t.mobile && alive(t)) {
             t.pos += flat * (4.0f * (1 - d / 12.0f));
@@ -515,14 +517,22 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
     return w;
 }
 
-void Combat::start() {
+void Combat::start(bool keep_stats) {
     nav_.build(scene_.level());
     live_grenades_.clear();   // their objects went with the old level
     throw_delay_ = -1;
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
-    stats_ = {};
+    if (keep_stats) {
+        const Stats kept = stats_;
+        stats_ = {};
+        stats_.shots = kept.shots, stats_.hits = kept.hits, stats_.kills = kept.kills, stats_.headshot_kills = kept.headshot_kills;
+        stats_.repel_kills = kept.repel_kills, stats_.paralyze_kills = kept.paralyze_kills, stats_.slow_kills = kept.slow_kills;
+        stats_.deaths = kept.deaths, stats_.play_time = kept.play_time;
+    } else {
+        stats_ = {};
+    }
     const Level& level = scene_.level();
     for (auto& [id, obj] : logic_.objects_) {
         if (obj.index >= level.objects.size()) continue;
@@ -1176,6 +1186,7 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
         player_health = 0;
         player_dead = true;
         dead_timer_ = 0;
+        ++stats_.deaths;
         log("player died");
     }
 }
@@ -1238,6 +1249,12 @@ void Combat::die(Target& t) {
     t.timer = 0;
     t.token = false;
     ++stats_.kills;
+    if (t.hostile) {
+        if (killing_headshot_) ++stats_.headshot_kills;
+        if (killing_repel_) ++stats_.repel_kills;
+        else if (t.paralyzed > 0) ++stats_.paralyze_kills;
+        else if (logic_.time_scale() < 1) ++stats_.slow_kills;
+    }
     log("killed " + t.type + " #" + std::to_string(t.id));
     {
         const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.6f);
@@ -1341,11 +1358,14 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         float dmg = w.damage_near;
         if (d > w.far_dist) dmg = w.damage_far;
         else if (d > w.near_dist) dmg = w.damage_near + (d - w.near_dist) * (w.damage_far - w.damage_near) / (w.far_dist - w.near_dist);
-        if (t.headshots && point.z > t.pos.z + t.height * 0.84f) dmg *= 2;   // CTargetableComponent head multiplier
+        const bool head = t.headshots && point.z > t.pos.z + t.height * 0.84f;
+        if (head) dmg *= 2;   // CTargetableComponent head multiplier
         ++stats_.hits;
         hit_marker_ = 0.15f;
         if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
+        killing_headshot_ = head;
         apply_damage(t, dmg, true);
+        killing_headshot_ = false;
     } else if (wall) {
         impact(w.impacts, material, end, normal);
     }
@@ -1457,6 +1477,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     // The player: death and revival, regeneration.
     damage_flash_ = std::max(damage_flash_ - dt * 1.5f, 0.0f);
     hit_marker_ = std::max(hit_marker_ - dt, 0.0f);
+    stats_.play_time += dt;
     if (player_dead) {
         // The screen fades, then the player is back at the last checkpoint (or the start).
         const float before = dead_timer_;

@@ -82,7 +82,7 @@ public:
 
     // Collect targets and actors from the loaded level (after LevelLogic::start, and
     // again after a section reload).
-    void start();
+    void start(bool keep_stats = false);   // keep_stats: a section reload within the level
     // `eye`/`aim`: the camera position and view direction.
     void update(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim);
     // Effects (world) and HUD (screen) for this frame.
@@ -137,6 +137,9 @@ public:
     struct Stats {
         size_t targets = 0, actors = 0, hostile = 0, shots = 0, hits = 0, kills = 0, enemy_shots = 0;
         float damage_taken = 0;
+        // The end of level's statistics (GS_EndLevel).
+        size_t headshot_kills = 0, repel_kills = 0, paralyze_kills = 0, slow_kills = 0, deaths = 0;
+        float play_time = 0;
     };
     const Stats& stats() const { return stats_; }
     const WeaponDef& weapon() const { return weapons_[size_t(current_)]; }
@@ -386,6 +389,7 @@ private:
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;
     float damage_flash_ = 0, hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
+    bool killing_headshot_ = false, killing_repel_ = false;   // what the damage being dealt is
     int max_shooters_ = 2;   // enemies firing at the player at once (attack tokens; SetMaxActiveEnemies)
     static constexpr float kBurstInterval = 1.2f;   // seconds between any two bursts starting
     float burst_cooldown_ = 0;

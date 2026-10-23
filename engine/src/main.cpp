@@ -41,6 +41,7 @@
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
 #include "game/death_screen.h"
+#include "game/end_level_screen.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -77,7 +78,8 @@ struct Options {
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
     int loading_screen = -1;
-    float death_screen = -1;    // headless: draw the death screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
+    float death_screen = -1;    // headless: draw the death screen this long after it opened
+    float end_screen = -1;      // headless: draw the end-of-level screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -149,6 +151,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--menu") o.menu_keys = next();
         else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
         else if (a == "--death-screen") o.death_screen = std::stof(next());
+        else if (a == "--end-screen") o.end_screen = std::stof(next());
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
@@ -465,6 +468,21 @@ int main(int argc, char** argv) {
             Settings settings = Settings::load(settings_path);
             PauseMenu menu;
             DeathScreen death;
+            EndLevelScreen end_screen;
+            end_screen.text = [&main_strings](const std::string& id) {
+                const std::string t = main_strings.find(id);
+                return t.empty() ? id : t;
+            };
+            auto end_stats = [&] {
+                const Combat::Stats& cs = combat.stats();
+                EndLevelScreen::Stats st;
+                st.headshots = int(cs.headshot_kills), st.blast_kills = int(cs.repel_kills), st.paralyze_kills = int(cs.paralyze_kills);
+                st.slow_kills = int(cs.slow_kills), st.kills = int(cs.kills), st.retries = int(cs.deaths);
+                st.shield = combat.player_max_health > 0 ? std::clamp(combat.player_health / combat.player_max_health, 0.0f, 1.0f) : 1.0f;
+                st.accuracy = cs.shots ? float(cs.hits) / float(cs.shots) : 0.0f;
+                st.play_time = cs.play_time;
+                return st;
+            };
             death.text = [&main_strings](const std::string& id) {
                 const std::string t = main_strings.find(id);
                 return t.empty() ? id : t;
@@ -562,6 +580,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (death.open) death.draw(overlay, hud_sprites, hud, subtitles, w, h);
+                if (end_screen.open) end_screen.draw(overlay, hud_sprites, hud, menu_title, subtitles, w, h);
                 if (menu.open) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
@@ -634,6 +653,7 @@ int main(int argc, char** argv) {
                 hud.start();
             };
             // Level logic at a fixed step, so triggers and doors see every position.
+            bool end_screen_done = false;   // dismissed with Continue: the level's end goes on
             auto step_logic = [&](float dt) {
                 if (!opt.scripts) return;
                 logic.update(dt);
@@ -647,7 +667,7 @@ int main(int argc, char** argv) {
                     loading.active = false;
                     player.spawn(feet, yaw);
                     logic.start(true);
-                    combat.start();
+                    combat.start(true);
                     viewmodel.start();
                     hud.start();
                 }
@@ -657,6 +677,12 @@ int main(int argc, char** argv) {
                 if (!logic.level_ended) {
                     ended_for = 0;
                 } else if ((ended_for += dt) > 3.0f) {
+                    // Complete: the end-of-level screen first; its Continue comes back here.
+                    if (logic.level_success && !headless && !end_screen.open && !end_screen_done) {
+                        end_screen.show(end_stats(), next_campaign_level(campaign, opt.level).empty());
+                    }
+                    if (end_screen.open) return;
+                    end_screen_done = false;
                     const std::string next = logic.level_success ? next_campaign_level(campaign, opt.level) : opt.level;
                     if (next.empty()) {
                         logic.message("The campaign is complete.", 10);
@@ -988,6 +1014,13 @@ int main(int argc, char** argv) {
                     shot = draw_main_menu(opt.width, opt.height);
                     scene_hidden = true;
                 }
+                if (opt.end_screen >= 0) {   // the end-of-level screen over the view
+                    EndLevelScreen::Stats st = end_stats();
+                    st.headshots = 7, st.blast_kills = 3, st.kills = 41, st.accuracy = 0.46f, st.play_time = 734, st.retries = 2;
+                    end_screen.show(st, false);
+                    end_screen.update(opt.end_screen);
+                    draw_text(shot, opt.width, opt.height);
+                }
                 if (opt.death_screen >= 0) {   // the death screen over the view
                     death.show();
                     death.update(opt.death_screen);
@@ -1108,6 +1141,21 @@ int main(int argc, char** argv) {
                         case A::None: break;
                     }
                 };
+                auto end_action = [&](EndLevelScreen::Action a) {
+                    if (a == EndLevelScreen::Action::None) return;
+                    end_screen.open = false;
+                    end_screen_done = true;   // the level's end goes on: the next level
+                    const std::string next = next_campaign_level(campaign, opt.level);
+                    for (size_t c = 0; c < campaign.size(); ++c)   // the next chapter is reached
+                        if (!next.empty() && next.find("/" + campaign[c].file + ".lvc") != std::string::npos && int(c) + 1 > settings.chapters)
+                            settings.chapters = int(c) + 1, settings.save(settings_path);
+                    if (a == EndLevelScreen::Action::Menu) {
+                        logic.level_ended = false, end_screen_done = false;
+                        main_menu.show();
+                    } else {
+                        SDL_SetWindowRelativeMouseMode(window, !touch_mode);
+                    }
+                };
                 auto death_action = [&](DeathScreen::Action a) {
                     if (a == DeathScreen::Action::None) return;
                     death.open = false;
@@ -1170,6 +1218,28 @@ int main(int argc, char** argv) {
                                                               e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? P::Press : P::Release));
                             } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP) {
                                 main_action(main_menu.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
+                                                              e.type == SDL_EVENT_FINGER_DOWN ? P::Press : P::Release));
+                            }
+                            continue;
+                        }
+                        if (end_screen.open && !menu.open) {   // Back to Menu or Continue
+                            using K = EndLevelScreen::Key;
+                            using P = EndLevelScreen::Pointer;
+                            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                                switch (e.key.key) {
+                                    case SDLK_LEFT: case SDLK_A: end_action(end_screen.key(K::Left)); break;
+                                    case SDLK_RIGHT: case SDLK_D: end_action(end_screen.key(K::Right)); break;
+                                    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: end_action(end_screen.key(K::Activate)); break;
+                                    default: break;
+                                }
+                            } else if (e.type == SDL_EVENT_MOUSE_MOTION && e.motion.which != SDL_TOUCH_MOUSEID) {
+                                end_action(end_screen.pointer(to_pixels(e.motion.x, e.motion.y, false), P::Move));
+                            } else if ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                                       e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT) {
+                                end_action(end_screen.pointer(to_pixels(e.button.x, e.button.y, false),
+                                                              e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? P::Press : P::Release));
+                            } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP) {
+                                end_action(end_screen.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
                                                               e.type == SDL_EVENT_FINGER_DOWN ? P::Press : P::Release));
                             }
                             continue;
@@ -1331,6 +1401,10 @@ int main(int argc, char** argv) {
                         SDL_SetWindowRelativeMouseMode(window, false);
                         fire_held = aim_held = false;
                     }
+                    static bool end_was_open = false;   // just opened: free the mouse
+                    if (end_screen.open && !end_was_open) SDL_SetWindowRelativeMouseMode(window, false), fire_held = aim_held = false;
+                    end_was_open = end_screen.open;
+                    if (end_screen.open && !menu.open) end_screen.update(raw_dt);
                     if (death.open && !menu.open) {
                         death.update(raw_dt);
                         if (death.music_due() && logic.audio) logic.audio->play("m_mission_failed");
