@@ -245,7 +245,9 @@ bool save_wav(const std::vector<float>& samples, int rate, const std::string& pa
 }
 
 bool save_bmp(const Image& img, const std::string& path) {
-    SDL_Surface* s = SDL_CreateSurfaceFrom(img.width, img.height, SDL_PIXELFORMAT_ABGR8888,
+    // Opaque, as the window shows it: the framebuffer's alpha (the HUD writes its own) is not
+    // part of the picture.
+    SDL_Surface* s = SDL_CreateSurfaceFrom(img.width, img.height, SDL_PIXELFORMAT_XBGR8888,
                                            const_cast<uint8_t*>(img.rgba.data()), img.width * 4);
     const bool ok = s && SDL_SaveBMP(s, path.c_str());
     SDL_DestroySurface(s);

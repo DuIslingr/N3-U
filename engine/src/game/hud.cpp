@@ -22,8 +22,11 @@ void Hud::start() {
     ammo_ = scene_.spawn_model("NV_hud_ammo.bdae", true);
     scene_.set_node_visible(ammo_, "ammo_bar", false);
     for (const std::string& n : scene_.node_names(object_)) {
+        // CHud::Init registers weapons_background_idle as both the weapons button's idle and
+        // pressed node, so SetButtonState leaves it shown only while pressed; the panel at rest
+        // is weapons_background.
         const bool hide = n.rfind("MP_", 0) == 0 || n.find("touch_zone") != std::string::npos ||
-                          n.find("_active") != std::string::npos;
+                          n.find("_active") != std::string::npos || n == "weapons_background_idle";
         if (hide) scene_.set_node_visible(object_, n, false);
     }
     visible_ = false;
@@ -314,13 +317,27 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
         const glm::vec2 ndc = glm::vec2(c) / std::max(c.w, 1e-4f);
         return glm::vec2((ndc.x * 0.5f + 0.5f) * float(w), (0.5f - ndc.y * 0.5f) * float(h));
     };
-    // The grenade count under the grenade button.
-    if (numbers && s.grenades) {
-        glm::vec3 at;
-        if (scene_.node_position(object_, "grenade_button", at)) {
-            const glm::vec2 p = screen(at);
-            numbers->draw(sprites, std::to_string(s.grenade_count), {p.x + float(h) * 0.01f, p.y + float(h) * 0.025f}, w,
-                          glm::vec4(0.75f, 0.95f, 1, 1), {0.5f, 0.0f});
+    // The grenade button: the grenade (NV_hud.tga's icon, drawn by the game's quad buffer)
+    // on the panel, the count across its lower edge (placed after the reference footage).
+    if (s.grenades) {
+        Scene::Quad panel;
+        if (scene_.node_quad(object_, "grenade_idle", panel) && panel.texture) {
+            glm::vec2 lo(1e9f), hi(-1e9f);
+            for (const glm::vec3& c : panel.position) lo = glm::min(lo, screen(c)), hi = glm::max(hi, screen(c));
+            const glm::vec2 centre(glm::mix(lo.x, hi.x, 0.46f), glm::mix(lo.y, hi.y, 0.5f));
+            const float half = (hi.y - lo.y) * 0.19f;
+            const glm::vec2 t0 = glm::vec2(870, 7) / 1024.0f, t1 = glm::vec2(948, 85) / 1024.0f;   // the icon and its glow
+            const uint32_t tint = pack_rgba(glm::vec4(1, 1, 1, 0.75f));
+            const ParticleVertex v[4] = {{{centre + glm::vec2(-half, -half), 0}, t0, tint},
+                                         {{centre + glm::vec2(half, -half), 0}, {t1.x, t0.y}, tint},
+                                         {{centre + glm::vec2(half, half), 0}, t1, tint},
+                                         {{centre + glm::vec2(-half, half), 0}, {t0.x, t1.y}, tint}};
+            const uint32_t first = uint32_t(sprites.vertices.size());
+            sprites.vertices.insert(sprites.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+            sprites.batches.push_back({panel.texture, false, first, 6});
+            if (numbers)
+                numbers->draw(sprites, std::to_string(s.grenade_count), {glm::mix(lo.x, hi.x, 0.42f), glm::mix(lo.y, hi.y, 0.74f)}, w,
+                              glm::vec4(0.75f, 0.95f, 1, 1), {0.5f, 0.0f});
         }
     }
     // The ammo gauge follows the panel; its bar fills to the clip's share, left to right.
@@ -350,9 +367,13 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
         // The counter under the gauge's left end.
         if (numbers) {
             const glm::vec2 left = glm::max(screen(bar.position[size_t(l0)]), screen(bar.position[size_t(l1)]));
-            // Endless clips and reserves (vehicle guns, the handgun's reserve) read "--".
-            auto count = [](int n) { return n < 0 || n >= 100000 ? std::string("--") : std::to_string(n); };
-            numbers->draw(sprites, count(s.clip) + "/" + count(s.reserve), {left.x - float(h) * 0.02f, left.y},
+            // An endless reserve (the handgun's) leaves the clip alone; an endless clip (vehicle
+            // guns) reads "--".
+            auto endless = [](int n) { return n < 0 || n >= 100000; };
+            const std::string text = endless(s.clip) ? std::string("--")
+                                     : endless(s.reserve) ? std::to_string(s.clip)
+                                                          : std::to_string(s.clip) + "/" + std::to_string(s.reserve);
+            numbers->draw(sprites, text, {left.x - float(h) * 0.035f, left.y - float(h) * 0.02f},
                           w, glm::vec4(0.75f, 0.95f, 1, 1), {0.0f, 0.0f});
         }
     }
