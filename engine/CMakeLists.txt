@@ -41,7 +41,7 @@ endforeach()
 add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 
 # The level viewer.
-file(GLOB VIEWER_SOURCES CONFIGURE_DEPENDS src/main.cpp src/render/*.cpp src/game/*.cpp src/audio/*.cpp)
+file(GLOB VIEWER_SOURCES CONFIGURE_DEPENDS src/main.cpp src/app/*.cpp src/render/*.cpp src/game/*.cpp src/audio/*.cpp)
 if(VIEWER_SOURCES)
     add_executable(nova3 ${VIEWER_SOURCES})
     target_link_libraries(nova3 PRIVATE nova3core SDL3::SDL3 PkgConfig::SDL3_TTF)
