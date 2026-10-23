@@ -701,11 +701,12 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     mu.camera = glm::vec4(frame.camera, 1);
 
     // Sky first, then opaque, then translucent back to front.
-    std::vector<const DrawItem*> opaque, blended, sky;
+    std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended;
     for (const auto& it : items) {
         if (!it.visible || it.hidden || it.anim_hidden || it.zone_hidden || it.occluded || !it.model->vertices) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
         if (it.sky) sky.push_back(&it);
+        else if (it.viewmodel) (blend ? view_blended : view_opaque).push_back(&it);
         else (blend ? blended : opaque).push_back(&it);
     }
     std::stable_partition(sky.begin(), sky.end(), [](const DrawItem* it) {
@@ -828,6 +829,16 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
             SDL_BindGPUFragmentSamplers(pass, 0, &tex, 1);
             SDL_DrawGPUPrimitives(pass, b.count, 1, b.first, 0);
         }
+    }
+    if (!view_opaque.empty() || !view_blended.empty()) {
+        // The first-person view model: depth squeezed into [0.9, 1] (reversed depth: the
+        // nearest tenth), so it stays in front of walls it would otherwise poke into.
+        SDL_GPUViewport vp{0, 0, float(w), float(h), 0.9f, 1.0f};
+        SDL_SetGPUViewport(pass, &vp);
+        for (const DrawItem* it : view_opaque) draw(*it, pipes.opaque);
+        for (const DrawItem* it : view_blended) draw(*it, pipes.blend);
+        vp.min_depth = 0;
+        SDL_SetGPUViewport(pass, &vp);
     }
     if (overlay) {
         SDL_GPUBufferBinding vb{overlay_buffer_, 0};

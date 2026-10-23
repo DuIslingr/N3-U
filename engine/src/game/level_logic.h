@@ -80,6 +80,10 @@ public:
         int runs_left = -1;          // -1: unlimited
         bool player_target = true;
         bool inside = false;
+        // A rotated box: tested in its own frame (box from local_min to local_max).
+        bool rotated = false;
+        glm::mat4 to_local{1};
+        glm::vec3 local_min{0}, local_max{0};
     };
     struct Door {
         enum class State { Closed, Opening, Open, Closing } state = State::Closed;
@@ -150,6 +154,8 @@ public:
     void end_cinematic(int id);
     bool cinematic_view(Scene::CameraView& out) const;
     bool player_locked() const;      // no player control (a cinematic is running)
+    // The zone of the cinematic holding the view (kNone if none): the view belongs there.
+    int cinematic_zone() const;
     bool cinematic_active() const {   // a cinematic holds the view
         Scene::CameraView v;
         return cinematic_view(v);
@@ -157,6 +163,8 @@ public:
     bool cinematic_mode = false;     // StartCinematic .. EndCinematic
     // PlayerLookTo(waypoint, ms): turn the player's view to a point.
     void player_look_to(const glm::vec3& at, float seconds);
+    // GetPlayerPositionFromCameraPosition: the next teleport keeps the camera's view.
+    void handover_view(const glm::vec3& forward) { handover_ = forward, have_handover_ = true; }
     bool look_target(float& yaw, float& pitch) const;   // the view while turning (degrees)
     // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame): the game saves and
     // reloads there when the player dies. Here the world stays as it is: the player comes
@@ -242,11 +250,13 @@ private:
         std::vector<std::pair<float, std::string>> events;   // start ms, script function
         size_t next = 0;
         bool was_visible = true;
+        bool ending = false;   // past its length: ends next update (its last events run first)
     };
     std::vector<Cinematic> cinematics_;
     void update_cinematics(float dt);
     const Value* object_component(const Object& o, int comp) const;
-    glm::vec3 look_at_{0};
+    glm::vec3 look_at_{0}, handover_{0};
+    bool have_handover_ = false;
     float look_left_ = 0, look_total_ = 0;
     float look_from_yaw_ = 0, look_from_pitch_ = 0;
     void update_movers(float dt);

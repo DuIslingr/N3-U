@@ -53,6 +53,7 @@ struct DrawItem {
     const GpuMaterial* material = nullptr;      // game shader; null: built-in shader with diffuse/lightmap
     const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
     bool sky = false;                           // skybox: drawn first, around the camera, at the far depth
+    bool viewmodel = false;                     // first-person hands and weapon: drawn last, in front of the world
     const std::vector<struct ParamOverride>* overrides = nullptr;   // animated material parameters
 };
 

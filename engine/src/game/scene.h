@@ -49,7 +49,9 @@ public:
     const CollisionWorld& collision() const { return collision_; }
 
     // Zone/portal visibility for a camera: hides objects in zones it cannot see.
-    void cull(const glm::vec3& camera, const glm::mat4& view_proj);
+    // `view_zone` (if not kNone): the zone the view belongs to, e.g. a cinematic's, instead
+    // of the zone of the floor under the camera.
+    void cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_zone = ZoneSystem::kNone);
     ZoneSystem& zones() { return zones_; }
     const ZoneSystem& zones() const { return zones_; }
 
@@ -80,6 +82,11 @@ public:
     // Actors: objects that game logic moves. Place the object's model at `position`
     // turned `yaw` degrees about Z (keeping its scale), and update its bounds and lighting.
     bool set_object_pose(size_t object, const glm::vec3& position, float yaw);
+    // Place an animated object with a full transform (the first-person view model).
+    bool set_object_transform(size_t object, const glm::mat4& placement);
+    // Draw the object as the first-person view model (in front of the world, no zone).
+    void set_object_viewmodel(size_t object);
+    std::vector<std::string> node_names(size_t object) const;
     // Moving level objects (elevators, platforms): place the object at `position` (its
     // placement's rotation kept) and move its collision with it.
     bool move_object(size_t object, const glm::vec3& position);

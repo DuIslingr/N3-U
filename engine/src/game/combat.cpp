@@ -142,7 +142,7 @@ void digits(std::vector<ColorVertex>& out, int value, float x, float y, float h,
 
 Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
     : scene_(scene), player_(player), logic_(logic), gol_(gol) {
-    for (const char* name : {"AssaultRifle_Player", "Handgun_Player"}) weapons_.push_back(load_weapon(name));
+    for (const char* name : {"AssaultRifle_Player", "Handgun_Player"}) weapons_.push_back(load_weapon(name)), weapon_types_.push_back(name);
     for (const WeaponDef& w : weapons_) {
         clip_.push_back(w.clip);
         reserve_.push_back(w.reserve);
@@ -857,6 +857,7 @@ int Combat::ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t,
 
 void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const WeaponDef& w = weapon();
+    since_shot_ = 0;
     --clip_[size_t(current_)];
     ++stats_.shots;
     // Spread: a cone that widens while firing.
@@ -910,6 +911,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     update_spawners(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
+    since_shot_ += dt;
     for (Target& t : targets_) t.hurt_sound_wait = std::max(t.hurt_sound_wait - dt, 0.0f);
     logic_.actor_positions.clear();
     for (const Target& t : targets_)

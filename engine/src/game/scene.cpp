@@ -926,6 +926,37 @@ int Scene::find_node(const LoadedModel& m, const std::string& name) const {
     return -1;
 }
 
+bool Scene::set_object_transform(size_t object, const glm::mat4& placement) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return false;
+    Instance& inst = instances_[it->second];
+    AnimatedInstance* a = inst.anim;
+    a->placement = placement;
+    a->placement_inverse = glm::inverse(placement);
+    pose(*a);
+    const glm::vec3 c(placement[3]);
+    inst.world_min = c - glm::vec3(2), inst.world_max = c + glm::vec3(2);
+    inst.zone = ZoneSystem::kNone;
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].center = c;
+    light_instance(inst, c);
+    return true;
+}
+
+void Scene::set_object_viewmodel(size_t object) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return;
+    Instance& inst = instances_[it->second];
+    inst.zone = ZoneSystem::kNone;
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].viewmodel = true;
+}
+
+std::vector<std::string> Scene::node_names(size_t object) const {
+    std::vector<std::string> out;
+    if (const AnimatedInstance* a = object_anim(object))
+        for (const ModelNode& n : a->model->cpu.nodes) out.push_back(n.name);
+    return out;
+}
+
 bool Scene::move_object(size_t object, const glm::vec3& position) {
     if (object >= level_.objects.size() || !level_.objects[object].base) return false;
     const Transform& base = *level_.objects[object].base;
@@ -1030,7 +1061,8 @@ bool Scene::camera_view(size_t object, CameraView& out) const {
 }
 
 glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {
-    if (const AnimatedInstance* a = node.empty() ? nullptr : object_anim(object)) {
+    if (const AnimatedInstance* a = object_anim(object)) {
+        if (node.empty()) return a->placement;   // where it is now (it may have moved)
         if (const int n = find_node(*a->model, node); n >= 0) return a->world[size_t(n)];
     }
     if (object < level_.objects.size() && level_.objects[object].base) return placement_matrix(*level_.objects[object].base);
@@ -1065,10 +1097,11 @@ size_t Scene::hide_models(const std::string& substring) {
     return n;
 }
 
-void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj) {
-    int floor_zone = ZoneSystem::kNone;
+void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_zone) {
+    int floor_zone = view_zone;
     float floor_z = 0;
     uint32_t owner = 0;
+    if (view_zone == ZoneSystem::kNone)
     // (Not from a moving object: it keeps the zone it was placed in.)
     if (collision_.ray_down(camera, 8.0f, floor_z, &owner) && !moving_.count(owner)) floor_zone = zones_.object_zone(owner);
     zones_.update(camera, view_proj, floor_zone);

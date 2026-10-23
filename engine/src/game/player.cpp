@@ -9,6 +9,7 @@ void Player::spawn(const glm::vec3& feet, float yaw_deg) {
     center = feet + glm::vec3(0, 0, radius.z + 0.05f);
     yaw = yaw_deg;
     pitch = 0;
+    ++spawns;
     vertical_speed = 0;
     on_ground = false;
     stuck_time = escape_time = 0;

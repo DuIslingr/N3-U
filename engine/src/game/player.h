@@ -30,6 +30,7 @@ public:
 
     // Place the player standing on the floor at `feet`.
     void spawn(const glm::vec3& feet, float yaw_deg);
+    uint32_t spawns = 0;   // bumped by spawn(): the view should take the player's yaw/pitch
     void update(const CollisionWorld& world, const PlayerInput& in, float dt);
 
     glm::vec3 eye() const { return center + glm::vec3(0, 0, eye_height); }

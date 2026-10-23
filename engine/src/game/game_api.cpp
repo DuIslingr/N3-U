@@ -150,8 +150,9 @@ int api_player_pos_from_camera(lua_State* L) {
     LevelLogic& c = ctx(L);
     Scene::CameraView cv;
     glm::vec3 eye = c.player.eye();
-    if (c.cinematic_view(cv)) eye = cv.position;
+    if (c.cinematic_view(cv)) eye = cv.position, c.handover_view(cv.forward);
     const glm::vec3 feet = eye - glm::vec3(0, 0, c.player.radius.z + c.player.eye_height);
+    if (c.trace) c.log("player position from the camera: " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
     lua_pushnumber(L, feet.x), lua_pushnumber(L, feet.y), lua_pushnumber(L, feet.z);
     return 3;
 }

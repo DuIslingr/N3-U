@@ -37,6 +37,7 @@
 #include "audio/audio.h"
 #include "core/vfs.h"
 #include "game/combat.h"
+#include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
 #include "game/level_logic.h"
@@ -56,6 +57,7 @@ struct Options {
     bool mute = false;
     glm::vec3 probe{0};                 // --probe: list the draws whose bounds contain this point
     bool have_probe = false;
+    std::string probe_model;            // --probe-model: list the draws of models whose name contains this
     std::string sound_render;           // headless: mix the run's sounds into this WAV file
     std::string screenshot;
     float walk_test = 0;
@@ -107,6 +109,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--effect") o.effects.push_back(next());
         else if (a == "--sound-check") o.sound_check = true;
+        else if (a == "--probe-model") o.probe_model = next();
         else if (a == "--probe") {
             float v[3];
             if (std::sscanf(next().c_str(), "%f,%f,%f", &v[0], &v[1], &v[2]) != 3) throw std::runtime_error("--probe needs X,Y,Z");
@@ -325,6 +328,7 @@ int main(int argc, char** argv) {
             combat.player_invulnerable = opt.god;
             logic.combat = &combat;
             Overlay overlay;
+            ViewModel viewmodel(scene, gol);
             // Subtitles: the latest script message, bottom centre.
             TextRenderer subtitles(vfs, renderer, "Days.ttf", std::max(16.0f, float(opt.height) * 0.032f));
             ParticleList hud_sprites;
@@ -344,6 +348,7 @@ int main(int argc, char** argv) {
                 std::printf("scripts: %zu chunks (%zu with errors), %zu objects, %zu triggers, %zu doors, %zu usable\n",
                             ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
                 combat.start();
+                viewmodel.start();
                 if (opt.list_actors)
                     for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
             }
@@ -372,11 +377,13 @@ int main(int argc, char** argv) {
                     player.spawn(feet, yaw);
                     logic.start(true);
                     combat.start();
+                    viewmodel.start();
                 }
             };
             constexpr float kPhysicsStep = 1.0f / 120.0f;
 
             Camera cam;
+            uint32_t view_spawns = player.spawns;
             cam.position = opt.have_eye ? glm::vec3(opt.eye) : player.eye();
             cam.yaw = opt.have_eye ? opt.eye.w : scene.start_yaw;
             cam.pitch = opt.pitch;
@@ -434,7 +441,7 @@ int main(int argc, char** argv) {
                             eye.yaw = glm::degrees(std::atan2(-dir3.x, dir3.y));
                             FrameParams f = frame(eye, w, h);
                             f.clear = {1, 0, 1, 1};
-                            scene.cull(f.camera, f.proj * f.view);
+                            scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                             {   // zone flips: A -> B -> A within a few steps
                                 static std::vector<int> recent;
                                 const int z = scene.zones().current();
@@ -450,10 +457,10 @@ int main(int argc, char** argv) {
                             ++samples;
                             const Image on = renderer.render_to_image(scene.draws(), f, w, h);
                             scene.zones().enabled = false;
-                            scene.cull(f.camera, f.proj * f.view);
+                            scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                             const Image off = renderer.render_to_image(scene.draws(), f, w, h);
                             scene.zones().enabled = true;
-                            scene.cull(f.camera, f.proj * f.view);
+                            scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                             const float d = diff(on, off);
                             if (d < 0.01f) continue;
                             ++bad;
@@ -491,7 +498,7 @@ int main(int argc, char** argv) {
                         eye.position = player.eye();
                         eye.yaw = player.yaw;
                         const FrameParams wf = frame(eye, opt.width, opt.height);
-                        scene.cull(wf.camera, wf.proj * wf.view);
+                        scene.cull(wf.camera, wf.proj * wf.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                     }
                     travelled += glm::length(glm::vec2(player.center - last));
                     last = player.center;
@@ -553,6 +560,14 @@ int main(int argc, char** argv) {
                         }
                     }
                     scene.update(kPhysicsStep, cam.position);
+                    if (opt.scripts) {
+                        ViewModel::Input vm;
+                        vm.weapon = combat.weapon_type();
+                        vm.visible = !combat.player_dead && !logic.player_locked();
+                        vm.firing = combat.since_shot() < 0.2f;
+                        vm.reloading = combat.reloading();
+                        viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
+                    }
                     if (logic.audio && !opt.sound_render.empty()) {
                         logic.audio->set_listener(player.eye(), player.view_forward(), glm::vec3(0, 0, 1));
                         const int frames = int(std::lround(double(t + kPhysicsStep) * logic.audio->rate())) -
@@ -564,7 +579,7 @@ int main(int argc, char** argv) {
                     Camera eye = cam;
                     if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw;
                     const FrameParams rf = frame(eye, opt.width, opt.height);
-                    scene.cull(rf.camera, rf.proj * rf.view);
+                    scene.cull(rf.camera, rf.proj * rf.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                 }
                 if (!opt.sound_render.empty() && logic.audio) {
                     if (!save_wav(rendered, logic.audio->rate(), opt.sound_render)) throw std::runtime_error("cannot write " + opt.sound_render);
@@ -576,9 +591,17 @@ int main(int argc, char** argv) {
                 if (run_time > 0 && !opt.have_eye && opt.focus.empty()) {
                     cam.position = player.eye();
                     cam.yaw = player.yaw;
-                    if (opt.combat_test > 0) cam.pitch = player.pitch;
+                    cam.pitch = player.pitch;
                 }
                 scene.update(opt.time, cam.position);
+                if (opt.scripts) {
+                    ViewModel::Input vm;
+                    vm.weapon = combat.weapon_type();
+                    vm.visible = !combat.player_dead && !logic.player_locked();
+                    vm.firing = combat.since_shot() < 0.2f;
+                    vm.reloading = combat.reloading();
+                    viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
+                }
                 Camera shot_cam = cam;
                 if (Scene::CameraView cv; opt.scripts && logic.cinematic_view(cv)) {
                     shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
@@ -590,7 +613,7 @@ int main(int argc, char** argv) {
                 if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
                 shot.overlay = &overlay;
                 draw_text(shot, opt.width, opt.height);
-                scene.cull(shot.camera, shot.proj * shot.view);
+                scene.cull(shot.camera, shot.proj * shot.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                 if (opt.trace_zones) {
                     const ZoneSystem& z = scene.zones();
                     std::printf("camera %.1f %.1f %.1f zone %d (id %d); visible:", shot.camera.x, shot.camera.y, shot.camera.z,
@@ -615,16 +638,19 @@ int main(int argc, char** argv) {
                     for (int i = 0; i < opt.bench; ++i) {
                         scene.update(1.0f / 60.0f, cam.position);
                         const FrameParams bf = frame(cam, opt.width, opt.height);
-                        scene.cull(bf.camera, bf.proj * bf.view);
+                        scene.cull(bf.camera, bf.proj * bf.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                         renderer.render_to_image(scene.draws(), bf, opt.width, opt.height);
                     }
                     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                     std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
                 }
-                if (opt.have_probe)
+                if (opt.have_probe || !opt.probe_model.empty())
                     for (size_t i = 0; i < scene.draws().size(); ++i) {
                         const Scene::DrawInfo& di = scene.draw_info()[i];
-                        if (glm::any(glm::lessThan(opt.probe, di.min - 0.5f)) || glm::any(glm::greaterThan(opt.probe, di.max + 0.5f))) continue;
+                        if (!opt.probe_model.empty() ? di.name.find(opt.probe_model) == std::string::npos
+                                                     : (glm::any(glm::lessThan(opt.probe, di.min - 0.5f)) ||
+                                                        glm::any(glm::greaterThan(opt.probe, di.max + 0.5f))))
+                            continue;
                         const DrawItem& d = scene.draws()[i];
                         std::printf("probe: draw %zu %s%s%s%s%s%s bounds (%.1f %.1f %.1f)-(%.1f %.1f %.1f)\n", i, di.name.c_str(),
                                     d.blend ? " blend" : "", d.visible ? "" : " lod-hidden", d.hidden ? " hidden" : "",
@@ -714,6 +740,7 @@ int main(int argc, char** argv) {
                         }
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
                         player.yaw = cam.yaw;
+                        player.pitch = cam.pitch;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
                             // During cinematics the player is out of play (the intro's spawn
                             // point may float in the void).
@@ -728,6 +755,10 @@ int main(int argc, char** argv) {
                             combat_in = {};
                         }
                         cam.position = player.eye();
+                        if (player.spawns != view_spawns) {   // spawned or teleported: face its way
+                            view_spawns = player.spawns;
+                            cam.yaw = player.yaw, cam.pitch = player.pitch;
+                        }
                         static float log_timer = 0;
                         if (opt.log_player && (log_timer += dt) >= 1.0f) {
                             log_timer = 0;
@@ -742,6 +773,18 @@ int main(int argc, char** argv) {
                         }
                     }
                     scene.update(dt, cam.position);
+                    if (opt.scripts) {
+                        ViewModel::Input vm;
+                        vm.weapon = combat.weapon_type();
+                        vm.visible = !flying && !combat.player_dead && !logic.player_locked();
+                        const bool* k = SDL_GetKeyboardState(nullptr);
+                        vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D]);
+                        vm.firing = combat.since_shot() < 0.2f;
+                        vm.reloading = combat.reloading();
+                        Camera v = cam;
+                        v.yaw += logic.shake_offset().x, v.pitch += logic.shake_offset().y;
+                        viewmodel.update(dt, v.position, v.yaw, v.pitch, vm);
+                    }
                     if (logic.audio) logic.audio->set_listener(cam.position, cam.forward(), glm::vec3(0, 0, 1));
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
@@ -755,7 +798,7 @@ int main(int argc, char** argv) {
                         view.fov = glm::degrees(cv.fov);
                     }
                     FrameParams f = frame(view, w, h);
-                    scene.cull(f.camera, f.proj * f.view);
+                    scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                     overlay.clear();
                     if (opt.scripts && !flying && !logic.player_locked()) combat.draw(overlay, f.camera, w, h);
                     if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, w, h, glm::vec4(logic.fade_color, logic.fade_alpha()));

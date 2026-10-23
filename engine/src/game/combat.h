@@ -118,6 +118,10 @@ public:
     const Stats& stats() const { return stats_; }
     const WeaponDef& weapon() const { return weapons_[size_t(current_)]; }
     int ammo_in_clip() const { return clip_[size_t(current_)]; }
+    // The player's weapon, for the view model: its gol type, and what it is doing.
+    const std::string& weapon_type() const { return weapon_types_[size_t(current_)]; }
+    bool reloading() const { return reload_left_ > 0; }
+    float since_shot() const { return since_shot_; }   // seconds since the last shot
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
@@ -262,6 +266,8 @@ private:
     std::vector<WeaponDef> weapons_;
     std::vector<int> clip_, reserve_;
     int current_ = 0;
+    std::vector<std::string> weapon_types_;
+    float since_shot_ = 100;
     float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;

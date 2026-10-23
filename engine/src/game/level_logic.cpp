@@ -136,6 +136,17 @@ void LevelLogic::load_objects() {
                 const glm::vec3 hi = glm::vec3(0.5f * box.x, 0.5f * box.y, box.z) * scale;
                 tr.min = obj.position + glm::min(lo, hi);
                 tr.max = obj.position + glm::max(lo, hi);
+                // Tilted or turned boxes (e.g. a window's slab leaning with the glass).
+                const glm::vec3 rot(v[4].as_float(), v[5].as_float(), v[6].as_float());
+                auto turned = [](float deg) { return std::abs(std::remainder(deg, 360.0f)) > 0.01f; };
+                if (turned(rot.x) || turned(rot.y) || turned(rot.z)) {
+                    Transform tf;
+                    tf.position = obj.position, tf.rotation = rot;
+                    tr.rotated = true;
+                    tr.to_local = glm::inverse(placement_matrix(tf));
+                    tr.local_min = glm::min(lo, hi), tr.local_max = glm::max(lo, hi);
+                    tr.min = glm::vec3(-1e30f), tr.max = glm::vec3(1e30f);
+                }
             }
             obj.trigger = int(triggers_.size());
             triggers_.push_back(tr);
@@ -337,6 +348,11 @@ void LevelLogic::message(const std::string& id, float seconds) {
 
 void LevelLogic::teleport_player(const Object& spawn) {
     player.spawn(spawn.position, spawn.yaw);
+    if (have_handover_) {   // a cinematic hands over to the player where its camera was
+        player.yaw = glm::degrees(std::atan2(-handover_.x, handover_.y));
+        player.pitch = glm::degrees(std::asin(glm::clamp(handover_.z, -1.0f, 1.0f)));
+        have_handover_ = false;
+    }
     if (spawn.index != std::numeric_limits<size_t>::max()) scene.zones().force_zone(scene.zones().object_zone(spawn.index));
 }
 
@@ -403,7 +419,11 @@ void LevelLogic::update_triggers() {
         Trigger& t = triggers_[size_t(o.trigger)];
         if (!o.enabled || !t.player_target) continue;
         bool in = feet.z <= t.max.z && feet.z + height >= t.min.z;
-        if (in && t.cylinder) {
+        if (t.rotated) {
+            const glm::vec3 c = glm::vec3(t.to_local * glm::vec4(player.center, 1));
+            const glm::vec3 reach(r, r, player.radius.z);
+            in = glm::all(glm::greaterThanEqual(c, t.local_min - reach)) && glm::all(glm::lessThanEqual(c, t.local_max + reach));
+        } else if (in && t.cylinder) {
             const float reach = t.radius + r;
             in = glm::dot(glm::vec2(feet) - t.center, glm::vec2(feet) - t.center) <= reach * reach;
         } else if (in) {
@@ -616,7 +636,12 @@ void LevelLogic::update_cinematics(float dt) {
         Cinematic& c = cinematics_[i];
         c.time += dt * 1000.0f;
         while (c.next < c.events.size() && c.events[c.next].first <= c.time) start_script(c.events[c.next++].second, c.id);
-        if (c.time >= c.duration) {
+        if (c.time >= c.duration && !c.ending) {
+            c.ending = true;   // let scripts started now see the cinematic (and its camera)
+            ++i;
+            continue;
+        }
+        if (c.ending) {
             if (trace) log("cinematic " + std::to_string(c.id) + " ended");
             end_cinematic(c.id);   // (erases it)
             continue;
@@ -629,6 +654,13 @@ bool LevelLogic::cinematic_view(Scene::CameraView& out) const {
     for (auto it = cinematics_.rbegin(); it != cinematics_.rend(); ++it)
         if (scene.camera_view(it->index, out)) return true;
     return false;
+}
+
+int LevelLogic::cinematic_zone() const {
+    Scene::CameraView v;
+    for (auto it = cinematics_.rbegin(); it != cinematics_.rend(); ++it)
+        if (scene.camera_view(it->index, v)) return scene.zones().object_zone(it->index);
+    return ZoneSystem::kNone;
 }
 
 bool LevelLogic::player_locked() const {
