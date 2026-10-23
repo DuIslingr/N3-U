@@ -1107,11 +1107,11 @@ void LevelLogic::update(float dt) {
     }
     shake_clock_ += dt;
     shake_left_ = std::max(shake_left_ - dt, 0.0f);
-    if (audio)   // (doors and movers play their states' sounds as they enter them)
-        for (const auto& [id, o] : objects_)
-            if (o.index < scene.level().objects.size() && o.visible && o.door < 0 &&
-                std::none_of(movers_.begin(), movers_.end(), [&](const Mover& m) { return m.index == o.index; }))
-                anim_sounds_->update(scene, *audio, o.index, scene.level().objects[o.index].type);
+    // Clip sounds and effects (doors and movers play their states' sounds as they enter them).
+    for (const auto& [id, o] : objects_)
+        if (o.index < scene.level().objects.size() && o.visible && o.door < 0 &&
+            std::none_of(movers_.begin(), movers_.end(), [&](const Mover& m) { return m.index == o.index; }))
+            anim_sounds_->update(scene, audio, o.index, scene.level().objects[o.index].type);
     // PostEffects::Update: variables move linearly to their targets.
     for (PostFade& f : post_fades_) {
         f.elapsed += dt;

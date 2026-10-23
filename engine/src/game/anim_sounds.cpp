@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <iterator>
 
 #include "audio/audio.h"
@@ -63,6 +64,27 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
                     merged.push_back(std::move(e));
         }
     }
+    // Effect tracks (a clip's [5]): [start ms, end ms, effect, node, scale x, y, z, ...].
+    for (const Value& st : (*v)[1].list) {
+        if (st.size() < 12) continue;
+        for (const Value& clip : st[11].list) {
+            if (clip.size() < 6 || clip[0].type != Value::String) continue;
+            std::vector<EffectEvent>& list = out.effects[lower(clip[0].s)];
+            std::function<void(const Value&)> walk = [&](const Value& x) {
+                if (x.type != Value::List) return;
+                if (x.size() >= 4 && x[2].type == Value::String && x[3].type == Value::String && x[0].type != Value::List) {
+                    EffectEvent e{x[0].as_float(), x[2].s, x[3].s};
+                    if (!e.effect.empty() &&
+                        std::none_of(list.begin(), list.end(), [&](const EffectEvent& y) { return y.ms == e.ms && y.effect == e.effect && y.node == e.node; }))
+                        list.push_back(e);
+                    return;
+                }
+                for (const Value& y : x.list) walk(y);
+            };
+            walk(clip[5]);
+            if (list.empty()) out.effects.erase(lower(clip[0].s));
+        }
+    }
     for (const auto& [key, bad] : ambiguous) out.clips.erase(key);
     for (auto it = out.clips.begin(); it != out.clips.end();) it = it->second.empty() ? out.clips.erase(it) : std::next(it);
     return out;
@@ -90,9 +112,10 @@ const AnimSounds::State* AnimSounds::state(int type, const std::string& name) {
     return it == t.states.end() ? nullptr : &it->second;
 }
 
-void AnimSounds::update(Scene& scene, Audio& audio, size_t index, int type) {
-    const ClipEvents& all = events(type);
-    if (all.empty()) return;
+void AnimSounds::update(Scene& scene, Audio* audio, size_t index, int type) {
+    const TypeInfo& ti = info(type);
+    const ClipEvents& all = ti.clips;
+    if (all.empty() && ti.effects.empty()) return;
     Scene::ClipState cs;
     if (!scene.clip_state(index, cs) || cs.reverse) return;
     Last& last = last_[index];
@@ -100,8 +123,13 @@ void AnimSounds::update(Scene& scene, Audio& audio, size_t index, int type) {
     if (last.serial != cs.serial) from = -1;   // a new clip: events at its start count
     last.serial = cs.serial;
     last.ms = cs.ms;
-    auto it = all.find(lower(cs.name));
-    if (it == all.end()) return;
+    const std::string clip = lower(cs.name);
+    auto passed = [&](float ms) { return cs.ms >= from ? (ms > from && ms <= cs.ms) : (ms > from || ms <= cs.ms); };
+    if (auto fx = ti.effects.find(clip); fx != ti.effects.end())
+        for (const EffectEvent& e : fx->second)
+            if (passed(e.ms)) scene.particles().start(e.effect, scene.object_matrix(index, e.node));
+    auto it = all.find(clip);
+    if (it == all.end() || !audio) return;
     const glm::vec3 at(scene.object_matrix(index)[3]);
     Audio::Params p;
     p.position = &at;
@@ -110,9 +138,9 @@ void AnimSounds::update(Scene& scene, Audio& audio, size_t index, int type) {
         const bool hit = cs.ms >= from ? (e.ms > from && e.ms <= cs.ms) : (e.ms > from || e.ms <= cs.ms);
         if (!hit) continue;
         if (e.stop)
-            for (const std::string& s : e.sounds) audio.stop(s, 200);
+            for (const std::string& s : e.sounds) audio->stop(s, 200);
         else
-            audio.play_one_of(e.sounds, p);
+            audio->play_one_of(e.sounds, p);
     }
 }
 

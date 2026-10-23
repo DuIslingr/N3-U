@@ -1,6 +1,7 @@
-// Sounds on animation clips (CStatesSetComponent "Sound" track events): each object type's
-// states list clips with timed events naming sounds (e.g. spider footsteps, door motors).
-// Played as an object's current clip passes their times.
+// Sounds and particle effects on animation clips (CStatesSetComponent "Sound" track
+// events and each clip's effect tracks): each object type's states list clips with timed
+// events naming sounds (spider footsteps, door motors) or effects at nodes (a ship's
+// explosion, a jeep's wreck smoke). Played as an object's current clip passes their times.
 #pragma once
 
 #include <string>
@@ -19,8 +20,9 @@ class Audio;
 class AnimSounds {
 public:
     explicit AnimSounds(const Gol& gol) : gol_(gol) {}
-    // Play the events object `index` (of gol type `type`) has passed since the last call.
-    void update(Scene& scene, Audio& audio, size_t index, int type);
+    // Play the events object `index` (of gol type `type`) has passed since the last call
+    // (sounds only with `audio`).
+    void update(Scene& scene, Audio* audio, size_t index, int type);
     void clear() { last_.clear(); }
     // A state of the type's state set: its first clip and the sounds of its events
     // (each a list to pick one from). Null if the type has no such state.
@@ -40,8 +42,13 @@ public:
 
 private:
     using ClipEvents = std::unordered_map<std::string, std::vector<Event>>;   // by lowercase clip name
+    struct EffectEvent {
+        float ms;
+        std::string effect, node;
+    };
     struct TypeInfo {
         ClipEvents clips;
+        std::unordered_map<std::string, std::vector<EffectEvent>> effects;   // by lowercase clip name
         std::unordered_map<std::string, State> states;   // by lowercase name
     };
     const TypeInfo& info(int type);
