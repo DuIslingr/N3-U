@@ -47,6 +47,7 @@ public:
         bool pad = true, sprint = true, fire = true, aim = true, jump = true, power = true;
     } shown;
     glm::vec2 pad_anchor() const { return pad_; }
+    bool power_ready = true;   // else the power's icon shows red (recharging)
     glm::vec2 fire_anchor() const { return cluster_; }   // the fire, power, aim and jump buttons
 
 private:

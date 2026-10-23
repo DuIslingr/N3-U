@@ -226,6 +226,29 @@ void Combat::update_grenades(float dt) {
     }
 }
 
+void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
+    power_cooldown_ = kPowerCooldown;
+    power_used_ = true;
+    sound("sfx_plasma_hand_shot", nullptr);
+    effect("bullet_repel", eye + aim * 1.5f, aim);
+    const glm::vec3 flat = glm::normalize(glm::vec3(aim.x, aim.y, 0) + glm::vec3(0, 1e-4f, 0));
+    for (Target& t : targets_) {
+        if (!t.actor || !alive(t)) continue;
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
+        const glm::vec3 to = c - eye;
+        const float d = glm::length(to);
+        if (d > 12.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.7f || !line_clear(eye, c)) continue;
+        apply_damage(t, 6.0f * (1 - d / 14.0f), true);
+        // Knocked back along the push, kept on the walkable area.
+        if (t.mobile && alive(t)) {
+            t.pos += flat * (4.0f * (1 - d / 12.0f));
+            stay_on_mesh(t);
+            if (!t.clip_hurt.empty()) t.state = Target::State::Hurt, t.timer = 0, play(t, t.clip_hurt, false);
+            scene_.set_object_pose(t.object, t.pos, t.yaw);
+        }
+    }
+}
+
 void Combat::explode(const glm::vec3& at) {
     effect(grenade_def_.effect, at);
     sound(grenade_def_.explode_sounds, &at);
@@ -1300,6 +1323,8 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         throw_started_ = true;
     }
     if (throw_delay_ >= 0 && (throw_delay_ -= dt) < 0) throw_grenade(eye, aim);
+    power_cooldown_ = std::max(power_cooldown_ - dt, 0.0f);
+    if (in.power && power_cooldown_ <= 0) repel(eye, aim);
     update_grenades(dt);
 
     // Weapon.

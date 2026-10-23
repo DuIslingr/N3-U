@@ -11,7 +11,7 @@ namespace {
 
 // controls.bsprite frames.
 constexpr int kFire = 0, kFirePressed = 2;
-constexpr int kPower = 3, kPowerPressed = 30, kPowerIcon = 4, kPowerIconPressed = 5;
+constexpr int kPower = 3, kPowerPressed = 30, kPowerIcon = 4, kPowerIconPressed = 5, kPowerIconRecharging = 13;
 constexpr int kAim = 6, kAimOn = 7;
 constexpr int kJump = 8, kJumpPressed = 9;
 constexpr int kPadBase = 10, kPadRing = 11, kPadKnob = 12;
@@ -155,7 +155,7 @@ void TouchControls::draw(ParticleList& out) {
     if (shown.power) {
         const bool power = held(Part::Power) != nullptr;
         hud_.draw_frame(out, *s, power ? kPowerPressed : kPower, cluster_, scale_, white);
-        hud_.draw_frame(out, *s, power ? kPowerIconPressed : kPowerIcon, cluster_, scale_, white);
+        hud_.draw_frame(out, *s, !power_ready ? kPowerIconRecharging : power ? kPowerIconPressed : kPowerIcon, cluster_, scale_, white);
     }
     if (shown.aim) hud_.draw_frame(out, *s, aim_ ? kAimOn : kAim, cluster_, scale_, white);
     if (shown.jump) hud_.draw_frame(out, *s, held(Part::Jump) ? kJumpPressed : kJump, cluster_, scale_, white);

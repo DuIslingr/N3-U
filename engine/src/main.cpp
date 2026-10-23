@@ -67,6 +67,7 @@ struct Options {
     bool log_player = false;    // print the player's state every second (interactive)
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
     float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
+    float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
@@ -130,6 +131,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--log-player") o.log_player = true;
         else if (a == "--combat-test") o.combat_test = std::stof(next());
         else if (a == "--grenade-test") o.grenade_test = std::stof(next());
+        else if (a == "--power-test") o.power_test = std::stof(next());
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
@@ -374,6 +376,7 @@ int main(int argc, char** argv) {
                         touch.shown = {lc.move, lc.move && lc.rush, lc.shoot && combat.shoot_enabled, lc.aim, lc.jump, lc.powers};
                         if (!hs.visible) touch.shown = {false, false, qte == "fire", false, false, qte == "repel"};   // a QTE in a cinematic
                         touch.layout(w, h);
+                        touch.power_ready = combat.power_ready();
                         touch.draw(hud_sprites);
                     } else {
                         touch.release_all();
@@ -645,6 +648,11 @@ int main(int argc, char** argv) {
                             ci.grenade = true;
                             std::printf("t=%.2f grenade thrown, %d enemies alive\n", t, combat.enemies_alive());
                         }
+                        if (opt.power_test >= 0 && t <= opt.power_test && t + kPhysicsStep > opt.power_test) {
+                            if (combat.nearest_enemy(player.eye(), target)) aim = glm::normalize(target - player.eye());
+                            ci.power = true;
+                            std::printf("t=%.2f repel\n", t);
+                        }
                         if (opt.combat_test > 0 && combat.nearest_enemy(player.eye(), target)) {
                             aim = glm::normalize(target - player.eye());
                             player.yaw = glm::degrees(std::atan2(-aim.x, aim.y));
@@ -839,7 +847,9 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true, logic.qte_press("fire");
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Q && !e.key.repeat) logic.qte_press("repel");
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Q && !e.key.repeat) {
+                            if (!logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
+                        }
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) aim_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) aim_held = false;
@@ -940,7 +950,7 @@ int main(int argc, char** argv) {
                                 combat_in.fire = !locked && touch_in.fire;
                                 combat_in.reload |= touch_in.reload;
                                 if (touch_in.fire) logic.qte_press("fire");
-                                if (touch_in.power) logic.qte_press("repel");
+                                if (touch_in.power && !logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
                                 combat_in.grenade |= touch_in.grenade && logic.controls.items;
                                 if (touch_in.weapon_step != 0 && logic.controls.weapons) combat_in.select = combat.cycle_weapon(touch_in.weapon_step);
                             } else {
@@ -975,6 +985,7 @@ int main(int argc, char** argv) {
                         vm.visible = !flying && !combat.player_dead && !logic.player_locked();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
+                        if (combat.take_power_used()) viewmodel.set_state("Repel");
                         vm.aiming = aiming;
                         vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
                         const bool* k = SDL_GetKeyboardState(nullptr);

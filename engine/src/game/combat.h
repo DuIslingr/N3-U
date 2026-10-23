@@ -70,6 +70,7 @@ struct NpcGoal {
 struct CombatInput {
     bool fire = false, reload = false;
     bool grenade = false;              // throw a grenade
+    bool power = false;                // use the selected special power (Repel)
     int select = -1;                   // weapon slot to switch to
 };
 
@@ -150,6 +151,11 @@ public:
     void spend_round() { int& c = clip_[size_t(current_)]; c = std::max(c - 1, 0); }   // QTE_Fire
     int grenades = 0;
     bool grenades_enabled = true;
+    // Special powers (CPowerManager): Repel, the plasma hand, pushes back and hurts what is
+    // in front; 5 s to recharge. The view model plays its state when taken.
+    bool power_ready() const { return power_cooldown_ <= 0; }
+    float power_charge() const { return 1 - power_cooldown_ / kPowerCooldown; }
+    bool take_power_used() { return std::exchange(power_used_, false); }
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
     bool take_grenade_throw() { return std::exchange(throw_started_, false); }
     float since_shot() const { return since_shot_; }   // seconds since the last shot
@@ -310,6 +316,10 @@ private:
     GrenadeDef grenade_def_;
     std::vector<Grenade> live_grenades_;
     float throw_delay_ = -1, grenade_cooldown_ = 0;
+    static constexpr float kPowerCooldown = 5.0f;
+    float power_cooldown_ = 0;
+    bool power_used_ = false;
+    void repel(const glm::vec3& eye, const glm::vec3& aim);
     bool throw_started_ = false;
     void fire_bolt(Target& t, const glm::vec3& at);
     // Ray against targets: index and distance, -1 if none within `max_t`.
