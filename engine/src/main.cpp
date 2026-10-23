@@ -348,8 +348,8 @@ int main(int argc, char** argv) {
                 return f;
             };
             // A frame of it before a level is read (the window shows nothing new until then).
-            auto show_loading = [&](const std::string& level) {
-                loading.begin(campaign_level(level));
+            auto show_loading = [&](const std::string& level, bool section = false) {
+                loading.begin(section ? nullptr : campaign_level(level));
                 if (!window) return;
                 SDL_PumpEvents();
                 int w = 0, h = 0;
@@ -642,7 +642,9 @@ int main(int argc, char** argv) {
                     const glm::vec3 feet = player.center - glm::vec3(0, 0, player.radius.z);
                     const float yaw = player.yaw;
                     std::printf("[script] loading level section mask %u\n", section);
+                    show_loading(opt.level, true);   // a black screen with the rings; no press awaited
                     scene.load_level(opt.level, section);
+                    loading.active = false;
                     player.spawn(feet, yaw);
                     logic.start(true);
                     combat.start();
