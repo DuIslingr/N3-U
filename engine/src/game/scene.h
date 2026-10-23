@@ -96,6 +96,12 @@ public:
     glm::mat4 object_matrix(size_t object, const std::string& node = {}) const;
     const SceneStats& stats() const { return stats_; }
     const Vfs& vfs() const { return vfs_; }
+    // Diagnostics: per draw, what it is and its world bounds.
+    struct DrawInfo {
+        std::string name;
+        glm::vec3 min{0}, max{0};
+    };
+    const std::vector<DrawInfo>& draw_info() const { return draw_info_; }
 
     // Particle effects (levels/effects.bin); updated with the scene, cleared on load.
     ParticleSystem& particles() { return particles_; }
@@ -228,6 +234,7 @@ private:
     Level level_;
     std::vector<DrawItem> draws_;
     std::vector<const GpuMaterial*> draw_materials_;   // per draw: its game-shader material (or null)
+    std::vector<DrawInfo> draw_info_;
     std::vector<IrradianceVolume> irradiance_;
 
     // Placed instances: their draws and lighting.

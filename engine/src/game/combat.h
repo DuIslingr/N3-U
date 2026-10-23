@@ -12,6 +12,7 @@
 // root motion is held in place and the actor moves at the clip's root speed instead.
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <random>
 #include <string>
@@ -51,6 +52,18 @@ struct WeaponDef {
     Impacts impacts;
 };
 
+// An NPC command (CAIComponent::PushGoal_*, from NpcCmd_* script calls): goals run in
+// order and take over the actor's AI; `id` is the script's, for WaitNpcCmdFinished.
+struct NpcGoal {
+    enum class Kind { Move, Jump, Turn, Teleport, Action } kind = Kind::Move;
+    int id = 0;
+    glm::vec3 pos{0};
+    bool run = true;              // Move: the "run" state (else walking pace)
+    std::string state;            // Action: the state to play
+    float timer = 0, length = 0;
+    bool started = false;
+};
+
 struct CombatInput {
     bool fire = false, reload = false;
     int select = -1;                   // weapon slot to switch to
@@ -76,6 +89,11 @@ public:
     int enemies_alive() const { return count_teams(~kPlayerTeams); }
     int count_teams(uint32_t team_mask) const;   // CAIController::GetNoOpponentsByTeams
     std::vector<int> enemy_ids() const;
+    // NPC commands: queue a goal for the actor with this id (false if there is none);
+    // whether goal `goal_id` (-1: any) is still queued; drop all queued goals.
+    bool push_goal(int actor, const NpcGoal& g);
+    bool goal_pending(int actor, int goal_id) const;
+    void cancel_goals(int actor);
     // A spawn manager with this id that has not ended (SpawnEnd_<id> is still to come).
     bool spawner_pending(int id) const;
     bool damage(int id, float amount);   // false if no such target
@@ -146,6 +164,8 @@ private:
         glm::vec3 path_goal{0};
         // Off the nav mesh (spawned on a ledge or a wall): leap down onto it.
         bool leaping = false;
+        std::deque<NpcGoal> goals;
+        std::string clip_walk;
         float leap_t = 0;
         glm::vec3 leap_from{0}, leap_to{0};
         int leap_tri = -1;
@@ -196,7 +216,9 @@ private:
     void setup_actor(Target& t, const LevelObject& o);
     void play(Target& t, const std::string& clip, bool loop);
     void update_actor(Target& t, float dt);
-    void move_along_path(Target& t, float dt);
+    void move_along_path(Target& t, float dt, float speed_scale = 1);
+    void run_goal(Target& t, float dt);
+    void path_to(Target& t, const glm::vec3& goal);
     void stay_on_mesh(Target& t);
     void face(Target& t, const glm::vec3& towards, float dt);
     bool sees_player(const Target& t) const;

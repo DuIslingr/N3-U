@@ -41,10 +41,7 @@ void collect_scripts(const Value& v, std::vector<std::string>& out) {
 LevelLogic::~LevelLogic() = default;
 
 LevelLogic::LevelLogic(Scene& s, Player& p, const Gol& g) : scene(s), player(p), gol(g), anim_sounds_(std::make_unique<AnimSounds>(g)) {
-    runtime_.log = [this](const std::string& line) {
-        log(line);
-        if (line.rfind("error", 0) == 0) message(line, 8);
-    };
+    runtime_.log = [this](const std::string& line) { log(line); };   // errors stay in the log, as the game's
     register_game_api(*this);
 }
 

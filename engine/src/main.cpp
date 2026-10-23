@@ -54,6 +54,8 @@ struct Options {
     std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
     bool sound_check = false;           // decode every sound in the sound table and exit
     bool mute = false;
+    glm::vec3 probe{0};                 // --probe: list the draws whose bounds contain this point
+    bool have_probe = false;
     std::string sound_render;           // headless: mix the run's sounds into this WAV file
     std::string screenshot;
     float walk_test = 0;
@@ -105,6 +107,11 @@ Options parse(int argc, char** argv) {
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--effect") o.effects.push_back(next());
         else if (a == "--sound-check") o.sound_check = true;
+        else if (a == "--probe") {
+            float v[3];
+            if (std::sscanf(next().c_str(), "%f,%f,%f", &v[0], &v[1], &v[2]) != 3) throw std::runtime_error("--probe needs X,Y,Z");
+            o.probe = {v[0], v[1], v[2]}, o.have_probe = true;
+        }
         else if (a == "--mute") o.mute = true;
         else if (a == "--sound-render") o.sound_render = next();
         else if (a == "--hide-models") o.hide_models.push_back(next());
@@ -596,6 +603,16 @@ int main(int argc, char** argv) {
                     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                     std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
                 }
+                if (opt.have_probe)
+                    for (size_t i = 0; i < scene.draws().size(); ++i) {
+                        const Scene::DrawInfo& di = scene.draw_info()[i];
+                        if (glm::any(glm::lessThan(opt.probe, di.min - 0.5f)) || glm::any(glm::greaterThan(opt.probe, di.max + 0.5f))) continue;
+                        const DrawItem& d = scene.draws()[i];
+                        std::printf("probe: draw %zu %s%s%s%s%s%s bounds (%.1f %.1f %.1f)-(%.1f %.1f %.1f)\n", i, di.name.c_str(),
+                                    d.blend ? " blend" : "", d.visible ? "" : " lod-hidden", d.hidden ? " hidden" : "",
+                                    d.anim_hidden ? " anim-hidden" : "", d.zone_hidden ? " zone-hidden" : "", di.min.x, di.min.y,
+                                    di.min.z, di.max.x, di.max.y, di.max.z);
+                    }
                 std::printf("coronas: %zu of %zu shown\n", scene.stats().coronas_shown, scene.stats().corona_controllers);
                 std::printf("particles: %zu in %zu batches\n", scene.particles().particle_count(), particle_list.batches.size());
                 std::printf("wrote %s\n", opt.screenshot.c_str());

@@ -245,6 +245,49 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
+// --- NPC commands (CAIComponent goals) -------------------------------------------------
+// NpcCmd_*(npc, goal id, waypoint, ...): queue a goal; WaitNpcCmdFinished(npc, goal id or
+// -1) waits while it is queued (Combat sends NpcCmdFinished_<npc>_<id> when it is done).
+
+int push_npc_goal(lua_State* L, NpcGoal::Kind kind, int wp_arg) {
+    LevelLogic& c = ctx(L);
+    if (!c.combat) return 0;
+    NpcGoal g;
+    g.kind = kind;
+    g.id = int(lua_tointeger(L, 2));
+    if (wp_arg > 0) {
+        const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, wp_arg)));
+        if (!wp) return 0;
+        g.pos = wp->position;
+    }
+    if (kind == NpcGoal::Kind::Move && lua_gettop(L) >= 5) g.run = str_arg(L, 5) != "move" && str_arg(L, 5) != "walk";
+    if (kind == NpcGoal::Kind::Action) g.state = str_arg(L, 3);
+    c.combat->push_goal(int(lua_tointeger(L, 1)), g);
+    return 0;
+}
+
+int api_npc_move(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Move, 3); }
+int api_npc_cover(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Move, 3); }   // to the cover point
+int api_npc_jump(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Jump, 3); }
+int api_npc_turn(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Turn, 3); }
+int api_npc_teleport(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Teleport, 3); }
+int api_npc_action(lua_State* L) { return push_npc_goal(L, NpcGoal::Kind::Action, 0); }
+
+int api_npc_cancel(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->cancel_goals(int(lua_tointeger(L, 1)));
+    return 0;
+}
+
+int api_wait_npc_cmd(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const int npc = int(lua_tointeger(L, 1)), id = int(lua_tointeger(L, 2));
+    if (!c.combat || !c.combat->goal_pending(npc, id)) return 0;
+    lua_pushinteger(L, 4);
+    lua_pushstring(L, ("NpcCmdFinished_" + std::to_string(npc) + "_" + std::to_string(id)).c_str());
+    return lua_yield(L, 2);
+}
+
 // --- sound (VoxSoundManager) ----------------------------------------------------------
 // The game passes a fade time (ms) to every Play; here it fades in loops and music only,
 // so one-shots keep their attack. Defaults as the game's: 4000 ms, StartMusic 0.
@@ -447,7 +490,14 @@ const Entry kImplemented[] = {
     {"Wait", api_wait},
     {"WaitForEvent", api_wait_for_event},
     {"WaitForEnemiesDead", api_wait_for_enemies_dead},
-    {"WaitNpcCmdFinished", api_return_now},
+    {"WaitNpcCmdFinished", api_wait_npc_cmd},
+    {"NpcCmd_MoveToWp", api_npc_move},
+    {"NpcCmd_TakeCover", api_npc_cover},
+    {"NpcCmd_JumpToWp", api_npc_jump},
+    {"NpcCmd_TurnToWp", api_npc_turn},
+    {"NpcCmd_TeleportToWp", api_npc_teleport},
+    {"NpcCmd_DoAction", api_npc_action},
+    {"NpcCmd_CancelAll", api_npc_cancel},
     {"WaitForServer", api_return_now},
     {"SendEvent", api_send_event},
     {"Enable", api_enable},

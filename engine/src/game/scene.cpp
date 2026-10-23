@@ -347,10 +347,15 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                 for (const auto& v : verts) c += v.position;
                 d.center = glm::vec3(world * glm::vec4(c / float(std::max<size_t>(verts.size(), 1)), 1));
                 const auto [lo, hi] = m.bounds[size_t(mesh)][pi];
+                DrawInfo info;
+                info.name = (p ? p->model : std::string("?")) + " node " + node.name +
+                            (range.material >= 0 ? " material " + m.cpu.materials[range.material].id : std::string());
+                info.min = glm::vec3(1e30f), info.max = glm::vec3(-1e30f);
                 if (lo.x <= hi.x) {
                     for (int k = 0; k < 8; ++k) {
                         const glm::vec3 corner((k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z);
                         const glm::vec3 w = glm::vec3(world * glm::vec4(corner, 1));
+                        info.min = glm::min(info.min, w), info.max = glm::max(info.max, w);
                         bounds_min = glm::min(bounds_min, w);
                         bounds_max = glm::max(bounds_max, w);
                         const glm::vec3 l = glm::vec3(to_local * glm::vec4(w, 1));
@@ -384,6 +389,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                     }
                 }
                 draw_materials_.push_back(gm);
+                draw_info_.push_back(std::move(info));
                 if (anim) anim->draws.push_back({draws_.size(), ni, skin});
                 if (!v.lod_nodes.empty()) lods.draws.push_back({draws_.size(), v.lod_nodes});
                 if (v.controller >= 0)
@@ -719,6 +725,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     }
     draws_.clear();
     draw_materials_.clear();
+    draw_info_.clear();
     irradiance_.clear();
     // Irradiance volumes belong to level objects: <level>_<object id>.irr, relative to the object.
     const std::string stem = lvc_name.substr(0, lvc_name.rfind('.'));

@@ -340,6 +340,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     t.clip_idle = pick_clip(clips, {"001_idle", "idle1", "_idle"});
     t.clip_alert = pick_clip(clips, {"idle_attack_assaultrifle", "002_idle_attack", "008_idle_attack", "idle_attack"});
     t.clip_run = pick_clip(clips, {"068_fast_run", "024_walk_very_fast", "009_run", "fast_run", "walk_fast", "_run", "walk"});
+    t.clip_walk = pick_clip(clips, {"_walk_forward", "007_walk", "_walk", "walk"});
     t.clip_fire = pick_clip(clips, {"106_upper_fire_suppresive", "030_plasma_fire_multi", "_fire"});
     t.clip_melee = pick_clip(clips, {"025_atack_both_claws", "004_atack_right_claw", "066_melee_attack_right_hand_onplace",
                                      "melee", "atack", "attack"});
@@ -418,8 +419,8 @@ void Combat::face(Target& t, const glm::vec3& towards, float dt) {
     t.yaw += std::clamp(d, -step, step);
 }
 
-void Combat::move_along_path(Target& t, float dt) {
-    float budget = t.run_speed * dt;
+void Combat::move_along_path(Target& t, float dt, float speed_scale) {
+    float budget = t.run_speed * speed_scale * dt;
     while (budget > 0 && t.path_next < t.path.size()) {
         const glm::vec3 next = t.path[t.path_next];
         glm::vec2 d = glm::vec2(next - t.pos);
@@ -447,6 +448,101 @@ void Combat::move_along_path(Target& t, float dt) {
     stay_on_mesh(t);
 }
 
+void Combat::path_to(Target& t, const glm::vec3& goal_pos) {
+    t.path.clear();
+    t.path_off_mesh.clear();
+    t.path_next = 0;
+    glm::vec3 goal, here;
+    const int goal_tri = nav_.nearest(goal_pos + glm::vec3(0, 0, 0.3f), 4.0f, goal);
+    if (t.tri < 0) t.tri = nav_.nearest(t.pos + glm::vec3(0, 0, 0.3f), 4.0f, here);
+    if (goal_tri >= 0 && t.tri >= 0)
+        nav_.find_path(t.tri, t.pos, goal_tri, goal, t.path, [this](int door) { return logic_.door_passable(door); }, &t.path_off_mesh);
+    if (t.path.empty()) {   // no route on the mesh: straight there
+        t.path = {goal_pos};
+        t.path_off_mesh = {1};
+    }
+}
+
+void Combat::run_goal(Target& t, float dt) {
+    NpcGoal& g = t.goals.front();
+    const bool first = !g.started;
+    g.started = true;
+    g.timer += dt;
+    bool done = false;
+    switch (g.kind) {
+        case NpcGoal::Kind::Move:
+            if (first) path_to(t, g.pos);
+            play(t, g.run || t.clip_walk.empty() ? t.clip_run : t.clip_walk, true);
+            move_along_path(t, dt, g.run ? 1.0f : 0.45f);
+            done = t.path_next >= t.path.size() || g.timer > 40;
+            break;
+        case NpcGoal::Kind::Jump: {
+            if (first) g.length = std::clamp(glm::distance(t.pos, g.pos) / 8.0f, 0.4f, 1.2f), t.leap_from = t.pos;
+            const float k = std::min(g.timer / g.length, 1.0f);
+            t.pos = glm::mix(t.leap_from, g.pos, k) + glm::vec3(0, 0, 4 * k * (1 - k) * 1.5f);
+            face(t, g.pos, dt);
+            play(t, t.clip_jump.empty() ? t.clip_run : t.clip_jump, true);
+            if (k >= 1) {
+                glm::vec3 on;
+                t.tri = nav_.nearest(t.pos + glm::vec3(0, 0, 0.3f), 2.0f, on);
+                done = true;
+            }
+            break;
+        }
+        case NpcGoal::Kind::Turn:
+            face(t, g.pos, dt);
+            play(t, t.clip_idle, true);
+            done = g.timer > 0.6f;
+            break;
+        case NpcGoal::Kind::Teleport:
+            t.pos = g.pos;
+            t.tri = -1;
+            done = true;
+            break;
+        case NpcGoal::Kind::Action:
+            if (first) {
+                // The state's clip, by name, else something that looks like using a console.
+                const auto clips = scene_.clip_names(t.object);
+                std::string clip = pick_clip(clips, {lower(g.state).c_str()});
+                if (clip.empty()) clip = pick_clip(clips, {"console", "button", "interact", "_use"});
+                if (!clip.empty()) play(t, clip, false), g.length = scene_.clip_length(t.object, clip);
+                if (g.length <= 0) g.length = 1.5f, play(t, t.clip_idle, true);
+            }
+            done = g.timer >= g.length;
+            break;
+    }
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    if (!done) return;
+    const int id = g.id;
+    t.goals.pop_front();
+    t.state = Target::State::Idle;
+    const std::string prefix = "NpcCmdFinished_" + std::to_string(t.id) + "_";
+    logic_.runtime_.send_event(prefix + std::to_string(id));
+    if (t.goals.empty()) logic_.runtime_.send_event(prefix + "-1");
+    logic_.runtime_.send_event("NpcCmdFinished", t.id);
+}
+
+bool Combat::push_goal(int actor, const NpcGoal& g) {
+    for (Target& t : targets_)
+        if (t.id == actor && t.actor) {
+            if (t.goals.size() < 16) t.goals.push_back(g);
+            return true;
+        }
+    return false;
+}
+
+bool Combat::goal_pending(int actor, int goal_id) const {
+    for (const Target& t : targets_)
+        if (t.id == actor)
+            return std::any_of(t.goals.begin(), t.goals.end(), [&](const NpcGoal& g) { return goal_id < 0 || g.id == goal_id; });
+    return false;
+}
+
+void Combat::cancel_goals(int actor) {
+    for (Target& t : targets_)
+        if (t.id == actor) t.goals.clear();
+}
+
 void Combat::stay_on_mesh(Target& t) {
     // Follow the surface; pushed or cut off it, step back onto the nearest point.
     int tri = nav_.locate(t.pos + glm::vec3(0, 0, 0.3f), 2.0f);
@@ -468,7 +564,12 @@ void Combat::update_actor(Target& t, float dt) {
         if (scene_.clip_finished(t.object)) t.state = S::Dead;
         return;
     }
-    if (t.state == S::Dead || !t.hostile) return;
+    if (t.state == S::Dead) return;
+    if (!t.goals.empty()) {
+        run_goal(t, dt);
+        return;
+    }
+    if (!t.hostile) return;
     const glm::vec3 target = player_.center - glm::vec3(0, 0, player_.radius.z);   // the player's feet
     const float dist = glm::distance(glm::vec2(t.pos), glm::vec2(target));
     const bool sees = !player_dead && sees_player(t);
