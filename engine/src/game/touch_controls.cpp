@@ -103,7 +103,10 @@ void TouchControls::up(int64_t id, glm::vec2 at) {
         else pending_.reload = true;
     }
     if (t->part == Part::Grenades && glm::distance(at, t->start) < 20 * sx_) pending_.grenade = true;
-    if (t->part == Part::Power) pending_.power = true;
+    if (t->part == Part::Power) {   // a tap uses the power, a swipe switches it
+        if (glm::distance(at, t->start) > 20 * sx_) pending_.power_switch = true;
+        else pending_.power = true;
+    }
     if (t->part == Part::Pad) run_ = false;   // sprinting stops with the walk
     touches_.erase(touches_.begin() + (t - touches_.data()));
 }

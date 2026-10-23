@@ -29,11 +29,17 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
     if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
     const glm::vec3 step = wish * (in.run ? run_speed : walk_speed) * dt;
 
-    if (on_ground && in.jump) {
-        vertical_speed = jump_speed;
-        on_ground = false;
+    if (jetpack) {
+        // Thrust while the jump is held (it beats gravity); otherwise a slow descent.
+        if (in.jump) vertical_speed = std::min(vertical_speed + (gravity + 14.0f) * dt, 7.0f), on_ground = false;
+        vertical_speed = std::max(vertical_speed - gravity * dt, -6.0f);
+    } else {
+        if (on_ground && in.jump) {
+            vertical_speed = jump_speed;
+            on_ground = false;
+        }
+        vertical_speed = std::max(vertical_speed - gravity * dt, -max_fall_speed);
     }
-    vertical_speed = std::max(vertical_speed - gravity * dt, -max_fall_speed);
 
     glm::vec3 vertical(0, 0, vertical_speed * dt);
     const bool rising = vertical_speed > 0;

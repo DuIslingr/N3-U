@@ -26,6 +26,7 @@ public:
     float vertical_speed = 0;
     bool on_ground = false;
     float landing_speed = 0;   // downward speed at the last landing (taken by fall damage)
+    bool jetpack = false;      // the jetpack power: jumping thrusts upwards, falls are slowed
     // Wedged (pushing but hardly moving): move by Irrlicht's one-sided rule for a while.
     float stuck_time = 0, escape_time = 0;
 

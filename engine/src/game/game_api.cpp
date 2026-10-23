@@ -861,6 +861,27 @@ int api_hud_frost_max(lua_State* L) {
     return 0;
 }
 
+// Special powers by name: UnlockSpecialPower, LockSpecialPower, UseSpecialPower (the
+// jetpack is the player's; Repel, Paralyze and Slow go through the power button).
+template <int Op>   // 0 unlock, 1 lock, 2 use
+int api_special_power(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    std::string name = str_arg(L, 1);
+    for (char& ch : name) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    if (name == "jetpack") {
+        if (Op == 0) c.jetpack_unlocked = true;
+        if (Op == 1) c.jetpack_unlocked = false, c.player.jetpack = false;
+        if (Op == 2) c.jetpack_unlocked = true, c.player.jetpack = true;
+        return 0;
+    }
+    if (Combat* cb = c.combat) {
+        if (Op == 0) cb->unlock_power(name, true);
+        if (Op == 1) cb->unlock_power(name, false);
+        if (Op == 2) cb->use_power_now(name);
+    }
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -985,6 +1006,9 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"UnlockSpecialPower", api_special_power<0>},
+    {"LockSpecialPower", api_special_power<1>},
+    {"UseSpecialPower", api_special_power<2>},
     {"HUD_StartFrost", api_hud_frost<true>},
     {"HUD_StopFrost", api_hud_frost<false>},
     {"HUD_SetFrostMaxFactor", api_hud_frost_max},

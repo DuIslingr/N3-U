@@ -294,7 +294,8 @@ void LevelLogic::start(bool keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
         player_vehicle_ = player_gun_ = player_mech_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
-        zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true;
+        zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
+        player.jetpack = false;
         grading_ = Grading{};
         if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
     }

@@ -905,6 +905,7 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true, logic.qte_press("fire");
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_TAB && !e.key.repeat && logic.controls.powers) combat.cycle_power();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Q && !e.key.repeat) {
                             if (!logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
                         }
@@ -1025,6 +1026,7 @@ int main(int argc, char** argv) {
                                 combat_in.reload |= touch_in.reload;
                                 if (touch_in.fire) logic.qte_press("fire");
                                 if (touch_in.power && !logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
+                                if (touch_in.power_switch && logic.controls.powers) combat.cycle_power();
                                 combat_in.grenade |= touch_in.grenade && logic.controls.items;
                                 if (touch_in.weapon_step != 0 && logic.controls.weapons) combat_in.select = combat.cycle_weapon(touch_in.weapon_step);
                             } else {

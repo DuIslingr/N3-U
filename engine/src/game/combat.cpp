@@ -232,6 +232,67 @@ void Combat::update_grenades(float dt) {
     }
 }
 
+bool Combat::unlock_power(const std::string& name, bool on) {
+    std::string n = lower(name);
+    if (n == "jetpack") return false;   // the level logic's
+    for (const char* known : {"Repel", "Paralyze", "Slow"}) {
+        if (lower(known) != n) continue;
+        auto it = std::find(powers_.begin(), powers_.end(), known);
+        if (on && it == powers_.end()) powers_.push_back(known);
+        if (!on && it != powers_.end() && powers_.size() > 1) {
+            powers_.erase(it);
+            power_index_ = std::min(power_index_, int(powers_.size()) - 1);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool Combat::select_power(const std::string& name) {
+    for (size_t i = 0; i < powers_.size(); ++i)
+        if (lower(powers_[i]) == lower(name)) return power_index_ = int(i), true;
+    return false;
+}
+
+void Combat::cycle_power() {
+    if (!powers_.empty()) power_index_ = (power_index_ + 1) % int(powers_.size());
+}
+
+bool Combat::use_power_now(const std::string& name) {
+    unlock_power(name, true);
+    if (!select_power(name)) return false;
+    power_cooldown_ = 0;
+    use_selected_power(last_eye_, last_aim_);
+    return true;
+}
+
+void Combat::use_selected_power(const glm::vec3& eye, const glm::vec3& aim) {
+    const std::string& p = power();
+    if (p == "Paralyze") paralyze(eye, aim);
+    else if (p == "Slow") {
+        power_cooldown_ = kPowerCooldown, power_used_ = true;
+        logic_.bullet_time(5000, 0.3f);   // the world slows for a while
+        sound("sfx_slow_motion_in", nullptr);
+    } else {
+        repel(eye, aim);
+    }
+}
+
+void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
+    // Freezes the enemies in front for five seconds (Paralyze_Bullet: 500 m reach).
+    power_cooldown_ = kPowerCooldown, power_used_ = true;
+    sound("sfx_plasma_hand_shot", nullptr);
+    effect("bullet_paralyze", eye + aim * 1.5f, aim);
+    for (Target& t : targets_) {
+        if (!t.actor || !t.hostile || !alive(t)) continue;
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
+        const glm::vec3 to = c - eye;
+        const float d = glm::length(to);
+        if (d > 40.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.85f || !line_clear(eye, c)) continue;
+        t.paralyzed = 5.0f;
+    }
+}
+
 void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
     power_cooldown_ = kPowerCooldown;
     power_used_ = true;
@@ -911,6 +972,11 @@ void Combat::update_actor(Target& t, float dt) {
         run_goal(t, dt);
         return;
     }
+    if (t.paralyzed > 0) {   // the Paralyze power: frozen in place
+        t.paralyzed -= dt;
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
     if (t.ai_locked) {   // lock_ai: stands as it is
         scene_.set_object_pose(t.object, t.pos, t.yaw);
         return;
@@ -1401,7 +1467,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     }
     if (throw_delay_ >= 0 && (throw_delay_ -= dt) < 0) throw_grenade(eye, aim);
     power_cooldown_ = std::max(power_cooldown_ - dt, 0.0f);
-    if (in.power && power_cooldown_ <= 0) repel(eye, aim);
+    if (in.power && power_cooldown_ <= 0) use_selected_power(eye, aim);
     update_grenades(dt);
 
     // Weapon.

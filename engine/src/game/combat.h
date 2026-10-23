@@ -165,6 +165,12 @@ public:
     // Special powers (CPowerManager): Repel, the plasma hand, pushes back and hurts what is
     // in front; 5 s to recharge. The view model plays its state when taken.
     bool power_ready() const { return power_cooldown_ <= 0; }
+    // Special powers by name (CPowerManager: Repel, Paralyze, Slow); Repel from the start.
+    bool unlock_power(const std::string& name, bool on);
+    bool select_power(const std::string& name);
+    void cycle_power();                                   // Tab / swiping the power button
+    const std::string& power() const { return powers_[size_t(power_index_)]; }
+    bool use_power_now(const std::string& name);          // UseSpecialPower
     float power_charge() const { return 1 - power_cooldown_ / kPowerCooldown; }
     bool take_power_used() { return std::exchange(power_used_, false); }
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
@@ -210,6 +216,7 @@ private:
         // Script orders (SendEvent): follow the player, hold the position (cover, a
         // mounted gun), AI off, keep within an ai_region box.
         bool follow = false, hold = false, ai_locked = false, has_region = false;
+        float paralyzed = 0;   // seconds left frozen by the Paralyze power
         glm::vec3 region_min{0}, region_max{0};          // created by a spawn manager (its body is removed later)
         // CTargetableComponent: particle effects when hit and when killed, at a node.
         std::string hit_effect, hit_node, death_effect, death_node;
@@ -336,7 +343,11 @@ private:
     static constexpr float kPowerCooldown = 5.0f;
     float power_cooldown_ = 0;
     bool power_used_ = false;
+    std::vector<std::string> powers_{"Repel"};
+    int power_index_ = 0;
     void repel(const glm::vec3& eye, const glm::vec3& aim);
+    void paralyze(const glm::vec3& eye, const glm::vec3& aim);
+    void use_selected_power(const glm::vec3& eye, const glm::vec3& aim);
     bool throw_started_ = false;
     void fire_bolt(Target& t, const glm::vec3& at);
     // Ray against targets: index and distance, -1 if none within `max_t`.

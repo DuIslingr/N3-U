@@ -112,6 +112,7 @@ public:
     float zfar = 8000, move_sensitivity = 1;
     bool player_rush = true;
     bool fall_damage = true;   // Player_EnableFallDamage
+    bool jetpack_unlocked = false;   // Unlock/LockSpecialPower("jetpack"); UseSpecialPower turns it on
     struct Frost {
         float on = 0, ms = 1000, max = 1;   // HUD_StartFrost / HUD_StopFrost over ms; HUD_SetFrostMaxFactor
         uint32_t serial = 0;
