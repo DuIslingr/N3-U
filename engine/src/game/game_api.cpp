@@ -780,6 +780,13 @@ int api_switch_to_machine_gun(lua_State* L) {
     ctx(L).man_gun(int(lua_tointeger(L, 1)));
     return 0;
 }
+int api_switch_to_mech(lua_State* L) {   // SwitchToMech(): the mech whose script this is
+    lua_getglobal(L, "this");
+    const int owner = int(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    ctx(L).enter_mech(owner);
+    return 0;
+}
 int api_switch_to_player_on_foot(lua_State* L) {
     ctx(L).leave_vehicle();
     return 0;
@@ -971,6 +978,7 @@ const Entry kImplemented[] = {
     {"Vehicle_SetDebug", api_ignore},
     {"SwitchToMachineGun", api_switch_to_machine_gun},
     {"SwitchToPlayerOnFoot", api_switch_to_player_on_foot},
+    {"SwitchToMech", api_switch_to_mech},
     {"GiveSplashDamage", api_give_splash_damage},
     {"PlayAnimation", api_play_animation},
     {"LoadTexture", api_ignore},

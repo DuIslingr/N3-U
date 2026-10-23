@@ -130,7 +130,28 @@ bool LevelLogic::man_gun(int id) {
     return true;
 }
 
+bool LevelLogic::enter_mech(int id) {
+    Object* o = object(id);
+    if (!o) return false;
+    player_mech_ = id, player_vehicle_ = player_gun_ = -1;
+    player.spawn(o->position, o->yaw);   // the player stands where the mech stood, as the mech
+    scene.set_object_visible(o->index, false);
+    if (combat) combat->use_mech_weapon(true);
+    return true;
+}
+
 void LevelLogic::leave_vehicle() {
+    if (Object* m = player_mech_ >= 0 ? object(player_mech_) : nullptr) {
+        // The mech stays where it was walked to; the player steps out in front.
+        m->position = player.center - glm::vec3(0, 0, player.radius.z), m->yaw = player.yaw;
+        scene.set_object_pose(m->index, m->position, m->yaw);
+        scene.set_object_visible(m->index, m->visible);
+        if (combat) combat->use_mech_weapon(false);
+        const float y = glm::radians(player.yaw);
+        player.spawn(m->position + glm::vec3(-std::sin(y), std::cos(y), 0) * 4.0f, player.yaw);
+        player_mech_ = -1;
+        return;
+    }
     if (player_vehicle_ < 0 && player_gun_ < 0) return;
     // Out at the feet of the seat.
     glm::vec3 eye;

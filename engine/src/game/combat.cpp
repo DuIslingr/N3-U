@@ -138,11 +138,11 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
     }
     owned_[0] = 1;
     // Not in the arsenal: the jeep's turret and the mounted machine guns.
-    for (const char* name : {"VehicleWeaponPlayer", "MG_Player"}) {
+    for (const char* name : {"VehicleWeaponPlayer", "MG_Player", "Player_Mech_Cockpit"}) {
         weapons_.push_back(load_weapon(name)), weapon_types_.push_back(name);
         clip_.push_back(weapons_.back().clip), reserve_.push_back(-1), owned_.push_back(0);
     }
-    vehicle_weapon_ = int(weapons_.size()) - 2, mounted_gun_ = int(weapons_.size()) - 1;
+    vehicle_weapon_ = int(weapons_.size()) - 3, mounted_gun_ = int(weapons_.size()) - 2, mech_weapon_ = int(weapons_.size()) - 1;
     // The player: CHealthComponent and CPlayerBaseComponent (regeneration per second, delay).
     for (const auto& [id, type] : gol_) {
         if (type.name != "Player") continue;
@@ -1087,6 +1087,7 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
 void Combat::damage_player(float amount, const glm::vec3& from) {
     (void)from;
     if (player_dead || player_invulnerable || protect_ > 0 || amount <= 0) return;
+    if (logic_.in_mech()) amount *= 0.3f;   // the mech's armour (its health is 200 to the player's 50)
     player_health -= amount;
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;

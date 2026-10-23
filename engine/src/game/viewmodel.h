@@ -25,6 +25,7 @@ public:
         bool visible = true;
         bool moving = false, firing = false, reloading = false;
         bool aiming = false, running = false;
+        bool cockpit = false;        // piloting the mech: its cockpit (Player_Mech_Cockpit) instead
     };
     // SetCrtWeaponState: play a weapon state once (GetDown lowers the weapon until GetUp,
     // Idle and UnAim go back to normal).
@@ -49,7 +50,10 @@ private:
 
     Scene& scene_;
     const Gol& gol_;
-    size_t object_ = size_t(-1);
+    size_t object_ = size_t(-1), cockpit_ = size_t(-1);
+    bool cockpit_visible_ = false;
+    std::string cockpit_playing_;
+    void place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg);
     std::unordered_map<std::string, Clips> clips_;
     std::string weapon_, playing_;
     bool visible_ = false;

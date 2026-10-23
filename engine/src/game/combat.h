@@ -157,7 +157,8 @@ public:
     // (MG_Player): that weapon instead of the player's own, endless; off again restores it.
     void use_vehicle_weapon(bool on) { use_special_weapon(vehicle_weapon_, on); }
     void use_mounted_gun(bool on) { use_special_weapon(mounted_gun_, on); }
-    bool special_weapon() const { return current_ == vehicle_weapon_ || current_ == mounted_gun_; }
+    void use_mech_weapon(bool on) { use_special_weapon(mech_weapon_, on); }
+    bool special_weapon() const { return current_ == vehicle_weapon_ || current_ == mounted_gun_ || current_ == mech_weapon_; }
     void spend_round() { int& c = clip_[size_t(current_)]; c = std::max(c - 1, 0); }   // QTE_Fire
     int grenades = 0;
     bool grenades_enabled = true;
@@ -360,7 +361,7 @@ private:
     int current_ = 0;
     std::vector<std::string> weapon_types_;
     std::vector<uint8_t> owned_;
-    int vehicle_weapon_ = -1, mounted_gun_ = -1, before_special_ = 0;
+    int vehicle_weapon_ = -1, mounted_gun_ = -1, mech_weapon_ = -1, before_special_ = 0;
     void use_special_weapon(int index, bool on);
     int find_weapon(const std::string& name) const;
     float since_shot_ = 100;

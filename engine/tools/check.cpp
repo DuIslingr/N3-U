@@ -4,6 +4,7 @@
 //   nova3-check texture DATA_DIR NAME OUT.ppm decode one texture
 //   nova3-check textures DATA_DIR             decode every texture
 //   nova3-check shaders DATA_DIR [DUMP_DIR]   translate and compile every effect pass (plain and skinned)
+#include <functional>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -119,6 +120,21 @@ int cmd_models(const std::string& dir, const std::string& out_path) {
     std::printf("loaded %zu models (%.1f M triangles) in %.2fs, %zu failed\n", n - bad, tris / 1e6,
                 seconds_since(t0), bad);
     return bad ? 1 : 0;
+}
+
+// The node tree of one model: name, translation, meshes, camera field of view.
+int cmd_nodes(const std::string& dir, const std::string& model) {
+    Vfs vfs;
+    vfs.mount_directory(dir);
+    const Model m = load_bdae(vfs.read(model));
+    std::function<void(int, int)> walk = [&](int i, int depth) {
+        const ModelNode& n = m.nodes[size_t(i)];
+        std::printf("%*s%s (%.2f %.2f %.2f) meshes %zu%s\n", depth * 2, "", n.name.c_str(), n.translation.x, n.translation.y,
+                    n.translation.z, n.meshes.size(), n.camera_fov > 0 ? " camera" : "");
+        for (int c : n.children) walk(c, depth + 1);
+    };
+    for (int r : m.roots) walk(r, 0);
+    return 0;
 }
 
 // Parse every level; dump "offset type kind name model x y z" lines per object.
@@ -262,6 +278,7 @@ int main(int argc, char** argv) {
         if (cmd == "textures") return cmd_textures(argv[2]);
         if (cmd == "shaders") return cmd_shaders(argv[2], argc >= 4 ? argv[3] : "");
         if (cmd == "models" && argc >= 4) return cmd_models(argv[2], argv[3]);
+        if (cmd == "nodes" && argc >= 4) return cmd_nodes(argv[2], argv[3]);
         if (cmd == "levels" && argc >= 4) return cmd_levels(argv[2], argv[3]);
         if (cmd == "anim" && argc >= 5) {
             std::vector<float> times;

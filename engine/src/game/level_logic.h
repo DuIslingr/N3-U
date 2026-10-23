@@ -124,6 +124,8 @@ public:
     void vehicle_yaw_limits(int id, float min, float max, float ms);
     bool enter_vehicle(int id);
     bool man_gun(int id);
+    bool enter_mech(int id);   // SwitchToMech: the player pilots the mech
+    bool in_mech() const { return player_mech_ >= 0; }
     void leave_vehicle();
     int player_vehicle() const { return player_vehicle_; }   // -1 on foot
     int player_gun() const { return player_gun_; }
@@ -388,7 +390,9 @@ private:
     std::unordered_map<int, Vehicle> vehicles_;
     Vehicle* vehicle(int id);   // created from the object on first use
     void update_vehicles(float dt);
-    int player_vehicle_ = -1, player_gun_ = -1;
+    int player_vehicle_ = -1, player_gun_ = -1, player_mech_ = -1;
+    // An object's script for an event: Obj<id>_<event>, else its type's Templ<type>_<event>.
+    bool start_object_script(const Object& o, const std::string& event);
     float gun_yaw_ = 0;   // the mounted gun's own heading
     struct Qte {
         std::string kind;                               // waiting for this button; "" none

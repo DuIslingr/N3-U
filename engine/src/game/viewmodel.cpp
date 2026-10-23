@@ -41,6 +41,12 @@ void ViewModel::start() {
     if (!type_named(gol_, "AssaultRifle_Player", &type)) return;
     object_ = scene_.spawn_object(type, -1000, glm::vec3(0), 0);
     scene_.set_object_viewmodel(object_);
+    cockpit_ = size_t(-1), cockpit_visible_ = false, cockpit_playing_.clear();
+    if (type_named(gol_, "Player_Mech_Cockpit", &type)) {
+        cockpit_ = scene_.spawn_object(type, -1001, glm::vec3(0), 0);
+        scene_.set_object_viewmodel(cockpit_);
+        scene_.set_object_visible(cockpit_, false);
+    }
     weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear();
     visible_ = false, lowered_ = false, was_reloading_ = false;
     once_left_ = 0;
@@ -62,6 +68,18 @@ void ViewModel::play_once(const std::string& clip, bool reverse) {
 
 void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitch_deg, const Input& in) {
     if (object_ == size_t(-1)) return;
+    // The mech's cockpit: its own rig and states.
+    const bool cockpit = in.visible && in.cockpit && cockpit_ != size_t(-1);
+    if (cockpit_ != size_t(-1) && cockpit != cockpit_visible_) scene_.set_object_visible(cockpit_, cockpit), cockpit_visible_ = cockpit;
+    if (cockpit) {
+        if (visible_) scene_.set_object_visible(object_, false), visible_ = false;
+        const Clips& c = clips("Player_Mech_Cockpit");
+        std::string want = in.firing ? c.get("Attack") : in.moving ? c.get("CockpitWalk") : c.get("CockpitIdle");
+        if (want.empty()) want = c.get("CockpitIdle");
+        if (!want.empty() && want != cockpit_playing_) scene_.play_clip(cockpit_, want, true), cockpit_playing_ = want;
+        place(cockpit_, eye, yaw_deg, pitch_deg);
+        return;
+    }
     if (in.visible != visible_) scene_.set_object_visible(object_, in.visible), visible_ = in.visible;
     if (!in.visible) return;
     const Clips& c = clips(in.weapon);
@@ -104,13 +122,17 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
             playing_ = want;
         }
     }
+    place(object_, eye, yaw_deg, pitch_deg);
+}
+
+void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg) {
     // The rig's camera (Collada: looking down -Z) turned to look along +Y, in rig space.
-    glm::mat4 placement = scene_.object_matrix(object_);
-    const glm::mat4 cam_world = scene_.object_matrix(object_, "Camera01");
+    glm::mat4 placement = scene_.object_matrix(rig);
+    const glm::mat4 cam_world = scene_.object_matrix(rig, "Camera01");
     const glm::mat4 cam_rig = glm::inverse(placement) * cam_world * glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1, 0, 0));
     const glm::mat4 view = glm::rotate(glm::rotate(glm::translate(glm::mat4(1), eye), glm::radians(yaw_deg), glm::vec3(0, 0, 1)),
                                        glm::radians(pitch_deg), glm::vec3(1, 0, 0));
-    scene_.set_object_transform(object_, view * glm::inverse(cam_rig));
+    scene_.set_object_transform(rig, view * glm::inverse(cam_rig));
 }
 
 }  // namespace nova

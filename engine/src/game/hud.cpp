@@ -278,7 +278,9 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
         // The counter under the gauge's left end.
         if (numbers) {
             const glm::vec2 left = glm::max(screen(bar.position[size_t(l0)]), screen(bar.position[size_t(l1)]));
-            numbers->draw(sprites, std::to_string(s.clip) + "/" + std::to_string(s.reserve), {left.x - float(h) * 0.02f, left.y},
+            // Endless clips and reserves (vehicle guns, the handgun's reserve) read "--".
+            auto count = [](int n) { return n < 0 || n >= 100000 ? std::string("--") : std::to_string(n); };
+            numbers->draw(sprites, count(s.clip) + "/" + count(s.reserve), {left.x - float(h) * 0.02f, left.y},
                           w, glm::vec4(0.75f, 0.95f, 1, 1), {0.0f, 0.0f});
         }
     }

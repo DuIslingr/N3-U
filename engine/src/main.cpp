@@ -669,6 +669,7 @@ int main(int argc, char** argv) {
                         player.yaw += o.look.x;
                     }
                     if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
+                    if (opt.scripts) player.eye_height = logic.in_mech() ? 7.4f : 0.75f;
                     glm::vec3 seat_eye;
                     float seat_min = 0, seat_max = 0;
                     const bool seated = opt.scripts && logic.seat(seat_eye, seat_min, seat_max);
@@ -713,7 +714,8 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
-                        vm.visible = !combat.player_dead && !logic.player_locked();
+                        vm.visible = !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || logic.in_mech());
+                        vm.cockpit = logic.in_mech();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
@@ -748,7 +750,8 @@ int main(int argc, char** argv) {
                 if (opt.scripts) {
                     ViewModel::Input vm;
                     vm.weapon = combat.weapon_type();
-                    vm.visible = !combat.player_dead && !logic.player_locked();
+                    vm.visible = !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || logic.in_mech());
+                    vm.cockpit = logic.in_mech();
                     if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                     vm.firing = combat.since_shot() < 0.2f;
                     vm.reloading = combat.reloading();
@@ -934,6 +937,10 @@ int main(int argc, char** argv) {
                     }
                     const bool* keys = SDL_GetKeyboardState(nullptr);
                     const TouchControls::Output touch_in = touch_mode ? touch.take() : TouchControls::Output{};
+                    // Piloting the mech: its cockpit is high up and it walks slowly.
+                    const bool mech = opt.scripts && logic.in_mech();
+                    player.eye_height = mech ? 7.4f : 0.75f;
+                    player.walk_speed = mech ? 3.5f : 5.0f, player.run_speed = mech ? 3.5f : 9.0f;
                     // Aim mode: the view narrows (right mouse button held, or the aim button).
                     const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead && logic.controls.aim &&
                                         (touch_mode ? touch_in.aim : aim_held);
@@ -966,7 +973,7 @@ int main(int argc, char** argv) {
                                 in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
                                 in.forward *= logic.move_sensitivity, in.right *= logic.move_sensitivity;
                             }
-                            in.jump = lc.jump && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
+                            in.jump = lc.jump && !mech && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
                             in.run = lc.rush && logic.player_rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
                             if (lc.rotate) {
                                 const float k = cam.fov / kFov;
@@ -1033,7 +1040,8 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
-                        vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !combat.special_weapon();
+                        vm.visible = !flying && !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || mech);
+                        vm.cockpit = mech;
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
                         if (combat.take_power_used()) viewmodel.set_state("Repel");

@@ -287,7 +287,7 @@ void LevelLogic::start(bool keep_player) {
         if (object_component(o, 0x96)) vehicle(id);
     if (!keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
-        player_vehicle_ = player_gun_ = -1;
+        player_vehicle_ = player_gun_ = player_mech_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
         zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true;
         grading_ = Grading{};
@@ -557,9 +557,22 @@ bool LevelLogic::exec(const std::string& code) {
     return true;
 }
 
+bool LevelLogic::start_object_script(const Object& o, const std::string& event) {
+    const std::string own = "Obj" + std::to_string(o.id) + "_" + event;
+    if (runtime_.has_function(own)) return start_script(own, o.id), true;
+    if (o.index < scene.level().objects.size()) {
+        const std::string templ = "Templ" + std::to_string(scene.level().objects[o.index].type) + "_" + event;
+        if (runtime_.has_function(templ)) return start_script(templ, o.id), true;
+    }
+    return false;
+}
+
 bool LevelLogic::use() {
-    if (player_gun_ >= 0) {   // off the mounted gun: its interaction's exit
-        start_script("Obj" + std::to_string(player_gun_) + "_OnExit", player_gun_);
+    // Out of the mounted gun or the mech: its interaction's exit.
+    for (int id : {player_gun_, player_mech_}) {
+        if (id < 0) continue;
+        const Object* o = object(id);
+        if (!o || !start_object_script(*o, "OnExit")) leave_vehicle();
         return true;
     }
     const glm::vec3 eye = player.eye(), fwd = player.view_forward();
@@ -574,10 +587,9 @@ bool LevelLogic::use() {
         best_d = d;
     }
     if (!best) return false;
-    const std::string prefix = "Obj" + std::to_string(best->id) + "_";
-    start_script(prefix + "OnEnter", best->id);
+    start_object_script(*best, "OnEnter");
     // There are no minigames yet: count the use as won.
-    start_script(prefix + "OnMinigameWin", best->id);
+    start_object_script(*best, "OnMinigameWin");
     return true;
 }
 
