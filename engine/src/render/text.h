@@ -29,6 +29,8 @@ public:
     // `anchor` of its box (0,0 top left, 0.5,0 top centre, 0.5,0.5 centre); returns its height.
     float draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color,
                glm::vec2 anchor = {0.5f, 0.0f});
+    // Size of `text` (pixels) as draw() would lay it out.
+    glm::vec2 measure(const std::string& text, int wrap);
 
 private:
     struct Line {

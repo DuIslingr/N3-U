@@ -1,7 +1,9 @@
 #include "game/hud.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -31,10 +33,10 @@ void Hud::start() {
 const Sprite* Hud::sprite(const std::string& name) {
     if (auto it = sprites_.find(name); it != sprites_.end()) return it->second.frames.empty() ? nullptr : &it->second;
     Sprite& s = sprites_[name];
-    // The game picks a resolution variant (<name>_<w>x<h>.bsprite); this data has the 1024x768 ones.
+    // The game picks a resolution variant (<name>_<w>x<h>.bsprite) by screen size.
     std::string base = name;
     if (base.size() > 8 && base.compare(base.size() - 8, 8, ".bsprite") == 0) base.resize(base.size() - 8);
-    for (const std::string& file : {base + "_1024x768.bsprite", base + ".bsprite"}) {
+    for (const std::string& file : {base + "_1024x768.bsprite", base + "_960x640.bsprite", base + ".bsprite"}) {
         if (!scene_.vfs().exists(file)) continue;
         try {
             s = load_sprite(scene_.vfs().read(file));
@@ -67,6 +69,63 @@ void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at
         const uint32_t first = uint32_t(out.vertices.size());
         out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
         out.batches.push_back({tex, false, first, 6});
+    }
+}
+
+glm::vec4 Hud::frame_bounds(const Sprite& s, int frame) {
+    glm::vec4 b(1e9f, 1e9f, -1e9f, -1e9f);
+    if (frame < 0 || size_t(frame) >= s.frames.size()) return glm::vec4(0);
+    const Sprite::Frame& f = s.frames[size_t(frame)];
+    for (int k = f.first; k < f.first + f.count && size_t(k) < s.fmodules.size(); ++k) {
+        const Sprite::FModule& fm = s.fmodules[size_t(k)];
+        if (size_t(fm.module) >= s.modules.size()) continue;
+        const Sprite::Module& m = s.modules[size_t(fm.module)];
+        b = glm::vec4(std::min(b.x, float(fm.x)), std::min(b.y, float(fm.y)), std::max(b.z, float(fm.x + m.w)), std::max(b.w, float(fm.y + m.h)));
+    }
+    return b.x > b.z ? glm::vec4(0) : b;
+}
+
+void Hud::draw_prompt(ParticleList& out, TextRenderer& text, const std::string& s, glm::vec2 at, const glm::vec4& color) {
+    // Pieces: text, or a glyph (frame number).
+    struct Piece {
+        std::string text;
+        int glyph = -1;
+        glm::vec2 size{0};
+    };
+    std::vector<Piece> pieces;
+    for (size_t p = 0; p < s.size();) {
+        const size_t a = s.find('^', p), b = a == std::string::npos ? a : s.find('^', a + 1);
+        if (b == std::string::npos) {
+            pieces.push_back({s.substr(p)});
+            break;
+        }
+        if (a > p) pieces.push_back({s.substr(p, a - p)});
+        pieces.push_back({"", std::atoi(s.substr(a + 1, b - a - 1).c_str())});
+        p = b + 1;
+    }
+    const Sprite* glyphs = sprite("tutorial.bsprite");
+    float line = text.measure("Ag", 100000).y, width = 0;
+    for (Piece& pc : pieces) {
+        if (pc.glyph >= 0 && glyphs) {
+            const glm::vec4 fb = frame_bounds(*glyphs, pc.glyph);
+            const float scale = fb.w > fb.y ? line * 1.6f / (fb.w - fb.y) : 0;
+            pc.size = glm::vec2((fb.z - fb.x) * scale, line);
+        } else if (pc.glyph < 0) {
+            pc.size = text.measure(pc.text, 100000);
+        }
+        width += pc.size.x;
+    }
+    float x = at.x - width * 0.5f;
+    for (const Piece& pc : pieces) {
+        if (pc.glyph >= 0 && glyphs) {
+            const glm::vec4 fb = frame_bounds(*glyphs, pc.glyph);
+            const float scale = fb.w > fb.y ? line * 1.6f / (fb.w - fb.y) : 0;
+            // Anchor so the frame's box sits at x, centred on the line.
+            draw_frame(out, *glyphs, pc.glyph, {x - fb.x * scale, at.y + line * 0.5f - (fb.y + fb.w) * 0.5f * scale}, scale, color);
+        } else if (pc.glyph < 0) {
+            text.draw(out, pc.text, {x, at.y}, 100000, color, {0.0f, 0.0f});
+        }
+        x += pc.size.x;
     }
 }
 

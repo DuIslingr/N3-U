@@ -50,6 +50,12 @@ const TextRenderer::Line& TextRenderer::line(const std::string& text, int wrap) 
     return cache_[key] = l;
 }
 
+glm::vec2 TextRenderer::measure(const std::string& text, int wrap) {
+    if (!font_ || text.empty()) return glm::vec2(0);
+    const Line& l = line(text, wrap);
+    return glm::vec2(float(l.width), float(l.height));
+}
+
 float TextRenderer::draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color,
                          glm::vec2 anchor) {
     if (!font_ || text.empty()) return 0;

@@ -30,6 +30,9 @@ public:
         bool grenades = false;
         std::string weapon_sprite;   // the weapon's .bsprite: frame 0 is its icon
     };
+    // A prompt with touch-button glyphs (^NN^: frames of tutorial.bsprite) drawn inline,
+    // centred with its top at `at`.
+    void draw_prompt(ParticleList& out, TextRenderer& text, const std::string& s, glm::vec2 at, const glm::vec4& color);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
     void frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numbers, ParticleList& sprites);
 
@@ -37,9 +40,14 @@ private:
     // CHud::SetNodePosition: put a part where the HUD camera sees it at pixel (x, y).
     void place(const std::string& node, glm::vec2 px, const glm::mat4& view_proj, int w, int h);
 
+public:
     const Sprite* sprite(const std::string& name);
     // Draw a sprite frame with its anchor at `at` (pixels), scaled.
     void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, const glm::vec4& color);
+    // A frame's box relative to its anchor: min x, min y, max x, max y (sprite pixels).
+    static glm::vec4 frame_bounds(const Sprite& s, int frame);
+
+private:
 
     Scene& scene_;
     std::unordered_map<std::string, Sprite> sprites_;
