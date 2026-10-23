@@ -421,8 +421,11 @@ int main(int argc, char** argv) {
                     const float a = std::clamp(m.seconds_left / 0.4f, 0.0f, 1.0f);
                     if (m.text.find('^') != std::string::npos)   // touch prompts: button glyphs inline
                         hud.draw_prompt(hud_sprites, subtitles, m.text, {float(w) * 0.5f, float(h) * 0.8f}, {1, 1, 1, a});
-                    else
-                        subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, float(h) * 0.8f}, int(float(w) * 0.7f), {1, 1, 1, a});
+                    else {   // from 80% down, raised as needed to keep every line on screen
+                        const int wrap = int(float(w) * 0.7f);
+                        const float y = std::min(float(h) * 0.8f, float(h) * 0.97f - subtitles.measure(m.text, wrap).y);
+                        subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, y}, wrap, {1, 1, 1, a});
+                    }
                 }
                 f.sprites = &hud_sprites;
             };

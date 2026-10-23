@@ -18,6 +18,7 @@
 #include "game/zones.h"
 #include "core/vfs.h"
 #include "render/material_system.h"
+#include "render/material.h"
 #include "render/renderer.h"
 
 namespace nova {
@@ -87,6 +88,11 @@ public:
     size_t spawn_model(const std::string& model_file, bool hud, const std::string& anim_file = {}, const std::string& clip = {});
     // Place an animated object with a full transform (the first-person view model).
     bool set_object_transform(size_t object, const glm::mat4& placement);
+    // ChangeLightMap: the object's lightmap becomes another texture (game shaders get a
+    // copy of their material with it). False if it has none or the texture is missing.
+    bool set_object_lightmap(size_t object, const std::string& texture);
+    // A material parameter of every draw of the object (SetFogZColor), first `count` components.
+    void set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count);
     // Draw the object as the first-person view model (in front of the world, no zone).
     void set_object_viewmodel(size_t object);
     std::vector<std::string> node_names(size_t object) const;
@@ -284,6 +290,7 @@ private:
     };
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
     std::unordered_set<size_t> moving_;                   // objects moved by move_object
+    std::deque<GpuMaterial> material_copies_;              // materials with a swapped lightmap
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
     void light_instance(Instance& inst, const glm::vec3& center);
     struct Skybox {

@@ -833,6 +833,22 @@ int api_npc_crouch(lua_State* L) {   // NpcCmd_Crouch(npc, id, on): crouches whe
     return 0;
 }
 
+// ChangeLightMap(object, texture, ms): the object's lightmap is swapped (at once).
+int api_change_light_map(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* o = obj(L, 1); o && !c.scene.set_object_lightmap(o->index, str_arg(L, 2)))
+        c.log("ChangeLightMap: no lightmap " + str_arg(L, 2) + " for " + std::to_string(o->id));
+    return 0;
+}
+// SetFogZColor(object, ms, r, g, b): the object's FogZColor material parameter (0-255).
+int api_set_fog_z_color(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* o = obj(L, 1))
+        c.scene.set_object_param(o->index, "FogZColor",
+                                 glm::vec4(float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4)), float(lua_tonumber(L, 5)), 255) / 255.0f, 3);
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -957,6 +973,9 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"ChangeLightMap", api_change_light_map},
+    {"SetFogZColor", api_set_fog_z_color},
+    {"LoadObjectType", api_ignore},
     {"SetMaxActiveEnemies", api_set_max_active_enemies},
     {"SetMinEnemiesOnPlayer", api_ignore},
     {"Player_EnableFallDamage", api_enable_fall_damage},

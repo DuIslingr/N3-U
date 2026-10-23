@@ -721,6 +721,7 @@ void Scene::build_collision() {
 
 void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     moving_.clear();
+    material_copies_.clear();
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
     particles_.clear();
@@ -1170,6 +1171,48 @@ size_t Scene::hide_models(const std::string& substring) {
         ++n;
     }
     return n;
+}
+
+bool Scene::set_object_lightmap(size_t object, const std::string& name) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return false;
+    std::string file = name;
+    if (file.find('.') == std::string::npos) file += ".tga";
+    const GpuTexture* lm = texture(file);
+    if (!lm) return false;
+    const Instance& inst = instances_[it->second];
+    bool any = false;
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count; ++i) {
+        DrawItem& d = draws_[i];
+        if (!d.lightmap || d.lightmap == lm) continue;
+        if (d.material) {
+            GpuMaterial copy = *d.material;
+            for (const GpuTexture*& t : copy.fragment_textures)
+                if (t == d.lightmap) t = lm;
+            for (const GpuTexture*& t : copy.vertex_textures)
+                if (t == d.lightmap) t = lm;
+            material_copies_.push_back(std::move(copy));
+            d.material = &material_copies_.back();
+        }
+        d.lightmap = lm;
+        any = true;
+    }
+    return any;
+}
+
+void Scene::set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return;
+    const Instance& inst = instances_[it->second];
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count; ++i) {
+        DrawItem& d = draws_[i];
+        if (!d.material) continue;
+        if (!d.overrides) d.overrides = &fade_values_.emplace_back();
+        auto& list = *const_cast<std::vector<ParamOverride>*>(d.overrides);
+        auto o = std::find_if(list.begin(), list.end(), [&](const ParamOverride& p) { return p.param == param; });
+        if (o == list.end()) list.push_back({param, 0, count, value});
+        else o->value = value, o->count = count;
+    }
 }
 
 void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_zone) {
