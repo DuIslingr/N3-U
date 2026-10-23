@@ -42,6 +42,10 @@ HarfBuzz), zlib, Lua 5.1.5, shaderc (glslang, SPIRV-Tools), GLM, SPIRV-Cross and
 SDL_shadercross are downloaded and built. The game runs on Vulkan, or on Direct3D 12 with
 the shaders converted through the system's `d3dcompiler_47.dll`.
 
+The result is one `nova3.exe` that needs only Windows' own DLLs. It is a windowed program; started
+from a console it prints its log there. So far it has been run under Wine only (Vulkan, and
+Direct3D 12 through vkd3d), where it draws the same frames as the Linux build.
+
 Cross-compiled from Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw):
 
 ```bash
@@ -51,8 +55,9 @@ cmake --build engine/build-win
 
 ### macOS
 
-Same as Windows (vendored libraries, shaders converted to Metal by SDL_shadercross). This
-path has not been built or run yet.
+Same as Windows (vendored libraries, shaders converted to Metal by SDL_shadercross). It has
+not been built or run on a Mac yet: what is checked is that every shader converts to MSL
+(`nova3-check shaders`) and that the vendored build works on Linux.
 
 ### Packages
 
