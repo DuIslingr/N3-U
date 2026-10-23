@@ -885,8 +885,20 @@ void LevelLogic::update_movers(float dt) {
             left += glm::distance(m.points[s], m.points[s + 1]);
         // UpdateAccelBrake: accelerate to the maximum, brake when the stopping distance
         // reaches what is left.
-        if (m.speed * m.speed * 0.5f / std::max(m.brake, 0.01f) >= left) m.speed = std::max(m.speed - m.brake * dt, 0.5f);
-        else m.speed = std::min(m.speed + m.accel * dt, m.max_speed);
+        const Mover* lead = m.follow >= 0 ? mover(m.follow) : nullptr;
+        if (m.speed * m.speed * 0.5f / std::max(m.brake, 0.01f) >= left) {
+            m.speed = std::max(m.speed - m.brake * dt, 0.5f);
+        } else if (lead && lead->moving) {
+            // Following (CMotionOnPathComponent::Update): behind by more than the distance,
+            // speed up; ahead by more, brake; within it, take the leader's speed.
+            const float d = glm::dot(lead->position - m.position, lead->direction + m.direction) * 0.5f;
+            if (d > m.follow_distance) m.speed = std::min(m.speed + m.accel * dt, m.max_speed);
+            else if (d < -m.follow_distance) m.speed = std::max(m.speed - m.brake * dt, 0.0f);
+            else if (m.speed < lead->speed) m.speed = std::min(m.speed + m.accel * dt, lead->speed);
+            else m.speed = std::max(m.speed - m.brake * dt, lead->speed);
+        } else {
+            m.speed = std::min(m.speed + m.accel * dt, m.max_speed);
+        }
         float step = std::min(m.speed * dt, left);
         bool arrived = left <= 1e-3f;
         while (step > 0 && !arrived) {
@@ -905,6 +917,7 @@ void LevelLogic::update_movers(float dt) {
         const float len = glm::distance(a, b);
         const glm::vec3 pos = len > 0 ? a + (b - a) * (m.along / len) : b;
         const glm::vec3 delta = pos - m.position;
+        if (len > 0) m.direction = (b - a) / len;
         // Carry the player standing on it (the floor under the player is its collision).
         float floor_z;
         uint32_t owner = 0;

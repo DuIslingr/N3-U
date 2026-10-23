@@ -254,6 +254,9 @@ public:
     bool cinematic_mode = false;     // StartCinematic .. EndCinematic
     // PlayerLookTo(waypoint, ms): turn the player's view to a point.
     void player_look_to(const glm::vec3& at, float seconds);
+    void motion_follow(int id, int leader, float metres) {
+        if (Mover* m = mover(id)) m->follow = leader, m->follow_distance = metres;
+    }
     // GetPlayerPositionFromCameraPosition: the next teleport keeps the camera's view.
     void handover_view(const glm::vec3& forward) { handover_ = forward, have_handover_ = true; }
     bool look_target(float& yaw, float& pitch) const;   // the view while turning (degrees)
@@ -336,8 +339,17 @@ private:
         float along = 0, speed = 0;      // metres into the segment, metres per second
         int stop_at = -1;                // waypoint to stop at (GameObject_MotionOnPathStopAtWaypoint)
         glm::vec3 position{0};
+        glm::vec3 direction{0};          // along the current segment
         std::vector<int> sounds;         // started with the motion (loops stop with it)
+        int follow = -1;                 // GameObject_MotionOnPathSetFollowTarget: keep with this mover,
+        float follow_distance = 0;       // within this many metres along the way
     };
+    // A mover by its object id (null if none).
+    Mover* mover(int id) {
+        for (Mover& m : movers_)
+            if (m.id == id) return &m;
+        return nullptr;
+    }
     std::vector<Mover> movers_;
     int checkpoint_ = -1;
     struct TutorialStep {

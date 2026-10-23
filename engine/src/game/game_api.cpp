@@ -344,6 +344,22 @@ int api_play_camera_anim(lua_State* L) {
     }
     return 0;
 }
+// PlayerLookToDirection(dx, dy, dz, ms): turn the view toward the player's head plus the
+// offset over ms (PlayerComponent::CinematicLookAt), the script waiting meanwhile.
+int api_player_look_to_direction(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const glm::vec3 d(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)));
+    const int ms = int(lua_tointeger(L, 4));
+    c.player_look_to(c.player.eye() + d, float(ms) / 1000.0f);
+    lua_pushinteger(L, 2);
+    lua_pushinteger(L, ms);
+    return lua_yield(L, 2);
+}
+// GameObject_MotionOnPathSetFollowTarget(mover, leader, metres).
+int api_motion_follow(lua_State* L) {
+    ctx(L).motion_follow(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), float(lua_tonumber(L, 3)));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1083,6 +1099,8 @@ const Entry kImplemented[] = {
     {"EndCinematic", api_cinematic_mode<false>},
     {"PlayCameraAnim", api_play_camera_anim},
     {"PlayerLookTo", api_player_look_to},
+    {"PlayerLookToDirection", api_player_look_to_direction},
+    {"GameObject_MotionOnPathSetFollowTarget", api_motion_follow},
     {"ShowProgressSavedMessage", api_progress_saved},
     {"Fog_SetLock", api_fog_lock},
     {"EnablePortal", api_portal<true>},
