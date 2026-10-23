@@ -697,6 +697,46 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             }
         }
     }
+    // CComponentNPCWeapon: [6] range, [7] spread max (deg), [8] spread step, [18] sweep
+    // radius max, [19] min, [20] shrink rate, [21] turn speed. CComponentAI (78): [14]/[15]
+    // accuracy distances, [16] accuracy time (ms), [18] attack behaviours, [19] their choice.
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 1 && (*npc)[1].size() > 0)
+        if (auto w = gol_.find((*npc)[1][0][0].i); w != gol_.end())
+            if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 21) {
+                t.spread_max = num(*nw, 7, 1), t.spread_step = num(*nw, 8, 0.1f);
+                t.sweep_max = num(*nw, 18, 2), t.sweep_min = num(*nw, 19, 0.05f);
+                t.sweep_rate = num(*nw, 20, 1), t.sweep_speed = num(*nw, 21, 180);
+            }
+    if (const Value* ai = component(o, 78); ai && ai->size() > 19) {
+        t.acc_near = num(*ai, 14, 10), t.acc_far = num(*ai, 15, 50), t.acc_time = num(*ai, 16, 25000) / 1000.0f;
+        for (const Value& b : (*ai)[18].list) {
+            if (b.size() < 2 || b[1].type != Value::String) continue;
+            // Its script: NpcAction_Attack(obj, "Fire") per shot, a Wait(ms) after each.
+            Target::Behaviour beh;
+            beh.name = b[0].s;
+            std::vector<float> waits;
+            size_t line_start = 0;
+            const std::string& code = b[1].s;
+            while (line_start < code.size()) {
+                size_t end = code.find('\n', line_start);
+                if (end == std::string::npos) end = code.size();
+                std::string line = code.substr(line_start, end - line_start);
+                line_start = end + 1;
+                const size_t first = line.find_first_not_of(" \t");
+                if (first == std::string::npos || line.compare(first, 2, "--") == 0) continue;
+                if (line.find("NpcAction_Attack") != std::string::npos && line.find("\"Fire\"") != std::string::npos) ++beh.shots;
+                if (const size_t w = line.find("Wait("); w != std::string::npos) waits.push_back(std::strtof(line.c_str() + w + 5, nullptr) / 1000.0f);
+            }
+            if (!waits.empty()) beh.gap = waits.front(), beh.pause = waits.back() > waits.front() ? waits.back() : 0;
+            if (beh.shots > 0) t.behaviours.push_back(beh);
+        }
+        if ((*ai)[19].type == Value::String) {
+            const std::string& code = (*ai)[19].s;
+            if (const size_t f = code.find("function "); f != std::string::npos)
+                if (const size_t e = code.find('(', f); e != std::string::npos) t.choose_fn = code.substr(f + 9, e - f - 9);
+        }
+    }
+    t.sweep_r = t.sweep_max;
     t.fire_range = std::min(t.sight, 35.0f);
     t.melee_damage = t.ranged ? 15.0f : 8.0f;
 
@@ -1204,6 +1244,17 @@ void Combat::update_actor(Target& t, float dt) {
     case S::Attack:
         face(t, target, dt);
         play(t, t.clip_fire, true);
+        if (sees) {   // tracking it: the sweep closes in, the aim time grows
+            t.aim_time += dt;
+            if (!t.locked_on) {
+                t.sweep_r = std::max(t.sweep_r - t.sweep_rate * dt, t.sweep_min);
+                t.sweep_a = std::fmod(t.sweep_a + t.sweep_speed * t.sweep_sign * dt + 360.0f, 360.0f);
+                t.locked_on = t.sweep_r <= t.sweep_min;
+            }
+        } else {   // CNPCWeaponComponent::ResetTargetLocked
+            t.locked_on = false, t.sweep_r = t.sweep_max, t.aim_time = 0, t.spread = 0;
+            t.sweep_sign = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
+        }
         t.fire_timer -= dt;
         if (t.fire_timer <= 0) {
             if (t.shots_left <= 0) {
@@ -1216,6 +1267,12 @@ void Combat::update_actor(Target& t, float dt) {
                     break;
                 }
                 t.shots_left = t.burst;
+                // The type's attack choice (BA_ChooseAttack: by accuracy and chance) picks a
+                // behaviour: its shots and the gap between them.
+                t.behaviour.clear();
+                if (!t.choose_fn.empty()) logic_.runtime_.call(t.choose_fn, t.id, t.id);
+                for (const Target::Behaviour& b : t.behaviours)
+                    if (b.name == t.behaviour) t.shots_left = b.shots, t.burst_gap = b.gap;
                 if (on_player) t.token = true, burst_cooldown_ = kBurstInterval;
             }
             fire_bolt(t, chest);
@@ -1287,15 +1344,37 @@ void Combat::go_towards(Target& t, const glm::vec3& target, float stop, float dt
     }
 }
 
+float Combat::accuracy(int npc) const {
+    const Target* t = find_target(npc);
+    if (!t) return 0;
+    glm::vec3 feet, chest;
+    if (!enemy_points(*t, t->enemy, feet, chest)) return 0;
+    const float dist = glm::distance(t->pos, feet);
+    const float k = dist < t->acc_near ? 1.0f : dist < t->acc_far ? (dist - t->acc_near) / (t->acc_far - t->acc_near) : 0.0f;
+    const float need = (1 - k) * t->acc_time;
+    return need <= 0 || t->aim_time >= need ? 1.0f : t->aim_time / need;
+}
+
+void Combat::set_attack_behaviour(int npc, const std::string& name) {
+    if (Target* t = find_target(npc)) t->behaviour = name;
+}
+
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
     muzzle += glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.3f);
-    // Aim at the enemy's chest with some inaccuracy that grows with distance.
-    glm::vec3 aim = at - muzzle;
-    const float dist = glm::length(aim);
-    std::normal_distribution<float> n(0.0f, 0.05f + 0.004f * dist);
-    aim = glm::normalize(aim / std::max(dist, 0.01f) + glm::vec3(n(rng_), n(rng_), n(rng_) * 0.5f));
+    // CNPCWeaponComponent::UpdateTargetPos / Fire: at the sweeping aim point, turned by the
+    // spread (random yaw and pitch within it).
+    const float a = glm::radians(t.sweep_a);
+    const glm::vec3 point = at + (t.locked_on ? glm::vec3(0) : glm::vec3(-std::sin(a), std::cos(a), 0) * t.sweep_r);
+    glm::vec3 aim = glm::normalize(point - muzzle);
+    t.spread = std::min(t.spread + t.spread_step, (1 - accuracy(t.id)) * t.spread_max);
+    if (t.spread > 0) {
+        std::uniform_real_distribution<float> u(-t.spread, t.spread);
+        const glm::vec3 side = glm::normalize(glm::cross(aim, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0));
+        const glm::vec3 up = glm::cross(side, aim);
+        aim = glm::normalize(aim + side * std::tan(glm::radians(u(rng_))) + up * std::tan(glm::radians(u(rng_))));
+    }
     bolts_.push_back({muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())});
     if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
     ++stats_.enemy_shots;

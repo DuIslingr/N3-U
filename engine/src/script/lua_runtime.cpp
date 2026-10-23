@@ -77,6 +77,23 @@ bool ScriptRuntime::running(const std::string& function) const {
     return false;
 }
 
+bool ScriptRuntime::call(const std::string& function, int arg, int owner) {
+    lua_getglobal(L_, function.c_str());
+    if (!lua_isfunction(L_, -1)) {
+        lua_pop(L_, 1);
+        return false;
+    }
+    lua_pushinteger(L_, owner);
+    lua_setglobal(L_, "this");
+    lua_pushinteger(L_, arg);
+    if (lua_pcall(L_, 1, 0, 0) != 0) {
+        log("error in " + function + ": " + (lua_tostring(L_, -1) ? lua_tostring(L_, -1) : "?"));
+        lua_pop(L_, 1);
+        return false;
+    }
+    return true;
+}
+
 size_t ScriptRuntime::thread_count() const {
     size_t n = 0;
     for (const Thread& t : threads_) n += t.state != Thread::State::Free;

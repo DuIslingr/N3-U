@@ -152,6 +152,9 @@ public:
     int paralyzed(int id) const;
     // Npc_SetBulletType (CNPCComponent::SetWeaponBulletType): the NPC fires this projectile type.
     bool set_bullet_type(int npc, int type);
+    // Npc_GetAccuracy / Npc_SetAttackBehavior (the attack-choice scripts).
+    float accuracy(int npc) const;
+    void set_attack_behaviour(int npc, const std::string& name);
     // NpcCmd_TeleportToTarget (CNPCComponent::StartTeleportToTarget): the NPC appears on the
     // walkable area a few metres from the player, on its own side. Queued as goal `goal_id`.
     bool teleport_to_player(int npc, int goal_id);
@@ -263,6 +266,24 @@ private:
         float hurt_sound_wait = 0;
         Impacts bolt_impacts;
 
+        // CNPCWeaponComponent targeting: until it has the target, the aim point circles it at
+        // a radius shrinking from up to sweep_max to sweep_min (m/s rate, turning at deg/s);
+        // each shot's spread grows by spread_step up to (1 - accuracy) x spread_max degrees.
+        // Accuracy (CAIComponent +0x80): time aimed over (1 - k) x acc_time, k rising from 0
+        // past acc_near to 1 at acc_far, 1 within acc_near.
+        float spread_max = 1, spread_step = 0.1f, sweep_max = 2, sweep_min = 0.05f, sweep_rate = 1, sweep_speed = 180;
+        float acc_near = 10, acc_far = 50, acc_time = 25;
+        float sweep_r = 2, sweep_a = 0, sweep_sign = 1, spread = 0, aim_time = 0;
+        bool locked_on = false;
+        // Attack behaviours (CAIComponent's list: name, its BA_Update script): shots per burst
+        // and the gap between them, chosen per burst by the type's BA_ChooseAttack script.
+        struct Behaviour {
+            std::string name;
+            int shots = 0;
+            float gap = 0.1f, pause = 0;
+        };
+        std::vector<Behaviour> behaviours;
+        std::string choose_fn, behaviour;
         enum class State { Idle, Chase, Attack, Melee, Hurt, Dying, Dead } state = State::Idle;
         bool aware = false;
         float timer = 0, fire_timer = 0, repath = 0, hurt_cooldown = 0, lost_sight = 0;

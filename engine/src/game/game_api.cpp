@@ -567,6 +567,23 @@ int api_lock_elevator(lua_State* L) {   // LockElevator(lift) / UnlockElevator(l
     ctx(L).lock_elevator(int(lua_tointeger(L, 1)), Lock);
     return 0;
 }
+// The attack-choice scripts (Templ<type>_BA_ChooseAttack): Npc_GetPosture(npc) (standing:
+// NPC.PostureStand; the port's NPCs do not take cover), Npc_GetAccuracy(npc),
+// Npc_SetAttackBehavior(npc, behaviour).
+int api_npc_posture(lua_State* L) {
+    lua_pushinteger(L, 0);
+    return 1;
+}
+int api_npc_accuracy(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    lua_pushnumber(L, c.combat ? c.combat->accuracy(int(lua_tointeger(L, 1))) : 0.0);
+    return 1;
+}
+int api_npc_attack_behaviour(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->set_attack_behaviour(int(lua_tointeger(L, 1)), str_arg(L, 2));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1330,6 +1347,9 @@ const Entry kImplemented[] = {
     {"PlayerLimitedControlSetLimitPitch", api_limited_limit<1>},
     {"SetLimitedControlStrafeSpeed", api_limited_strafe},
     {"PlayerSetPosition", api_player_set_position},
+    {"Npc_GetPosture", api_npc_posture},
+    {"Npc_GetAccuracy", api_npc_accuracy},
+    {"Npc_SetAttackBehavior", api_npc_attack_behaviour},
     {"LockElevator", api_lock_elevator<true>},
     {"UnlockElevator", api_lock_elevator<false>},
     {"PostEffect_FlashbackStart", api_flashback_start},
@@ -1369,6 +1389,9 @@ void register_game_api(LevelLogic& logic) {
         lua_setglobal(L, name);
     }
     for (const Entry& e : kImplemented) logic.runtime_.register_function(e.name, e.fn, &logic);
+    // The NPC constants the AI scripts compare with (the order of the game's posture names).
+    logic.runtime_.load("NPC = { PostureStand = 0, PostureCover = 1, PostureCoverFire = 2, PostureMachineGun = 3, "
+                        "PostureHiCover = 4, PostureCrouch = 5 }", "NPC constants");
 }
 
 }  // namespace nova

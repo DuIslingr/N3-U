@@ -37,6 +37,9 @@ public:
     // not exist, is already running, or the thread limit is reached.
     bool start(const std::string& function, int owner);
     bool running(const std::string& function) const;
+    // Call a function now with one integer argument, to its end (it must not wait):
+    // the attack choices (Templ<type>_BA_ChooseAttack). False if it is missing or fails.
+    bool call(const std::string& function, int arg, int owner);
 
     // Advance timers and resume coroutines that are ready.
     void update(float dt_ms);
