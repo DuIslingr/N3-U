@@ -817,6 +817,13 @@ bool Combat::set_projectile(Target& t, int type) {
     t.bolt_damage = num(*pr, 2, 3);
     t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
     t.bolt_trail = pr->size() > 36 ? (*pr)[36].i : -1;
+    t.bolt_fx.clear(), t.bolt_body = -1;
+    if (const Value* fx = resolved_template(p->second, gol_, 0x92); fx && fx->size() > 0)
+        for (const Value& e : (*fx)[0].list)
+            if (e.size() > 2 && e[0].type == Value::String && !e[0].s.empty() && e[2].i != 0) t.bolt_fx.push_back(e[0].s);
+    if (const Value* mesh = resolved_template(p->second, gol_, 0x01); mesh && mesh->size() > 0 && (*mesh)[0].type == Value::String &&
+        !(*mesh)[0].s.empty())
+        t.bolt_body = type;
     if (lower(p->second.name).find("throw") != std::string::npos || lower(p->second.name).find("plasma") != std::string::npos)
         t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
     return true;
@@ -1533,6 +1540,15 @@ void Combat::set_attack_behaviour(int npc, const std::string& name) {
     if (Target* t = find_target(npc)) t->behaviour = name;
 }
 
+// A projectile's placement: at `pos`, its +Y along the flight.
+glm::mat4 Combat::bolt_matrix(const glm::vec3& pos, const glm::vec3& dir) {
+    glm::vec3 side = glm::cross(dir, glm::vec3(0, 0, 1));
+    side = glm::length(side) > 1e-4f ? glm::normalize(side) : glm::vec3(1, 0, 0);
+    glm::mat4 m(1);
+    m[0] = glm::vec4(side, 0), m[1] = glm::vec4(dir, 0), m[2] = glm::vec4(glm::cross(side, dir), 0), m[3] = glm::vec4(pos, 1);
+    return m;
+}
+
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
@@ -1554,6 +1570,14 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
         b.trail_type = t.bolt_trail, b.from = muzzle;
         scene_.play_clip(b.trail, "start", false);
         scene_.set_object_visible(b.trail, true);
+    }
+    const glm::mat4 placed = bolt_matrix(muzzle, aim);
+    for (const std::string& e : t.bolt_fx)
+        if (const int h = scene_.particles().start(e, placed); h >= 0) b.fx.push_back(h);
+    if (t.bolt_body >= 0 && (b.body = take_trail(t.bolt_body, muzzle)) != size_t(-1)) {
+        b.body_type = t.bolt_body;
+        scene_.set_object_transform(b.body, placed);
+        scene_.set_object_visible(b.body, true);
     }
     bolts_.push_back(b);
     if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
@@ -1926,8 +1950,20 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             b.life = 0;
         }
         b.pos = end;
-        if (b.trail == size_t(-1)) continue;
         const glm::vec3 dir = glm::normalize(b.vel);
+        if (!b.fx.empty() || b.body != size_t(-1)) {
+            const glm::mat4 at = bolt_matrix(b.pos, dir);
+            for (const int h : b.fx) b.life > 0 ? scene_.particles().move(h, at) : scene_.particles().stop(h);
+            if (b.body != size_t(-1)) {
+                if (b.life > 0) {
+                    scene_.set_object_transform(b.body, at);
+                } else {
+                    scene_.set_object_visible(b.body, false);
+                    trail_pool_[b.body_type].push_back(b.body);
+                }
+            }
+        }
+        if (b.trail == size_t(-1)) continue;
         if (b.life > 0) {
             pose_trail(b.trail, b.from, b.pos, dir);
         } else {   // it stops here
@@ -2117,7 +2153,7 @@ void Combat::pose_trail(size_t object, const glm::vec3& from, const glm::vec3& h
 
 void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const {
     for (const Bolt& b : bolts_) {
-        if (b.trail_type >= 0) continue;   // drawn by its streak
+        if (b.trail_type >= 0 || !b.fx.empty() || b.body_type >= 0) continue;   // it has its own looks
         const glm::vec3 tail = b.pos - glm::normalize(b.vel) * 1.2f;
         beam(o.world, tail, b.pos, 0.12f, glm::vec4(glm::vec3(b.color), 0), b.color, eye);
         glow(o.world, b.pos, 0.18f, b.color, eye);

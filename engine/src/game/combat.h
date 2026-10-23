@@ -318,7 +318,12 @@ private:
         float bolt_damage = 3, bolt_speed = 40, burst_gap = 0.1f, burst_pause = 1.6f, fire_range = 35;
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
-        int bolt_trail = -1;           // the object the bullet carries (its streak; -1: our glow)
+        int bolt_trail = -1;           // the object the bullet carries (its streak)
+        // The projectile's own looks: its effects started with it (CEffectsComponent
+        // autostart) and its model (its type, when it has a mesh; -1: none). With none of
+        // these, our glow.
+        std::vector<std::string> bolt_fx;
+        int bolt_body = -1;
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
         bool invulnerable = false;
@@ -445,6 +450,9 @@ private:
         int trail_type = -1;           // its streak: object and where it started
         size_t trail = size_t(-1);
         glm::vec3 from{0};
+        std::vector<int> fx;           // its effects' handles
+        int body_type = -1;            // its model's object
+        size_t body = size_t(-1);
     };
     // A bullet's streak (CProjectileComponent::LaunchBullet / UpdateBullet): its trail
     // object flies from the muzzle to where the shot ends at the bullet's speed, growing
@@ -463,7 +471,8 @@ private:
     bool end_trail(Tracer& t);
     void launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to);
     void update_trails(float dt);
-    size_t take_trail(int type, const glm::vec3& at);   // a hidden one of that type, or a new one
+    size_t take_trail(int type, const glm::vec3& at);
+    static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);   // a hidden one of that type, or a new one
     void pose_trail(size_t object, const glm::vec3& from, const glm::vec3& head, const glm::vec3& dir, float length = -1);
     struct Spark {
         glm::vec3 pos;
@@ -618,7 +627,7 @@ private:
     int next_spawn_id_ = 2000000;
     std::vector<Bolt> bolts_;
     std::vector<Tracer> tracers_;
-    std::unordered_map<int, std::vector<size_t>> trail_pool_;   // hidden trail objects, per type
+    std::unordered_map<int, std::vector<size_t>> trail_pool_;   // hidden trail and projectile objects, per type
     glm::vec3 muzzle_{0};
     bool has_muzzle_ = false;
     std::vector<Spark> sparks_;
