@@ -54,11 +54,17 @@ public:
     float frost_max = 1;
     void update_frost(float dt);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
-    void frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numbers, ParticleList& sprites);
+    void frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites);
 
 private:
     // CHud::SetNodePosition: put a part where the HUD camera sees it at pixel (x, y).
     void place(const std::string& node, glm::vec2 px, const glm::mat4& view_proj, int w, int h);
+    // CLevel::DrawNumericText into one of CHud's quad buffers: hud3d.bsprite's digits (frames
+    // 0-9, '/' 14), right-aligned and vertically centred on the buffer's origin, a buffer
+    // being a child of HUD node `node` at `offset`, scaled by `scale`; quads lie in its XZ
+    // plane (sprite y down = -Z).
+    void numeric_text(ParticleList& out, const std::string& text, const std::string& node, glm::vec3 offset, float scale,
+                      const glm::mat4& view_proj, int w, int h);
 
 public:
     // A sprite sheet: on large screens (min side 960+ px) the 2x variant the game ships

@@ -283,7 +283,7 @@ void Hud::place(const std::string& node, glm::vec2 px, const glm::mat4& view_pro
     scene_.set_node_translation(object_, node, glm::vec3(glm::inverse(parent) * glm::vec4(world, 1)));
 }
 
-void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numbers, ParticleList& sprites) {
+void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites) {
     if (object_ == size_t(-1)) return;
     if (s.visible != visible_) {
         scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible);
@@ -317,8 +317,9 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
         const glm::vec2 ndc = glm::vec2(c) / std::max(c.w, 1e-4f);
         return glm::vec2((ndc.x * 0.5f + 0.5f) * float(w), (0.5f - ndc.y * 0.5f) * float(h));
     };
-    // The grenade button: the grenade (NV_hud.tga's icon, drawn by the game's quad buffer)
-    // on the panel, the count across its lower edge (placed after the reference footage).
+    // The grenade button: the grenade (hud3d.bsprite frame 15, placed after the reference
+    // footage) on the panel; the count in CHud's quad buffer under grenade_button at
+    // (5, 0, -15), scale 0.5 (CHud::Init).
     if (s.grenades) {
         Scene::Quad panel;
         if (scene_.node_quad(object_, "grenade_idle", panel) && panel.texture) {
@@ -335,9 +336,8 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
             const uint32_t first = uint32_t(sprites.vertices.size());
             sprites.vertices.insert(sprites.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
             sprites.batches.push_back({panel.texture, false, first, 6});
-            if (numbers)
-                numbers->draw(sprites, std::to_string(s.grenade_count), {glm::mix(lo.x, hi.x, 0.42f), glm::mix(lo.y, hi.y, 0.74f)}, w,
-                              glm::vec4(0.75f, 0.95f, 1, 1), {0.5f, 0.0f});
+            numeric_text(sprites, s.grenade_count < 0 ? "--" : std::to_string(s.grenade_count), "grenade_button", {5, 0, -15}, 0.5f, vp,
+                         w, h);
         }
     }
     // The ammo gauge follows the panel; its bar fills to the clip's share, left to right.
@@ -364,18 +364,57 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
             sprites.vertices.insert(sprites.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
             sprites.batches.push_back({bar.texture, false, first, 6});
         }
-        // The counter under the gauge's left end.
-        if (numbers) {
-            const glm::vec2 left = glm::max(screen(bar.position[size_t(l0)]), screen(bar.position[size_t(l1)]));
-            // An endless reserve (the handgun's) leaves the clip alone; an endless clip (vehicle
-            // guns) reads "--".
-            auto endless = [](int n) { return n < 0 || n >= 100000; };
-            const std::string text = endless(s.clip) ? std::string("--")
-                                     : endless(s.reserve) ? std::to_string(s.clip)
-                                                          : std::to_string(s.clip) + "/" + std::to_string(s.reserve);
-            numbers->draw(sprites, text, {left.x - float(h) * 0.035f, left.y - float(h) * 0.02f},
-                          w, glm::vec4(0.75f, 0.95f, 1, 1), {0.0f, 0.0f});
+    }
+    // The ammo counter (CLevelInterfaceNormal::Draw): clip, and "/reserve" unless the reserve
+    // is endless (the handgun's), in the quad buffer at the "ammo" node, scale 0.6.
+    auto endless = [](int n) { return n < 0 || n >= 100000; };
+    if (!endless(s.clip)) {
+        const std::string text = endless(s.reserve) ? std::to_string(s.clip) : std::to_string(s.clip) + "/" + std::to_string(s.reserve);
+        numeric_text(sprites, text, "ammo", {0, 0, 0}, 0.6f, vp, w, h);
+    }
+}
+
+void Hud::numeric_text(ParticleList& out, const std::string& text, const std::string& node, glm::vec3 offset, float scale,
+                       const glm::mat4& view_proj, int w, int h) {
+    const Sprite* sp = sprite("hud3d.bsprite");
+    if (!sp || text.empty()) return;
+    auto glyph = [](char c) { return c == '/' ? 14 : c >= '0' && c <= '9' ? c - '0' : -1; };
+    // GetNumericTextSize: each glyph advances its width less 8 pixels.
+    float width = 0, height = 0;
+    for (char c : text) {
+        const glm::vec4 b = frame_bounds(*sp, glyph(c));
+        width += b.z - b.x - 8, height = std::max(height, b.w - b.y);
+    }
+    const glm::mat4 m = view_proj * scene_.object_matrix(object_, node) * glm::translate(glm::mat4(1), offset) *
+                        glm::scale(glm::mat4(1), glm::vec3(scale));
+    auto screen = [&](float x, float y) {
+        const glm::vec4 c = m * glm::vec4(x, 0, -y, 1);
+        const glm::vec2 ndc = glm::vec2(c) / std::max(c.w, 1e-4f);
+        return glm::vec3((ndc.x * 0.5f + 0.5f) * float(w), (0.5f - ndc.y * 0.5f) * float(h), 0);
+    };
+    float x = -width;
+    const float y = -height * 0.5f;
+    const uint32_t white = pack_rgba(glm::vec4(1));
+    for (char c : text) {
+        const int f = glyph(c);
+        if (f < 0 || size_t(f) >= sp->frames.size()) continue;
+        const Sprite::Frame& fr = sp->frames[size_t(f)];
+        for (int k = fr.first; k < fr.first + fr.count; ++k) {
+            const Sprite::FModule& fm = sp->fmodules[size_t(k)];
+            const Sprite::Module& md = sp->modules[size_t(fm.module)];
+            const GpuTexture* tex = scene_.texture(sp->images[size_t(md.image)]);
+            if (!tex || tex->width <= 0) continue;
+            const glm::vec2 t0(float(md.x) / float(tex->width), float(md.y) / float(tex->height));
+            const glm::vec2 t1(float(md.x + md.w) / float(tex->width), float(md.y + md.h) / float(tex->height));
+            const float x0 = x + float(fm.x), y0 = y + float(fm.y), x1 = x0 + float(md.w), y1 = y0 + float(md.h);
+            const ParticleVertex v[4] = {{screen(x0, y0), t0, white}, {screen(x1, y0), {t1.x, t0.y}, white},
+                                         {screen(x1, y1), t1, white}, {screen(x0, y1), {t0.x, t1.y}, white}};
+            const uint32_t first = uint32_t(out.vertices.size());
+            out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+            out.batches.push_back({tex, false, first, 6});
         }
+        const glm::vec4 b = frame_bounds(*sp, f);
+        x += b.z - b.x - 8;
     }
 }
 

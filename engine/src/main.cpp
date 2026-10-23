@@ -376,7 +376,6 @@ int main(int argc, char** argv) {
             TextRenderer subtitles(vfs, renderer, "Days.ttf", std::max(16.0f, float(opt.height) * 0.032f));
             ParticleList hud_sprites;
             Hud hud(scene);
-            TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
             TouchControls touch(hud);   // the Touch scheme's on-screen controls
             const std::string settings_path = headless ? std::string() : Settings::default_path();
             Settings settings = Settings::load(settings_path);
@@ -412,7 +411,6 @@ int main(int argc, char** argv) {
                 if (h != fonts_for) {   // resized: the text keeps its share of the screen
                     fonts_for = h;
                     subtitles.set_size(std::max(16.0f, float(h) * 0.032f));
-                    hud_numbers.set_size(std::max(14.0f, float(h) * 0.04f));
                     menu_title.set_size(std::max(20.0f, float(h) * 0.06f));
                     objective_text.set_size(std::max(13.0f, float(h) * 0.026f));
                 }
@@ -427,7 +425,7 @@ int main(int argc, char** argv) {
                     hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
-                    hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);
+                    hud.frame(f, w, h, hs, hud_sprites);
                     const std::string& qte = logic.qte_kind();
                     if (logic.input == InputScheme::Touch && (hs.visible || !qte.empty())) {
                         const LevelLogic::Controls& lc = logic.controls;
