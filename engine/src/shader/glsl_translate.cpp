@@ -212,7 +212,8 @@ bool std140_type(const std::string& type, uint32_t& size, uint32_t& align) {
     return true;
 }
 
-TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned, VaryingMap& varyings) {
+TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned, VaryingMap& varyings,
+                                  const std::set<std::string>* keep) {
     std::vector<Decl> decls;
     const std::string body = translate_body(extract_decls(clean(preprocessed), decls));
     TranslatedShader t;
@@ -249,6 +250,10 @@ TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned,
                 prologue += "    " + d.name + " = nova_a_" + d.name + ";\n";
             }
         } else if (d.qualifier == "varying") {
+            if (keep && !keep->count(d.name)) {   // nothing reads it: a private variable
+                head += decl_text(d.type, d.name, d.array) + ";\n";
+                continue;
+            }
             varyings[d.name] = {next_varying, decl_text(d.type, d.name, d.array)};
             head += "layout(location = " + std::to_string(next_varying) + ") out " + decl_text(d.type, d.name, d.array) + ";\n";
             next_varying += int(location_count(d.type, d.array));

@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <stdexcept>
 
 #include <shaderc/shaderc.h>
@@ -35,6 +37,9 @@ struct Result {
 std::string ShaderCompiler::default_cache_dir() {
     if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg) return std::string(xdg) + "/nova3/shaders";
     if (const char* local = std::getenv("LOCALAPPDATA"); local && *local) return std::string(local) + "/nova3/shaders";
+#ifdef __APPLE__
+    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/Library/Caches/nova3/shaders";
+#endif
     if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/.cache/nova3/shaders";
     return {};
 }
@@ -116,12 +121,45 @@ std::vector<uint32_t> ShaderCompiler::to_spirv(const std::string& source, bool v
     return code;
 }
 
+namespace {
+
+// The Location decorations of a SPIR-V module's Input variables.
+std::set<int> input_locations(const std::vector<uint32_t>& code) {
+    constexpr uint32_t kOpVariable = 59, kOpDecorate = 71, kStorageInput = 1, kDecorationLocation = 30;
+    std::set<uint32_t> inputs;
+    std::map<uint32_t, int> location;
+    for (size_t i = 5; i < code.size();) {
+        const uint32_t count = code[i] >> 16, op = code[i] & 0xFFFF;
+        if (count == 0 || i + count > code.size()) break;
+        if (op == kOpVariable && count >= 4 && code[i + 3] == kStorageInput) inputs.insert(code[i + 2]);
+        if (op == kOpDecorate && count >= 4 && code[i + 2] == kDecorationLocation) location[code[i + 1]] = int(code[i + 3]);
+        i += count;
+    }
+    std::set<int> out;
+    for (uint32_t id : inputs)
+        if (auto it = location.find(id); it != location.end()) out.insert(it->second);
+    return out;
+}
+
+}  // namespace
+
 CompiledProgram ShaderCompiler::compile(const std::string& vertex_source, const std::vector<std::string>& vertex_defines,
                                         const std::string& fragment_source,
                                         const std::vector<std::string>& fragment_defines, bool skinned) {
+    const std::string vertex_text = preprocess(vertex_source, vertex_defines, true);
+    const std::string fragment_text = preprocess(fragment_source, fragment_defines, false);
+    // First pass: which varyings the optimized fragment stage still reads.
+    VaryingMap all;
+    translate_vertex(vertex_text, skinned, all);
+    const std::vector<uint32_t> probe = to_spirv(translate_fragment(fragment_text, all).source, false, "fragment");
+    const std::set<int> read = input_locations(probe);
+    std::set<std::string> keep;
+    for (const auto& [name, v] : all)
+        if (read.count(v.first)) keep.insert(name);
+    // Second pass: only those cross between the stages, at matching consecutive locations.
     VaryingMap varyings;
-    const TranslatedShader vs = translate_vertex(preprocess(vertex_source, vertex_defines, true), skinned, varyings);
-    const TranslatedShader fs = translate_fragment(preprocess(fragment_source, fragment_defines, false), varyings);
+    const TranslatedShader vs = translate_vertex(vertex_text, skinned, varyings, &keep);
+    const TranslatedShader fs = translate_fragment(fragment_text, varyings);
     CompiledProgram p;
     p.vertex_spirv = to_spirv(vs.source, true, "vertex");
     p.fragment_spirv = to_spirv(fs.source, false, "fragment");

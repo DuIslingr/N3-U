@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -49,7 +50,11 @@ using VaryingMap = std::map<std::string, std::pair<int, std::string>>;
 
 // `skinned`: blend Vertex/Normal/Tangent/Binormal with a joint palette (uniform buffer
 // slot 1, mat4[128]) into object space before the game's code runs.
-TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned, VaryingMap& varyings);
+// `keep` (optional): the varyings the fragment stage reads. The others stay private to the
+// vertex stage, and the outputs are numbered in a row: Direct3D links the two stages by
+// register order, so the fragment inputs and vertex outputs must line up without gaps.
+TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned, VaryingMap& varyings,
+                                  const std::set<std::string>* keep = nullptr);
 TranslatedShader translate_fragment(const std::string& preprocessed, const VaryingMap& varyings);
 
 // Size and base alignment of a std140 member of `type` (arrays: per element).
