@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 @dataclass
 class Sprite:
     images: list
-    modules: list = field(default_factory=list)    # (image, flags, x, y, w, h)
+    modules: list = field(default_factory=list)    # (image, type, x, y, w, h)
     fmodules: list = field(default_factory=list)   # (module, flags, ox, oy)
     frames: list = field(default_factory=list)     # (first fmodule, count)
 
@@ -40,10 +40,10 @@ def load(data):
         images.append(data[p:p + n].decode("latin-1"))
         p += n
     s = Sprite(images)
-    img, mfl = take("B", nm), take("B", nm)
+    mtype, img = take("B", nm), take("B", nm)   # module type (0: image rect), image index
     take("I", nm)
     mx, my, mw, mh = take("h", nm), take("h", nm), take("H", nm), take("H", nm)
-    s.modules = list(zip(img, mfl, mx, my, mw, mh))
+    s.modules = list(zip(img, mtype, mx, my, mw, mh))
     fm, ff, fx, fy = take("H", nf), take("B", nf), take("h", nf), take("h", nf)
     s.fmodules = list(zip(fm, ff, fx, fy))
     cnt, first = take("B", nfr), take("H", nfr)

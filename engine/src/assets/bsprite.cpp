@@ -26,10 +26,10 @@ Sprite load_sprite(const Bytes& d) {
         s.images.emplace_back(reinterpret_cast<const char*>(d.data()) + p, size_t(n));
         p += size_t(n);
     }
-    // Per-module columns: image, flags, a u32, x, y, w, h.
+    // Per-module columns: type (0 for images), image, a u32, x, y, w, h.
     s.modules.resize(size_t(nm));
-    for (auto& m : s.modules) m.image = u8();
     for (int i = 0; i < nm; ++i) u8();
+    for (auto& m : s.modules) m.image = u8();
     need(size_t(nm) * 4), p += size_t(nm) * 4;
     for (auto& m : s.modules) m.x = s16();
     for (auto& m : s.modules) m.y = s16();
