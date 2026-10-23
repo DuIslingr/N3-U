@@ -30,6 +30,7 @@ public:
         int clip_size = 1;
         bool grenades = false;
         int grenade_count = 0;
+        float shield = 1;            // the player's health, 0..1 (the shield bar at the top)
         std::string weapon_sprite;   // the weapon's .bsprite: frame 0 is its icon
     };
     // A prompt with touch-button glyphs (^NN^: frames of tutorial.bsprite) drawn inline,
@@ -71,7 +72,8 @@ private:
 
     Scene& scene_;
     std::unordered_map<std::string, Sprite> sprites_;
-    size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1);
+    size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1), shield_ = size_t(-1);
+    float shield_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
     bool frost_shown_ = false;
     glm::ivec2 placed_for_{0};

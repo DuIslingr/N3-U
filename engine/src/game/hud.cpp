@@ -29,9 +29,17 @@ void Hud::start() {
     visible_ = false;
     grenades_ = true;
     placed_for_ = glm::ivec2(0);
+    // HUDShield (nv_hud_shield.bdae): the bar's elements go out along its "shield" clip as
+    // the shield (the player's health) drops (CHudShieldNode::UpdatePercent).
+    shield_ = scene_.spawn_model("nv_hud_shield.bdae", true, "nv_hud_shield.bdae", "shield");
+    shield_shown_ = -1;
+    if (shield_ != size_t(-1)) scene_.play_clip(shield_, "shield", false);
     // HUD_Frost: its clip runs as the frost spreads.
     frost_object_ = scene_.spawn_model("hud_frost.bdae", true, "hud_frost.bdae", "hud_frost");
-    if (frost_object_ != size_t(-1)) scene_.set_object_visible(frost_object_, false);   // made for the HUD camera as it is
+    if (frost_object_ != size_t(-1)) {   // made for the HUD camera as it is
+        scene_.play_clip(frost_object_, "hud_frost", false);
+        scene_.set_object_visible(frost_object_, false);
+    }
     frost_ = frost_target_ = 0, frost_max = 1, frost_shown_ = false;
 }
 
@@ -231,9 +239,14 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
     if (object_ == size_t(-1)) return;
     if (s.visible != visible_) {
         scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible);
+        if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible);
         visible_ = s.visible;
     }
     if (s.grenades != grenades_) scene_.set_node_visible(object_, "grenade_button", s.grenades), grenades_ = s.grenades;
+    if (Scene::ClipState cs; shield_ != size_t(-1) && std::abs(s.shield - shield_shown_) > 1e-3f && scene_.clip_state(shield_, cs)) {
+        shield_shown_ = s.shield;
+        scene_.set_clip_time(shield_, (1 - std::clamp(s.shield, 0.0f, 1.0f)) * cs.length * 0.999f / 1000.0f);
+    }
     if (!s.visible) return;
     Scene::CameraView cv;
     if (!scene_.camera_view(object_, cv)) return;

@@ -390,6 +390,7 @@ int main(int argc, char** argv) {
                     hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
                     hs.grenades = combat.grenades_enabled && logic.controls.items;
                     hs.grenade_count = combat.grenades;
+                    hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
                     hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);

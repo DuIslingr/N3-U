@@ -178,6 +178,7 @@ int cmd_anim(const std::string& dir, const std::string& file, const std::vector<
     const AnimationLibrary lib = load_animation(vfs.read(file));
     std::printf("%zu animated nodes, %zu clips, timeline %.1f-%.1f ms\n", lib.tracks.size(), lib.clips.size(),
                 lib.timeline_start, lib.timeline_end);
+    for (const AnimClip& c : lib.clips) std::printf("clip %s %.1f-%.1f ms\n", c.name.c_str(), c.start, c.end);
     for (const ValueTrack& vt : lib.values) {
         for (float t : times) {
             float v[16] = {};
