@@ -30,6 +30,9 @@ public:
         int clip_size = 1;
         bool grenades = false;
         int grenade_count = 0;
+        // The weapons panel with the ammo (CHud::EnabledWeapons): off while the interface's
+        // controls are (limited control: CLevelInterfaceNormal::EnableControls(false)).
+        bool weapons = true;
         float shield = 1;            // the player's health, 0..1 (the shield bar at the top)
         // A shield core's overcharge (the Military Shop): its kind (0 Vanguard, 1 Crypton,
         // 2 Plasma; -1 none) and how much of it is left, 0..1 (CHud::SetShieldPercent).
@@ -128,6 +131,7 @@ private:
     size_t damage_ = size_t(-1), blood_ = size_t(-1);
     bool damage_shown_ = false, blood_shown_ = false, blood_fading_ = false;
     bool frost_shown_ = false;
+    bool weapons_ = true;
     glm::ivec2 placed_for_{0};
     bool visible_ = false, grenades_ = true;
 };

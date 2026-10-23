@@ -1566,23 +1566,28 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
         angle = glm::degrees(std::acos(std::clamp(glm::dot(ahead, dir), -1.0f, 1.0f)));
         if (ahead.y * dir.x - dir.y * ahead.x < 0) angle = 360 - angle;
     }
-    hit_angle_ = angle, hit_left_ = 1.0f;
-    // Over half the shield left (100 - PlayerBase [0] percent): its ripple; else blood.
-    const float half = (100.0f - base_shield_percent_) * 0.01f * player_max_health;
-    if (logic_.in_mech() || logic_.player_vehicle() >= 0) {   // not in the mech or the jeep
-    } else if (player_health > half) {
-        if (hud_damage_wait_ <= 0) hud_damage_ = true, hud_damage_wait_ = 3.0f;
-    } else {
-        hud_blood_ = player_health / std::max(player_max_health, 1.0f);
-    }
-    if (view_hurt_wait_ <= 0 && glm::length(to) > 0.01f) {
-        view_hurt_wait_ = view_hurt_pause_;
-        const char* side = angle >= 325 || angle < 35 ? "front" : angle < 135 ? "right" : angle < 225 ? "back" : "left";
-        view_hurt_ = std::string("Hurt_") + side + (amount > view_hurt_heavy_ ? "_heavy" : "");
-    }
-    if (player_hurt_wait_ <= 0) {
-        sound(player_hurt_sounds_, nullptr);
-        player_hurt_wait_ = 1.5f;
+    // The player's own reactions (CPlayerBaseComponent::ReceiveDamage: the indicator, the HUD
+    // effects, the view's jolt, the hurt sound) only while it is the active player component,
+    // not under limited control.
+    if (!logic_.limited_active()) {
+        hit_angle_ = angle, hit_left_ = 1.0f;
+        // Over half the shield left (100 - PlayerBase [0] percent): its ripple; else blood.
+        const float half = (100.0f - base_shield_percent_) * 0.01f * player_max_health;
+        if (logic_.in_mech() || logic_.player_vehicle() >= 0) {   // not in the mech or the jeep
+        } else if (player_health > half) {
+            if (hud_damage_wait_ <= 0) hud_damage_ = true, hud_damage_wait_ = 3.0f;
+        } else {
+            hud_blood_ = player_health / std::max(player_max_health, 1.0f);
+        }
+        if (view_hurt_wait_ <= 0 && glm::length(to) > 0.01f) {
+            view_hurt_wait_ = view_hurt_pause_;
+            const char* side = angle >= 325 || angle < 35 ? "front" : angle < 135 ? "right" : angle < 225 ? "back" : "left";
+            view_hurt_ = std::string("Hurt_") + side + (amount > view_hurt_heavy_ ? "_heavy" : "");
+        }
+        if (player_hurt_wait_ <= 0) {
+            sound(player_hurt_sounds_, nullptr);
+            player_hurt_wait_ = 1.5f;
+        }
     }
     // Each fall below 30% of the shield counts against the end of level's shield bonus
     // (CPlayerBaseComponent::ReceiveDamage, CLevelStatistics +0x18).

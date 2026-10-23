@@ -1,6 +1,7 @@
 #include "render/material_system.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 
 #include "render/renderer.h"
@@ -131,10 +132,11 @@ const GpuMaterial* MaterialSystem::get(const Material& m, bool skinned) {
     const Technique* tech = fx ? fx->technique(m.technique) : nullptr;
     // Screen-reading techniques come in one per device orientation (NV_Distortion's Opaque,
     // Opaque_O90, ...); _O180 reads the screen the right way up for an unrotated view.
+    bool upright = false;
     if (tech && !tech->passes.empty()) {
         const auto& defs = tech->passes.front().fragment_defines;
         if (std::find(defs.begin(), defs.end(), "O0") != defs.end())
-            if (const Technique* upright = fx->technique(m.technique + "_O180")) tech = upright;
+            if (const Technique* t = fx->technique(m.technique + "_O180")) tech = t, upright = true;
     }
     if (tech && !tech->passes.empty()) {
         const EffectPass& pass = tech->passes.front();
@@ -149,6 +151,22 @@ const GpuMaterial* MaterialSystem::get(const Material& m, bool skinned) {
                        gm.fragment_textures, gm.param_fields, true);
             for (size_t k = 0; k < prog->fragment_iface.samplers.size(); ++k)
                 if (prog->fragment_iface.samplers[k] == "ScreenTextureSampler") gm.screen_slot = int(k);
+            // The offsets are in screen texture space. On the landscape iPhone the reference
+            // footage comes from, the rotated techniques (O90/O270) turn both outward (the
+            // shield's ripple squeezes the view in, edges torn); upright, the vertical one
+            // already is and the horizontal one needs its sign turned.
+            if (upright)
+                for (GpuMaterial::ParamField& pf : gm.param_fields)
+                    if (pf.param == "DistortFactorX" && pf.field.type == "float") {
+                        pf.scale = -1;
+                        auto& block = pf.fragment ? gm.fragment_uniforms : gm.vertex_uniforms;
+                        if (pf.field.offset + 4 <= block.size()) {
+                            float v;
+                            std::memcpy(&v, block.data() + pf.field.offset, 4);
+                            v = -v;
+                            std::memcpy(block.data() + pf.field.offset, &v, 4);
+                        }
+                    }
             result = &gm;
             ++stats_.materials;
         }

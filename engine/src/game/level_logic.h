@@ -227,6 +227,8 @@ public:
         std::vector<EffectSlot> effects;
     };
     Object* object(int id);
+    // The player as an object for StartEffect(0, n) / StopEffect(0, n): its type's effects.
+    Object& player_object() { return player_object_; }
     // Register an object created at runtime (spawned enemies); it starts disabled.
     Object& add_object(int id, size_t index, const std::string& type, const glm::vec3& position, float yaw);
     void enable(Object& o, bool on);
@@ -403,6 +405,8 @@ public:
     const Gol& gol;
     ScriptRuntime runtime_;
     std::unordered_map<int, Object> objects_;
+    Object player_object_;            // id 0: the Player type's effects, following the player
+    void update_player_effects();
     // The waypoint after `id` on its path (-1 if none).
     int next_waypoint(int id) const {
         auto it = waypoint_next_.find(id);

@@ -348,7 +348,8 @@ void Game::draw_text(FrameParams& f, int w, int h) {
         Hud::State hs;
         hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open;
         hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
-        hs.grenades = (combat.grenades_enabled || combat.mines_picked()) && logic.controls.items;
+        hs.grenades = (combat.grenades_enabled || combat.mines_picked()) && logic.controls.items && !logic.limited_active();
+        hs.weapons = logic.controls.weapons && !logic.limited_active();
         hs.grenade_count = combat.mines_picked() ? combat.mines : combat.grenades;
         hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
         hs.core = combat.core;

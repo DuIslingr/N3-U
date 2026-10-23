@@ -220,11 +220,22 @@ bool LevelLogic::start_effect(Object& o, int index) {
     if (index < 0 || size_t(index) >= o.effects.size()) return false;
     Object::EffectSlot& e = o.effects[size_t(index)];
     if (e.handle >= 0) scene.particles().stop(e.handle);
+    if (&o == &player_object_) o.position = player.center - glm::vec3(0, 0, player.radius.z), o.yaw = player.yaw;
     glm::mat4 at = glm::translate(glm::mat4(1), o.position) * glm::rotate(glm::mat4(1), glm::radians(o.yaw), glm::vec3(0, 0, 1));
     if (o.index != std::numeric_limits<size_t>::max()) at = scene.object_matrix(o.index, e.node);
     e.handle = scene.particles().start(e.effect, at);
     if (trace) log("effect " + e.effect + " on " + std::to_string(o.id) + (e.handle < 0 ? " (unknown)" : ""));
     return e.handle >= 0;
+}
+
+// The player's effects are parented to its node (CEffectsComponent::StartEffect): they go
+// where it goes.
+void LevelLogic::update_player_effects() {
+    Object& o = player_object_;
+    o.position = player.center - glm::vec3(0, 0, player.radius.z), o.yaw = player.yaw;
+    const glm::mat4 at = glm::translate(glm::mat4(1), o.position) * glm::rotate(glm::mat4(1), glm::radians(o.yaw), glm::vec3(0, 0, 1));
+    for (Object::EffectSlot& e : o.effects)
+        if (e.handle >= 0) scene.particles().move(e.handle, at);
 }
 
 void LevelLogic::stop_effect(Object& o, int index) {
@@ -328,11 +339,19 @@ void LevelLogic::start(StartMode mode) {
     // The limited-control rig: its scripts, its object (hidden until used), the player
     // type's defaults (CPlayerLimitedControlComponent::Load: strafe speed, yaw, pitch limits).
     limited_ = Limited{};
+    for (Object::EffectSlot& e : player_object_.effects)
+        if (e.handle >= 0) scene.particles().stop(e.handle);
+    player_object_ = Object{};
+    player_object_.type = "Player";
     for (const auto& [type_id, type] : gol) {
         if (type.name == "PlayerLimitedControl") limited_.rig_type = type_id;
-        if (type.name == "Player")
-            if (auto c = type.templates.find(0x36); c != type.templates.end() && c->second.size() >= 3)
-                for (int k = 0; k < 3; ++k) limited_.defaults[k] = c->second[size_t(k)].as_float();
+        if (type.name != "Player") continue;
+        if (auto c = type.templates.find(0x36); c != type.templates.end() && c->second.size() >= 3)
+            for (int k = 0; k < 3; ++k) limited_.defaults[k] = c->second[size_t(k)].as_float();
+        // Its effects (CEffectsComponent; the node "-1" is none: on the player's own node).
+        LevelObject lo;
+        lo.type = type_id;
+        read_effects(player_object_, lo);
     }
     if (limited_.rig_type >= 0) {
         load_type_scripts(limited_.rig_type);
@@ -1513,6 +1532,7 @@ void LevelLogic::update(float dt) {
     update_movers(dt);
     update_elevators(dt);
     update_links();
+    update_player_effects();
     update_limited(dt);
     update_cinematics(dt);
     update_tutorial(dt);

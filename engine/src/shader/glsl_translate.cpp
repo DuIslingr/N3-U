@@ -265,11 +265,19 @@ TranslatedShader translate_vertex(const std::string& preprocessed, bool skinned,
 
 TranslatedShader translate_fragment(const std::string& preprocessed, const VaryingMap& varyings) {
     std::vector<Decl> decls;
-    const std::string body = translate_body(extract_decls(clean(preprocessed), decls));
+    std::string body = translate_body(extract_decls(clean(preprocessed), decls));
     TranslatedShader t;
     std::string head = "#version 450\n";
     head += emit_resources(decls, 3, 2, t.iface);
     head += "layout(location = 0) out vec4 nova_FragColor;\n";
+    // The device's copy of the screen holds nothing past the screen's edges: reads pushed out
+    // there (the shield's ripple) are black, where a clamped read would smear the edge.
+    for (const Decl& d : decls) {
+        if (d.qualifier != "uniform" || original_name(d.name) != "ScreenTextureSampler") continue;
+        head += "vec4 nova_screen_read(vec2 uv) {\n    vec4 c = texture(" + d.name +
+                ", uv);\n    return any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) ? vec4(0.0) : c;\n}\n";
+        body = std::regex_replace(body, std::regex("\\btexture\\s*\\(\\s*" + d.name + "\\s*,"), "nova_screen_read(");
+    }
     for (const Decl& d : decls) {
         if (d.qualifier != "varying") continue;
         auto it = varyings.find(d.name);

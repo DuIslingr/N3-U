@@ -63,6 +63,7 @@ struct GpuMaterial {
         std::string param;
         bool fragment = false;
         UniformField field;
+        float scale = 1;   // values are written times this (see MaterialSystem::get)
     };
     std::vector<ParamField> param_fields;
     // The fragment sampler that reads the screen behind (ScreenTextureSampler: the arms'

@@ -848,7 +848,8 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
                     for (int c = 0; c < o.count; ++c) {
                         const uint32_t at = pf.field.offset + 4 * uint32_t(o.first + c);
                         if (4 * uint32_t(o.first + c) >= size || pf.field.type.rfind("mat", 0) == 0) continue;
-                        write_uniform(pf.fragment ? fragment_block : vertex_block, at, "float", &o.value[c], 1);
+                        const float v = o.value[c] * pf.scale;
+                        write_uniform(pf.fragment ? fragment_block : vertex_block, at, "float", &v, 1);
                     }
                 }
             }

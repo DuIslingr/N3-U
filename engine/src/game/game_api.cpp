@@ -769,14 +769,15 @@ int api_enable_motion_blur(lua_State* L) {
 int api_start_effect(lua_State* L) {
     LevelLogic& g = ctx(L);
     const int id = int(lua_tointeger(L, 1)), index = int(lua_tointeger(L, 2));
-    if (LevelLogic::Object* o = id ? g.object(id) : nullptr) g.start_effect(*o, index);
+    if (LevelLogic::Object* o = id ? g.object(id) : &g.player_object()) g.start_effect(*o, index);
     else if (g.warned_.insert("StartEffect " + std::to_string(id)).second) g.log("StartEffect: no effects on object " + std::to_string(id));
     return 0;
 }
 
 int api_stop_effect(lua_State* L) {
     LevelLogic& g = ctx(L);
-    if (LevelLogic::Object* o = g.object(int(lua_tointeger(L, 1)))) g.stop_effect(*o, int(lua_tointeger(L, 2)));
+    const int id = int(lua_tointeger(L, 1));
+    if (LevelLogic::Object* o = id ? g.object(id) : &g.player_object()) g.stop_effect(*o, int(lua_tointeger(L, 2)));
     return 0;
 }
 

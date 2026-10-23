@@ -396,11 +396,15 @@ void Hud::place(const std::string& node, glm::vec2 px, const glm::mat4& view_pro
 void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites) {
     if (object_ == size_t(-1)) return;
     if (s.visible != visible_) {
-        scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible);
+        scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible && s.weapons);
         if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible);
         visible_ = s.visible;
     }
     if (s.grenades != grenades_) scene_.set_node_visible(object_, "grenade_button", s.grenades), grenades_ = s.grenades;
+    if (s.weapons != weapons_) {
+        scene_.set_node_visible(object_, "weapons", s.weapons), weapons_ = s.weapons;
+        scene_.set_object_visible(ammo_, s.visible && s.weapons);
+    }
     if (shield_ != size_t(-1) && s.core != core_shown_) {   // HUDShield's states: Normal, or a core's bar
         static const char* const kClips[] = {"shield_upgrade_vanguard", "shield_upgrade_crypton", "shield_upgrade_plasma"};
         scene_.play_clip(shield_, s.core >= 0 && s.core < 3 ? kClips[s.core] : "shield", false);
@@ -467,7 +471,7 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& spri
     // (CHud::Init hangs the HUDAmmoIndicator object on the "weapons" node, at its origin.)
     scene_.set_object_transform(ammo_, scene_.object_matrix(object_, "weapons"));
     Scene::Quad bar;
-    if (scene_.node_quad(ammo_, "ammo_bar", bar) && bar.texture) {
+    if (s.weapons && scene_.node_quad(ammo_, "ammo_bar", bar) && bar.texture) {
         // Corners by U: the left edge has the smaller U.
         std::array<int, 4> order{0, 1, 2, 3};
         std::sort(order.begin(), order.end(), [&](int a, int b) { return bar.uv[size_t(a)].x < bar.uv[size_t(b)].x; });
@@ -491,7 +495,7 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& spri
     // The ammo counter (CLevelInterfaceNormal::Draw): clip, and "/reserve" unless the reserve
     // is endless (the handgun's), in the quad buffer at the "ammo" node, scale 0.6.
     auto endless = [](int n) { return n < 0 || n >= 100000; };
-    if (!endless(s.clip)) {
+    if (s.weapons && !endless(s.clip)) {
         const std::string text = endless(s.reserve) ? std::to_string(s.clip) : std::to_string(s.clip) + "/" + std::to_string(s.reserve);
         numeric_text(sprites, text, "ammo", {0, 0, 0}, 0.6f, vp, w, h);
     }
