@@ -1,5 +1,7 @@
 #include "game/viewmodel.h"
 
+#include <cstdlib>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "game/scene.h"
@@ -32,6 +34,8 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
         for (const Value& st : (*v)[1].list) {
             if (st.size() < 12 || st[11].size() == 0 || st[11][0].size() == 0) continue;
             c.states[st[0].s] = st[11][0][0].s;
+            for (const Value& clip : st[11].list)
+                if (clip.size() > 0 && clip[0].type == Value::String) c.variants[st[0].s].push_back(clip[0].s);
         }
     return c;
 }
@@ -48,6 +52,7 @@ void ViewModel::start() {
         scene_.set_object_visible(cockpit_, false);
     }
     weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear();
+    camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
     once_left_ = 0;
 }
@@ -78,11 +83,16 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         if (want.empty()) want = c.get("CockpitIdle");
         if (!want.empty() && want != cockpit_playing_) scene_.play_clip(cockpit_, want, true), cockpit_playing_ = want;
         place(cockpit_, eye, yaw_deg, pitch_deg);
+        camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
         return;
     }
     if (in.visible != visible_) scene_.set_object_visible(object_, in.visible), visible_ = in.visible;
-    if (!in.visible) return;
+    if (!in.visible) {
+        camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
+        return;
+    }
     const Clips& c = clips(in.weapon);
+    update_camera_layer(dt, c);
     once_left_ = std::max(once_left_ - dt, 0.0f);
     if (in.weapon != weapon_) {   // switched: the new weapon comes up
         weapon_ = in.weapon;
@@ -123,6 +133,27 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         }
     }
     place(object_, eye, yaw_deg, pitch_deg);
+}
+
+void ViewModel::update_camera_layer(float dt, const Clips& c) {
+    if (!camera_request_.empty()) {
+        auto it = c.variants.find(camera_request_);
+        camera_request_.clear();
+        if (it != c.variants.end() && !it->second.empty()) camera_clip_ = it->second[size_t(std::rand()) % it->second.size()], camera_ms_ = 0;
+    }
+    camera_offset_ = glm::mat4(1);
+    if (camera_clip_.empty()) return;
+    camera_ms_ += dt * 1000.0f;
+    glm::mat4 from, now;
+    float length = 0;
+    if (!scene_.sample_node(object_, "Camera01", camera_clip_, 0, from, &length) ||
+        !scene_.sample_node(object_, "Camera01", camera_clip_, camera_ms_, now) || camera_ms_ >= length) {
+        camera_clip_.clear();
+        return;
+    }
+    // In the camera's frame (looking down -Z, +Y up), then turned into the view's.
+    const glm::mat4 turn = glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1, 0, 0));
+    camera_offset_ = glm::inverse(turn) * glm::inverse(from) * now * turn;
 }
 
 void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg) {

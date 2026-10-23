@@ -244,6 +244,15 @@ struct Camera {
         const float y = glm::radians(yaw), p = glm::radians(pitch);
         return {-std::sin(y) * std::cos(p), std::cos(y) * std::cos(p), std::sin(p)};
     }
+    // Seen through the view model's camera layer (a hurt jolt): `offset` in the view's
+    // frame (x right, y forward, z up).
+    void jolt(const glm::mat4& offset) {
+        if (directed || offset == glm::mat4(1)) return;
+        const glm::mat4 look = glm::rotate(glm::rotate(glm::mat4(1), glm::radians(yaw), glm::vec3(0, 0, 1)), glm::radians(pitch),
+                                           glm::vec3(1, 0, 0)) * offset;
+        position += glm::vec3(look[3]);
+        directed = true, direction = glm::vec3(look[1]), up = glm::vec3(look[2]);
+    }
     FrameParams frame(int w, int h) const {
         FrameParams f;
         f.view = glm::lookAt(position, position + forward(), directed ? up : glm::vec3(0, 0, 1));
@@ -1090,6 +1099,7 @@ int main(int argc, char** argv) {
                         vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || logic.in_mech());
                         vm.cockpit = logic.in_mech();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
+                        if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(h);
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
                         viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
@@ -1137,6 +1147,8 @@ int main(int argc, char** argv) {
                     shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
                 } else if (opt.scripts && !opt.have_eye && logic.limited_view(cv)) {   // the limited-control rig's camera
                     shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
+                } else if (opt.scripts && !opt.have_eye) {
+                    shot_cam.jolt(viewmodel.camera_offset());
                 }
                 FrameParams shot = frame(shot_cam, opt.width, opt.height);
                 bool scene_hidden = false;
@@ -1751,6 +1763,7 @@ int main(int argc, char** argv) {
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
                         if (combat.take_power_used()) viewmodel.set_state("Repel");
+                        if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(aiming ? "IronSight_" + h : h);
                         update_frost(dt);
                         vm.aiming = aiming;
                         vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
@@ -1776,6 +1789,8 @@ int main(int argc, char** argv) {
                         view.fov = glm::degrees(cv.fov), view.game_fov = false;
                     } else if (opt.scripts && !flying && logic.limited_view(cv)) {   // the limited-control rig's camera
                         view.position = cv.position, view.directed = true, view.direction = cv.forward, view.up = cv.up;
+                    } else if (opt.scripts) {
+                        view.jolt(viewmodel.camera_offset());
                     }
                     FrameParams f = frame(view, w, h);
                     scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);

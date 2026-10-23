@@ -152,6 +152,7 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
             if (b->size() > 5) player_hurt_sounds_ = sound_list((*b)[5]);
             regen_rate_ = num(*b, 1, 20);
             regen_pause_ = num(*b, 2, 3000) / 1000.0f;
+            view_hurt_pause_ = num(*b, 3, 0) / 1000.0f, view_hurt_heavy_ = num(*b, 4, 0);
         }
     }
     base_max_health_ = player_max_health, base_regen_pause_ = regen_pause_;
@@ -1545,6 +1546,18 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;
     damage_flash_ = std::min(damage_flash_ + amount / 30.0f + 0.15f, 1.0f);
+    // The view jolts away from the hit: by the angle from the view's heading to the
+    // source (clockwise, 0..360) when it has one.
+    const glm::vec2 to(from.x - player_.center.x, from.y - player_.center.y);
+    if (view_hurt_wait_ <= 0 && glm::length(to) > 0.01f) {
+        view_hurt_wait_ = view_hurt_pause_;
+        const float y = glm::radians(player_.yaw);
+        const glm::vec2 ahead(-std::sin(y), std::cos(y)), dir = glm::normalize(to);
+        float angle = glm::degrees(std::acos(std::clamp(glm::dot(ahead, dir), -1.0f, 1.0f)));
+        if (ahead.y * dir.x - dir.y * ahead.x < 0) angle = 360 - angle;
+        const char* side = angle >= 325 || angle < 35 ? "front" : angle < 135 ? "right" : angle < 225 ? "back" : "left";
+        view_hurt_ = std::string("Hurt_") + side + (amount > view_hurt_heavy_ ? "_heavy" : "");
+    }
     if (player_hurt_wait_ <= 0) {
         sound(player_hurt_sounds_, nullptr);
         player_hurt_wait_ = 1.5f;
@@ -1762,6 +1775,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     update_pickups(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
+    view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);
     since_shot_ += dt;
     for (Target& t : targets_) t.hurt_sound_wait = std::max(t.hurt_sound_wait - dt, 0.0f);
     logic_.actor_positions.clear();

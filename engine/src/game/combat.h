@@ -260,6 +260,9 @@ public:
     bool use_power_now(const std::string& name);          // UseSpecialPower
     float power_charge() const { return 1 - power_cooldown_ / kPowerCooldown; }
     bool take_power_used() { return std::exchange(power_used_, false); }
+    // The view's jolt for the last hit (CPlayerBaseComponent::ReceiveDamage): Hurt_front,
+    // Hurt_left_heavy, ... by where it came from; the caller adds "IronSight_" while aiming.
+    std::string take_view_hurt() { return std::exchange(view_hurt_, {}); }
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
     bool take_grenade_throw() { return std::exchange(throw_started_, false); }
     // CLevel::DrawGrenades: enemy grenades that can reach the player (where they are).
@@ -479,6 +482,10 @@ private:
     int fire_loop_ = -1;                // the player's looping fire sound
     std::vector<std::string> player_hurt_sounds_;
     float player_hurt_wait_ = 0;
+    // CPlayerBaseComponent [3]: the least time between two jolts (ms); [4]: the damage
+    // that makes one heavy.
+    float view_hurt_pause_ = 0, view_hurt_heavy_ = 0, view_hurt_wait_ = 0;
+    std::string view_hurt_;
     bool critical_ = false;   // below 30% of the shield at the last hit
     int difficulty_ = 1;
     float base_max_health_ = 150, base_regen_pause_ = 3;

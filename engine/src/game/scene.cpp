@@ -1175,6 +1175,21 @@ bool Scene::node_position(size_t object, const std::string& node, glm::vec3& out
     return true;
 }
 
+bool Scene::sample_node(size_t object, const std::string& node, const std::string& clip, float ms, glm::mat4& local,
+                        float* length_ms) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a || !a->library) return false;
+    const AnimClip* c = a->library->clip(clip);
+    const int n = find_node(*a->model, node);
+    if (!c || n < 0) return false;
+    const ModelNode& mn = a->model->cpu.nodes[size_t(n)];
+    NodePose p{mn.translation, mn.rotation, mn.scale};
+    if (a->tracks[size_t(n)]) sample_tracks(*a->tracks[size_t(n)], c->start + std::clamp(ms, 0.0f, c->end - c->start), p);
+    local = local_matrix(p.translation, p.rotation, p.scale);
+    if (length_ms) *length_ms = c->end - c->start;
+    return true;
+}
+
 bool Scene::clip_finished(size_t object) const {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return true;

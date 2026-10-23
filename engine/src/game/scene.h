@@ -77,6 +77,11 @@ public:
         bool reverse = false, loop = false;
     };
     bool clip_state(size_t object, ClipState& out) const;
+    // One node's local transform `ms` into another clip of the object's animation, leaving
+    // its current clip alone (a second layer, e.g. the view model's camera); the clip's
+    // length in `length_ms`. False if the object, node or clip is missing.
+    bool sample_node(size_t object, const std::string& node, const std::string& clip, float ms, glm::mat4& local,
+                     float* length_ms = nullptr) const;
     // Pose the object's current clip at a time (seconds) and hold it there (speed 0).
     void set_clip_time(size_t object, float seconds);
 

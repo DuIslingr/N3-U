@@ -7,6 +7,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -33,10 +34,19 @@ public:
     // After the level is loaded (it spawns the rig as a runtime object).
     void start();
     void update(float dt, const glm::vec3& eye, float yaw_deg, float pitch_deg, const Input& in);
+    // SetStateOnCameraLayer: a state whose clip moves only the rig's camera (the jolts of
+    // CPlayerBaseComponent::ReceiveDamage: Hurt_front, IronSight_Hurt_left_heavy, ...),
+    // one of its clips at random, over whatever the hands are playing.
+    void camera_state(const std::string& state) { camera_request_ = state; }
+    // That clip's move of the camera from where it starts, in the view's frame (x right,
+    // y forward, z up); identity when none plays. The world is seen through it, the hands
+    // stay where the rig's unmoved camera puts them.
+    const glm::mat4& camera_offset() const { return camera_offset_; }
 
 private:
     struct Clips {
         std::unordered_map<std::string, std::string> states;   // state name -> clip
+        std::unordered_map<std::string, std::vector<std::string>> variants;   // every clip of a state
         std::string node;                                       // the WEAPON_* node shown for it
         std::string get(const std::string& state) const {
             auto it = states.find(state);
@@ -61,6 +71,10 @@ private:
     bool lowered_ = false;         // GetDown: held lowered until GetUp
     bool was_reloading_ = false;
     std::string requested_, queued_;   // queued_: a clip to play once after the current one
+    std::string camera_request_, camera_clip_;
+    float camera_ms_ = 0;
+    glm::mat4 camera_offset_{1};
+    void update_camera_layer(float dt, const Clips& c);
 };
 
 }  // namespace nova
