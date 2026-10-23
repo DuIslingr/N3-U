@@ -152,6 +152,8 @@ public:
     int paralyzed(int id) const;
     // Npc_SetBulletType (CNPCComponent::SetWeaponBulletType): the NPC fires this projectile type.
     bool set_bullet_type(int npc, int type);
+    // LockEnemyAggro(npc, value) (CAIComponent::LockAggro): its aggressiveness held there.
+    bool lock_aggressiveness(int npc, float value);
     // Npc_GetAccuracy / Npc_SetAttackBehavior (the attack-choice scripts).
     float accuracy(int npc) const;
     void set_attack_behaviour(int npc, const std::string& name);
@@ -284,6 +286,31 @@ private:
         };
         std::vector<Behaviour> behaviours;
         std::string choose_fn, behaviour;
+        // Aggressiveness (CAIComponent +0x50: 50 at first, rising while unhurt, near the
+        // target, unseen by it or in cover, falling out of cover; LockEnemyAggro holds it) and
+        // its bands (CComponentAI [66]: from the most aggressive, each with its threshold, the
+        // distance it keeps from the target, its pause between bursts).
+        float aggr = 50;
+        bool aggr_locked = false;
+        struct Band {
+            float threshold = 0, range_min = 15, range_max = 25, pause_min = 1, pause_max = 1;
+        };
+        std::vector<Band> bands;
+        // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
+        // share of its health lost; a team member gone: once.
+        float af_hurt = 100, af_unhurt = 0.8f, af_near = 15, af_near_dist = 10, af_unseen = 0, af_behind = 0, af_in_cover = 0,
+              af_out_of_cover = 0, af_team_alive = 20, af_team_dead = 0, af_last = 5;
+        int team_seen = -1;   // team members alive last time
+        float max_health = 10;
+        // Cover (UseCoversForAttack): the cover point it holds, what it does there (moving to
+        // it, hidden behind it, up and firing), for how long; when it looks for one again.
+        bool use_covers = false;
+        int cover = -1;
+        enum class CoverPhase { Moving, Hidden, Firing } cover_phase = CoverPhase::Moving;
+        float cover_timer = 0, cover_eval = 0;
+        float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds
+        float stand_height = 1.9f;
+        bool crouched = false;
         enum class State { Idle, Chase, Attack, Melee, Hurt, Dying, Dead } state = State::Idle;
         bool aware = false;
         float timer = 0, fire_timer = 0, repath = 0, hurt_cooldown = 0, lost_sight = 0;
@@ -353,6 +380,26 @@ private:
     void update_actor(Target& t, float dt);
     void move_along_path(Target& t, float dt, float speed_scale = 1);
     void run_goal(Target& t, float dt);
+    void attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool sees, float dt);
+    // Cover points (CComponentBuiltinCover 0xb3 entries: offset, facing angle, flags; [6]
+    // set: low cover), and the fight from cover (combat_ai.cpp).
+    struct CoverPoint {
+        glm::vec3 pos{0}, dir{0, 1, 0};
+        bool low = true;
+        int holder = -1;   // the target index holding it
+    };
+    std::vector<CoverPoint> covers_;
+    void load_covers();
+    void read_ai(Target& t, const Value& ai);
+    void update_aggressiveness(Target& t, float dt, float dist, bool sees, bool in_cover);
+    const Target::Band* band(const Target& t) const;
+    bool cover_protects(const CoverPoint& c, const glm::vec3& from) const;
+    int choose_cover(const Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_eye) const;
+    void leave_cover(Target& t);
+    void set_crouched(Target& t, bool on);
+    // The fight from cover; false when the actor has no cover to fight from (the usual
+    // chase and attack then).
+    bool fight_from_cover(Target& t, float dt, const glm::vec3& target, const glm::vec3& chest, bool sees, bool on_player);
     void path_to(Target& t, const glm::vec3& goal);
     // Run along the nav mesh towards `goal` (repathing as it moves), stopping `stop` away.
     void go_towards(Target& t, const glm::vec3& goal, float stop, float dt);

@@ -621,6 +621,7 @@ void Combat::start(bool keep_stats) {
         t.pos = obj.position;
         t.yaw = obj.yaw;
         if (!obj.dead) obj.health = num(*health, 0, 10);   // CHealthComponent: max health
+        t.max_health = std::max(num(*health, 0, 10), 1.0f);
         if (const float ms = num(*health, 3, 0); ms > 0) t.paralyze_time = ms / 1000.0f;
         if (health->size() > 9) t.hurt_sounds = sound_list((*health)[6]), t.death_sounds = sound_list((*health)[9]);
         if (const Value* tg = component(o, kCompTargetable)) {
@@ -639,6 +640,7 @@ void Combat::start(bool keep_stats) {
         if (targets_.back().actor) ++stats_.actors;
         if (targets_.back().hostile) ++stats_.hostile;
     }
+    load_covers();
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, nav mesh " +
         std::to_string(nav_.triangle_count()) + " triangles");
@@ -730,6 +732,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             if (!waits.empty()) beh.gap = waits.front(), beh.pause = waits.back() > waits.front() ? waits.back() : 0;
             if (beh.shots > 0) t.behaviours.push_back(beh);
         }
+        read_ai(t, *ai);
         if ((*ai)[19].type == Value::String) {
             const std::string& code = (*ai)[19].s;
             if (const size_t f = code.find("function "); f != std::string::npos)
@@ -737,6 +740,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         }
     }
     t.sweep_r = t.sweep_max;
+    t.stand_height = t.height;
     t.fire_range = std::min(t.sight, 35.0f);
     t.melee_damage = t.ranged ? 15.0f : 8.0f;
 
@@ -1208,6 +1212,7 @@ void Combat::update_actor(Target& t, float dt) {
     }
     // Allies hold their ground: they fight what they see but do not hunt.
     const bool idle = !t.aware || t.enemy == kNoEnemy || (!t.hostile && !sees && t.locked < 0);
+    if (idle && t.cover >= 0) leave_cover(t);
     if (idle) {
         if (!t.hostile) {   // allies: leave whatever the scripts play alone, unless they were fighting
             const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
@@ -1226,6 +1231,11 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
 
+    // Tactical fighters take cover and fire from it (combat_ai.cpp).
+    if (t.state != S::Hurt && t.state != S::Melee && fight_from_cover(t, dt, target, chest, sees, on_player)) {
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
     switch (t.state) {
     case S::Hurt:
         if (scene_.clip_finished(t.object) || t.timer > 0.8f) t.state = S::Chase, t.timer = 0;
@@ -1244,46 +1254,7 @@ void Combat::update_actor(Target& t, float dt) {
     case S::Attack:
         face(t, target, dt);
         play(t, t.clip_fire, true);
-        if (sees) {   // tracking it: the sweep closes in, the aim time grows
-            t.aim_time += dt;
-            if (!t.locked_on) {
-                t.sweep_r = std::max(t.sweep_r - t.sweep_rate * dt, t.sweep_min);
-                t.sweep_a = std::fmod(t.sweep_a + t.sweep_speed * t.sweep_sign * dt + 360.0f, 360.0f);
-                t.locked_on = t.sweep_r <= t.sweep_min;
-            }
-        } else {   // CNPCWeaponComponent::ResetTargetLocked
-            t.locked_on = false, t.sweep_r = t.sweep_max, t.aim_time = 0, t.spread = 0;
-            t.sweep_sign = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
-        }
-        t.fire_timer -= dt;
-        if (t.fire_timer <= 0) {
-            if (t.shots_left <= 0) {
-                // A new burst at the player needs one of the few attack tokens; otherwise aim and wait.
-                int shooters = 0;
-                for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
-                if (on_player && (shooters >= max_shooters_ || burst_cooldown_ > 0)) {
-                    t.fire_timer = 0.3f;
-                    play(t, t.clip_alert, true);
-                    break;
-                }
-                t.shots_left = t.burst;
-                // The type's attack choice (BA_ChooseAttack: by accuracy and chance) picks a
-                // behaviour: its shots and the gap between them.
-                t.behaviour.clear();
-                if (!t.choose_fn.empty()) logic_.runtime_.call(t.choose_fn, t.id, t.id);
-                for (const Target::Behaviour& b : t.behaviours)
-                    if (b.name == t.behaviour) t.shots_left = b.shots, t.burst_gap = b.gap;
-                if (on_player) t.token = true, burst_cooldown_ = kBurstInterval;
-            }
-            fire_bolt(t, chest);
-            --t.shots_left;
-            if (t.shots_left > 0) {
-                t.fire_timer = t.burst_gap;
-            } else {
-                t.token = false;
-                t.fire_timer = t.burst_pause * std::uniform_real_distribution<float>(0.8f, 1.6f)(rng_);
-            }
-        }
+        attack_fire(t, chest, on_player, sees, dt);
         // Lost the line of fire, or too far: close in again.
         if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
         if (dist < t.melee_range && !t.clip_melee.empty() && t.fire_timer > 0.3f) {
@@ -1319,6 +1290,51 @@ void Combat::update_actor(Target& t, float dt) {
     }
     }
     scene_.set_object_pose(t.object, t.pos, t.yaw);
+}
+
+// Firing at the enemy: the aim sweep and the bursts (one token-holder's burst at a time at the
+// player; the attack choice script picks each burst's shots).
+void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool sees, float dt) {
+    if (sees) {   // tracking it: the sweep closes in, the aim time grows
+        t.aim_time += dt;
+        if (!t.locked_on) {
+            t.sweep_r = std::max(t.sweep_r - t.sweep_rate * dt, t.sweep_min);
+            t.sweep_a = std::fmod(t.sweep_a + t.sweep_speed * t.sweep_sign * dt + 360.0f, 360.0f);
+            t.locked_on = t.sweep_r <= t.sweep_min;
+        }
+    } else {   // CNPCWeaponComponent::ResetTargetLocked
+        t.locked_on = false, t.sweep_r = t.sweep_max, t.aim_time = 0, t.spread = 0;
+        t.sweep_sign = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
+    }
+    t.fire_timer -= dt;
+    if (t.fire_timer <= 0) {
+        if (t.shots_left <= 0) {
+            // A new burst at the player needs one of the few attack tokens; otherwise aim and wait.
+            int shooters = 0;
+            for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
+            if (on_player && (shooters >= max_shooters_ || burst_cooldown_ > 0)) {
+                t.fire_timer = 0.3f;
+                play(t, t.clip_alert, true);
+                return;
+            }
+            t.shots_left = t.burst;
+            // The type's attack choice (BA_ChooseAttack: by accuracy and chance) picks a
+            // behaviour: its shots and the gap between them.
+            t.behaviour.clear();
+            if (!t.choose_fn.empty()) logic_.runtime_.call(t.choose_fn, t.id, t.id);
+            for (const Target::Behaviour& b : t.behaviours)
+                if (b.name == t.behaviour) t.shots_left = b.shots, t.burst_gap = b.gap;
+            if (on_player) t.token = true, burst_cooldown_ = kBurstInterval;
+        }
+        fire_bolt(t, chest);
+        --t.shots_left;
+        if (t.shots_left > 0) {
+            t.fire_timer = t.burst_gap;
+        } else {
+            t.token = false;
+            t.fire_timer = t.burst_pause * std::uniform_real_distribution<float>(0.8f, 1.6f)(rng_);
+        }
+    }
 }
 
 void Combat::go_towards(Target& t, const glm::vec3& target, float stop, float dt) {
@@ -1404,6 +1420,7 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
 void Combat::apply_damage(Target& t, float amount, bool by_player) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead || t.invulnerable || !o->enabled) return;
+    if (t.actor && !t.aggr_locked) t.aggr = std::max(t.aggr - amount / t.max_health * t.af_hurt, 0.0f);   // AF_DamageTaken
     o->health -= amount;
     if (by_player) logic_.runtime_.send_event("TargetHit", t.id);
     if (t.actor) notice(t);
@@ -1454,6 +1471,7 @@ bool Combat::effect(const std::string& name, const glm::vec3& at, const glm::vec
 void Combat::die(Target& t) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
+    leave_cover(t);
     o->dead = true;
     o->health = 0;
     t.timer = 0;

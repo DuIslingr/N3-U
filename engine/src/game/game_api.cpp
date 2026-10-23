@@ -584,6 +584,11 @@ int api_npc_attack_behaviour(lua_State* L) {
     if (c.combat) c.combat->set_attack_behaviour(int(lua_tointeger(L, 1)), str_arg(L, 2));
     return 0;
 }
+int api_lock_enemy_aggro(lua_State* L) {   // LockEnemyAggro(npc, aggressiveness)
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->lock_aggressiveness(int(lua_tointeger(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1348,6 +1353,7 @@ const Entry kImplemented[] = {
     {"SetLimitedControlStrafeSpeed", api_limited_strafe},
     {"PlayerSetPosition", api_player_set_position},
     {"Npc_GetPosture", api_npc_posture},
+    {"LockEnemyAggro", api_lock_enemy_aggro},
     {"Npc_GetAccuracy", api_npc_accuracy},
     {"Npc_SetAttackBehavior", api_npc_attack_behaviour},
     {"LockElevator", api_lock_elevator<true>},

@@ -1008,7 +1008,7 @@ int main(int argc, char** argv) {
                     viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
                 }
                 Camera shot_cam = cam;
-                if (Scene::CameraView cv; opt.scripts && logic.cinematic_view(cv)) {
+                if (Scene::CameraView cv; opt.scripts && !opt.have_eye && logic.cinematic_view(cv)) {   // --eye wins
                     shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
                     shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
                 } else if (opt.scripts && !opt.have_eye && logic.limited_view(cv)) {   // the limited-control rig's camera
