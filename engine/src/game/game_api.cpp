@@ -286,6 +286,16 @@ int api_motion_speed(lua_State* L) {
     return 0;
 }
 
+// SaveGame(spawn point): a checkpoint. ShowProgressSavedMessage().
+int api_save_game(lua_State* L) {
+    ctx(L).save_checkpoint(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_progress_saved(lua_State* L) {
+    ctx(L).message("FPS_GAME_SAVED", 2.5f);
+    return 0;
+}
+
 // --- NPC commands (CAIComponent goals) -------------------------------------------------
 // NpcCmd_*(npc, goal id, waypoint, ...): queue a goal; WaitNpcCmdFinished(npc, goal id or
 // -1) waits while it is queued (Combat sends NpcCmdFinished_<npc>_<id> when it is done).
@@ -607,8 +617,8 @@ const Entry kImplemented[] = {
     {"AddSecondaryObjective", api_objective},
     {"SetPrimaryObjective", api_objective},
     // Accepted without effect: saving, persistence of state the engine does not have yet.
-    {"SaveGame", api_return_now},
-    {"ShowProgressSavedMessage", api_return_now},
+    {"SaveGame", api_save_game},
+    {"ShowProgressSavedMessage", api_progress_saved},
     {"Fog_SetLock", api_fog_lock},
     {"EnablePortal", api_portal<true>},
     {"LoadLevelSections", api_load_level_sections},

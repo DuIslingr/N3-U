@@ -94,6 +94,9 @@ public:
     bool push_goal(int actor, const NpcGoal& g);
     bool goal_pending(int actor, int goal_id) const;
     void cancel_goals(int actor);
+    void ammo_refill_on_respawn() {   // the checkpoint's ammunition is not saved here: refill clips
+        for (size_t i = 0; i < weapons_.size(); ++i) clip_[i] = weapons_[i].clip, reserve_[i] = std::max(reserve_[i], weapons_[i].clip * 2);
+    }
     // Put an actor at a position (TeleportToWaypoint); false if `id` is not an actor.
     bool place_actor(int id, const glm::vec3& position);
     // A spawn manager with this id that has not ended (SpawnEnd_<id> is still to come).

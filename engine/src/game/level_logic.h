@@ -141,6 +141,12 @@ public:
     bool motion_start(int id);
     void motion_stop(int id, int at_waypoint = -1);
     void motion_max_speed(int id, float speed);
+    // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame): the game saves and
+    // reloads there when the player dies. Here the world stays as it is: the player comes
+    // back at the checkpoint's spawn point, whose Obj<id>_Default script runs again.
+    void save_checkpoint(int spawn_id);
+    void respawn_player();
+    int checkpoint() const { return checkpoint_; }
     // TeleportToWaypoint: move an object (actors through combat) to a position.
     void teleport_object(Object& o, const glm::vec3& position);
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
@@ -211,6 +217,7 @@ private:
         std::vector<int> sounds;         // started with the motion (loops stop with it)
     };
     std::vector<Mover> movers_;
+    int checkpoint_ = -1;
     void update_movers(float dt);
     void mover_state(Mover& m, const std::string& state);
     bool fading_ = false, fade_in_ = true;

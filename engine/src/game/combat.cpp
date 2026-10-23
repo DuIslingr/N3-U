@@ -987,12 +987,17 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     damage_flash_ = std::max(damage_flash_ - dt * 1.5f, 0.0f);
     hit_marker_ = std::max(hit_marker_ - dt, 0.0f);
     if (player_dead) {
+        // The screen fades, then the player is back at the last checkpoint (or the start).
+        const float before = dead_timer_;
         dead_timer_ += dt;
-        if (dead_timer_ > 3.0f) {   // no checkpoints yet: get up where you fell, briefly protected
+        if (before < 1.5f && dead_timer_ >= 1.5f) logic_.start_fade(false, 1200, glm::vec3(0));
+        if (dead_timer_ > 3.0f) {
             player_dead = false;
             player_health = player_max_health;
             protect_ = 3.0f;
-            log("player revived");
+            ammo_refill_on_respawn();
+            logic_.respawn_player();
+            log("player respawned at " + (logic_.checkpoint() >= 0 ? "checkpoint " + std::to_string(logic_.checkpoint()) : std::string("the start")));
         }
         return;
     }

@@ -240,6 +240,7 @@ bool LevelLogic::set_post_var(const std::string& effect, const std::string& var,
 void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
     movers_.clear(), waypoint_next_.clear(), path_first_.clear();
+    if (!keep_player) checkpoint_ = -1;
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
@@ -531,6 +532,26 @@ glm::vec2 LevelLogic::shake_offset() const {
     const float a = shake_amount_ * 4.0f * (shake_left_ / std::max(shake_total_, 1e-3f));
     return glm::vec2(std::sin(shake_clock_ * 47.0f) + 0.5f * std::sin(shake_clock_ * 91.0f),
                      std::cos(shake_clock_ * 53.0f) + 0.5f * std::sin(shake_clock_ * 77.0f)) * a;
+}
+
+void LevelLogic::save_checkpoint(int spawn_id) {
+    if (spawn_id <= 0 || !object(spawn_id)) {
+        log("SaveGame: no spawn point " + std::to_string(spawn_id));
+        return;
+    }
+    checkpoint_ = spawn_id;
+    log("checkpoint " + std::to_string(spawn_id));
+    if (audio) audio->play("sfx_save_progress");
+    message("FPS_GAME_SAVED", 2.5f);
+}
+
+void LevelLogic::respawn_player() {
+    const int id = checkpoint_ >= 0 ? checkpoint_ : start_spawn_id_;
+    if (Object* sp = object(id)) {
+        teleport_player(*sp);
+        start_script("Obj" + std::to_string(id) + "_Default", id);
+    }
+    start_fade(true, 1000, glm::vec3(0));
 }
 
 void LevelLogic::teleport_object(Object& o, const glm::vec3& position) {
