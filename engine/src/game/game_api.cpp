@@ -459,6 +459,95 @@ int api_vehicle_follow(lua_State* L) {   // Vehicle_FollowObject(vehicle, target
     ctx(L).vehicle_follow(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), float(lua_tonumber(L, 3)));
     return 0;
 }
+// IsParalyzed(id): frozen by the Paralyze power (CHealthComponent::IsParalyzed); nothing
+// for an object without health.
+int api_is_paralyzed(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const int p = c.combat ? c.combat->paralyzed(int(lua_tointeger(L, 1))) : -1;
+    if (p < 0) return 0;
+    lua_pushboolean(L, p);
+    return 1;
+}
+// GetZone(id): the id of the zone the object is in (actors: where they stand), -1 if none.
+int api_get_zone(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const LevelLogic::Object* o = obj(L, 1);
+    int zone = ZoneSystem::kNone;
+    if (o && o->index != std::numeric_limits<size_t>::max())
+        zone = c.combat && c.combat->is_actor(o->id) ? c.scene.zones().zone_at(o->position + glm::vec3(0, 0, 0.5f))
+                                                      : c.scene.zones().object_zone(o->index);
+    const auto& zones = c.scene.zones().zones();
+    lua_pushinteger(L, zone >= 0 && size_t(zone) < zones.size() ? zones[size_t(zone)].id : -1);
+    return 1;
+}
+// GetObjType(id): the object's gol type id (CGameObject +0x88).
+int api_get_obj_type(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const LevelLogic::Object* o = obj(L, 1);
+    if (!o || o->index >= c.scene.level().objects.size()) return 0;
+    lua_pushinteger(L, c.scene.level().objects[o->index].type);
+    return 1;
+}
+int api_npc_set_bullet_type(lua_State* L) {   // Npc_SetBulletType(npc, weapon slot, projectile type)
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->set_bullet_type(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 3)));
+    return 0;
+}
+int api_npc_link(lua_State* L) {   // Npc_Link(npc, object)
+    ctx(L).link(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)));
+    return 0;
+}
+int api_npc_unlink(lua_State* L) {   // Npc_UnLink(npc)
+    ctx(L).unlink(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_start_timer(lua_State* L) {   // StartTimer(seconds)
+    ctx(L).timer = float(lua_tointeger(L, 1)), ctx(L).timer_paused = false;
+    return 0;
+}
+int api_pause_timer(lua_State* L) {   // PauseTimer(on)
+    ctx(L).timer_paused = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+int api_npc_teleport_to_target(lua_State* L) {   // NpcCmd_TeleportToTarget(npc, cmd id)
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->teleport_to_player(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)));
+    return 0;
+}
+// Limited control: SwitchToPlayerLimitedControl(), PlayerLimitedControlSetState(state),
+// PlayerLimitedControlStartHang(object), PlayerLimitedControlUseGravity(on),
+// PlayerLimitedControlSetLimitYaw/Pitch(degrees), SetLimitedControlStrafeSpeed(speed).
+int api_limited_begin(lua_State* L) {
+    ctx(L).limited_begin();
+    return 0;
+}
+int api_limited_state(lua_State* L) {
+    ctx(L).limited_state(str_arg(L, 1));
+    return 0;
+}
+int api_limited_hang(lua_State* L) {
+    ctx(L).limited_hang(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_limited_gravity(lua_State* L) {
+    ctx(L).limited_gravity(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+template <int Which>
+int api_limited_limit(lua_State* L) {
+    const float v = float(lua_tonumber(L, 1));
+    ctx(L).limited_limits(Which == 0 ? v : -1, Which == 1 ? v : -1);
+    return 0;
+}
+int api_limited_strafe(lua_State* L) {
+    ctx(L).limited_strafe_speed(float(lua_tonumber(L, 1)));
+    return 0;
+}
+int api_player_set_position(lua_State* L) {   // PlayerSetPosition(x, y, z): the player's feet there
+    LevelLogic& c = ctx(L);
+    c.player.center = glm::vec3(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)) + c.player.radius.z);
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1205,6 +1294,25 @@ const Entry kImplemented[] = {
     {"SetControlSensitivity", api_set_control_sensitivity},
     {"Npc_SetCustomIdleState", api_npc_custom_idle},
     {"Vehicle_FollowObject", api_vehicle_follow},
+    {"IsParalyzed", api_is_paralyzed},
+    {"GetZone", api_get_zone},
+    {"GetObjType", api_get_obj_type},
+    {"Npc_SetBulletType", api_npc_set_bullet_type},
+    {"Npc_Link", api_npc_link},
+    {"Npc_UnLink", api_npc_unlink},
+    {"StartTimer", api_start_timer},
+    {"PauseTimer", api_pause_timer},
+    {"NpcCmd_TeleportToTarget", api_npc_teleport_to_target},
+    {"SwitchToPlayerLimitedControl", api_limited_begin},
+    {"PlayerLimitedControlSetState", api_limited_state},
+    {"PlayerLimitedControlStartHang", api_limited_hang},
+    {"PlayerLimitedControlUseGravity", api_limited_gravity},
+    {"PlayerLimitedControlSetLimitYaw", api_limited_limit<0>},
+    {"PlayerLimitedControlSetLimitPitch", api_limited_limit<1>},
+    {"SetLimitedControlStrafeSpeed", api_limited_strafe},
+    {"PlayerSetPosition", api_player_set_position},
+    {"PlayerStartCrystalInteract", api_ignore},   // empty in the game too
+    {"SetZNear", api_ignore},                     // reads its argument and does nothing
     {"AddObjective", api_add_objective},
     {"GameObject_Material_SetTechnique", api_material_technique},
     {"GameObject_Material_SetParameterFloat", api_material_float},

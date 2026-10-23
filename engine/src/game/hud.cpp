@@ -280,6 +280,22 @@ void Hud::draw_objectives(ParticleList& out, TextRenderer& text, const std::vect
     }
 }
 
+void Hud::draw_timer(ParticleList& out, TextRenderer& text, float seconds, int w, int h) {
+    set_screen(w, h);
+    // In the 960x640 sheet's pixels (the game draws at the device's resolution); the glow
+    // sits behind the digits.
+    const float scale = sprite_scale("chatboard.bsprite");
+    const float y = 72 * scale;
+    if (const Sprite* cb = sprite("chatboard.bsprite")) {
+        const glm::vec4 b = frame_bounds(*cb, 230) * scale;
+        draw_frame(out, *cb, 230, {(float(w) - (b.z - b.x)) * 0.5f - b.x, y - (b.y + b.w) * 0.5f}, scale, glm::vec4(1));
+    }
+    const int s = std::max(int(seconds), 0);
+    char line[16];
+    std::snprintf(line, sizeof line, "%02d:%02d", s / 60, s % 60);
+    text.draw(out, line, {float(w) * 0.5f, y}, w, glm::vec4(1), {0.5f, 0.5f});
+}
+
 void Hud::draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w,
                       int h, bool metric) {
     set_screen(w, h);

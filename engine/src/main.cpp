@@ -580,6 +580,8 @@ int main(int argc, char** argv) {
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
                                     glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);
+                if (opt.scripts && logic.timer >= 0 && !logic.player_locked() && logic.hud_enabled)
+                    hud.draw_timer(hud_sprites, objective_text, logic.timer, w, h);
                 if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked() && !menu.open) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
@@ -919,7 +921,9 @@ int main(int argc, char** argv) {
                     float seat_min = 0, seat_max = 0;
                     const bool seated = opt.scripts && logic.seat(seat_eye, seat_min, seat_max);
                     if (seated) player.center = seat_eye - glm::vec3(0, 0, player.eye_height);
-                    else if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), pin, kPhysicsStep);
+                    else if (!(opt.scripts && logic.cinematic_active()) && !(opt.scripts && logic.limited_step(pin.right, kPhysicsStep)))
+                        player.update(scene.collision(), pin, kPhysicsStep);
+                    if (opt.scripts) logic.limited_view_input(player.yaw, player.pitch, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     if (opt.scripts) {
                         CombatInput ci;
@@ -959,7 +963,7 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
-                        vm.visible = !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || logic.in_mech());
+                        vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || logic.in_mech());
                         vm.cockpit = logic.in_mech();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         vm.firing = combat.since_shot() < 0.2f;
@@ -996,7 +1000,7 @@ int main(int argc, char** argv) {
                 if (opt.scripts) {
                     ViewModel::Input vm;
                     vm.weapon = combat.weapon_type();
-                    vm.visible = !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || logic.in_mech());
+                    vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || logic.in_mech());
                     vm.cockpit = logic.in_mech();
                     if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                     vm.firing = combat.since_shot() < 0.2f;
@@ -1007,6 +1011,8 @@ int main(int argc, char** argv) {
                 if (Scene::CameraView cv; opt.scripts && logic.cinematic_view(cv)) {
                     shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
                     shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
+                } else if (opt.scripts && !opt.have_eye && logic.limited_view(cv)) {   // the limited-control rig's camera
+                    shot_cam.position = cv.position, shot_cam.directed = true, shot_cam.direction = cv.forward, shot_cam.up = cv.up;
                 }
                 FrameParams shot = frame(shot_cam, opt.width, opt.height);
                 bool scene_hidden = false;
@@ -1372,11 +1378,12 @@ int main(int argc, char** argv) {
                             flying = !flying;
                             if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
                         }
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts && !logic.limited_tap()) logic.use();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
-                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true, logic.qte_press("fire");
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                            fire_held = true, logic.qte_press("fire"), logic.limited_tap();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_TAB && !e.key.repeat && logic.controls.powers) combat.cycle_power();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Q && !e.key.repeat) {
                             if (!logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
@@ -1525,19 +1532,22 @@ int main(int argc, char** argv) {
                                 cam.yaw = rel - (yaw_max - yaw_min) < 360.0f - rel ? yaw_max : yaw_min;
                             cam.pitch = glm::clamp(cam.pitch, -30.0f, 35.0f);
                         }
+                        if (opt.scripts) logic.limited_view_input(cam.yaw, cam.pitch, dt);   // limited control: within its limits
                         player.yaw = cam.yaw;
                         player.pitch = cam.pitch;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
                             // During cinematics the player is out of play (the intro's spawn
                             // point may float in the void).
-                            if (!(opt.scripts && logic.cinematic_active()) && !seated) player.update(scene.collision(), in, kPhysicsStep);
+                            if (!(opt.scripts && logic.cinematic_active()) && !seated && !(opt.scripts && logic.limited_step(in.right, kPhysicsStep)))
+                                player.update(scene.collision(), in, kPhysicsStep);
                             step_logic(kPhysicsStep);
                         }
                         if (seated && logic.seat(seat_eye, yaw_min, yaw_max)) player.center = seat_eye - glm::vec3(0, 0, player.eye_height);
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         if (opt.scripts) {
                             if (touch_mode) {
-                                combat_in.fire = !locked && touch_in.fire;
+                                combat_in.fire = !locked && !logic.limited_active() && touch_in.fire;
+                                if (touch_in.fire) logic.limited_tap();
                                 combat_in.reload |= touch_in.reload;
                                 if (touch_in.fire) logic.qte_press("fire");
                                 if (touch_in.power && !logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
@@ -1545,7 +1555,7 @@ int main(int argc, char** argv) {
                                 combat_in.grenade |= touch_in.grenade && logic.controls.items;
                                 if (touch_in.weapon_step != 0 && logic.controls.weapons) combat_in.select = combat.cycle_weapon(touch_in.weapon_step);
                             } else {
-                                combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
+                                combat_in.fire = !locked && !logic.limited_active() && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
                             }
                             combat.aim_assist = settings.aim_assist, combat.auto_switch = settings.auto_switch;
                             combat.update(dt, combat_in, player.eye(), cam.forward());
@@ -1574,7 +1584,7 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
-                        vm.visible = !flying && !combat.player_dead && !logic.player_locked() && (!combat.special_weapon() || mech);
+                        vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || mech);
                         vm.cockpit = mech;
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
@@ -1602,6 +1612,8 @@ int main(int argc, char** argv) {
                     if (cinematic) {
                         view.position = cv.position, view.directed = true, view.direction = cv.forward, view.up = cv.up;
                         view.fov = glm::degrees(cv.fov), view.game_fov = false;
+                    } else if (opt.scripts && !flying && logic.limited_view(cv)) {   // the limited-control rig's camera
+                        view.position = cv.position, view.directed = true, view.direction = cv.forward, view.up = cv.up;
                     }
                     FrameParams f = frame(view, w, h);
                     scene.cull(f.camera, f.proj * f.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);

@@ -82,11 +82,11 @@ public:
     void add_door_portal(size_t object, int zone_a, int zone_b, const glm::mat4& transform, float width, float height);
     void set_door_open(size_t object, bool open);
     const std::vector<Zone>& zones() const { return zones_; }
+    int zone_at(const glm::vec3& p) const;   // the zone whose bounds hold a point (kNone if none)
     const std::vector<Portal>& portals() const { return portals_; }
     bool enabled = true;     // false: everything visible
 
 private:
-    int zone_at(const glm::vec3& p) const;
     static void make_quad(Portal& p, const glm::mat4& transform, float width, float height);
     void reach(int zone, const Frustum& frustum, int via, const glm::vec3& camera, int depth);
 

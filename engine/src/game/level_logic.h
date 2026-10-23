@@ -123,6 +123,10 @@ public:
     bool player_rush = true;
     bool fall_damage = true;   // Player_EnableFallDamage
     bool jetpack_unlocked = false;   // Unlock/LockSpecialPower("jetpack"); UseSpecialPower turns it on
+    // StartTimer(s) / PauseTimer(on) (ILevelInterface::m_iTimer): a countdown shown at the
+    // top of the screen (seconds; < 0: none), ticking each second.
+    float timer = -1;
+    bool timer_paused = false;
     struct Frost {
         float on = 0, ms = 1000, max = 1;   // HUD_StartFrost / HUD_StopFrost over ms; HUD_SetFrostMaxFactor
         uint32_t serial = 0;
@@ -316,6 +320,37 @@ public:
     uint32_t checkpoint_section() const;
     void respawn_at_checkpoint();
     int checkpoint() const { return checkpoint_; }
+    // Limited control (CPlayerLimitedControlComponent; SwitchToPlayerLimitedControl): the
+    // player as the PlayerLimitedControl rig (arms_legs.bdae) seen through its camera —
+    // falling and strafing in space (Ship_01's decompression), hanging from the hull with
+    // the arm's console (Minigame: a tap on it wins), a hand on a panel. Its states (the
+    // rig's state set) play their clips and run their Script tracks; one whose clip has
+    // played goes on to its next; at "End" the player is back on foot where the camera was.
+    // It moves by strafing (while idle or strafing) and the level's attraction, through
+    // walls unless gravity is on; the view turns within its yaw/pitch limits and drifts
+    // back after 2 s untouched.
+    bool limited_active() const { return limited_.on; }
+    void limited_begin();
+    void limited_end();
+    void limited_state(const std::string& state);
+    void limited_hang(int object);    // PlayerLimitedControlStartHang: onto the object's plane, Hang
+    void limited_gravity(bool on) { limited_.gravity = on; }
+    void limited_limits(float yaw, float pitch) {   // degrees; < 0 keeps
+        if (yaw >= 0) limited_.limit_yaw = yaw;
+        if (pitch >= 0) limited_.limit_pitch = pitch;
+    }
+    void limited_strafe_speed(float s) { limited_.strafe = s; }
+    // Move the player (`right`: -1..1 strafe input); false when not in limited control.
+    bool limited_step(float right, float dt);
+    // The view's yaw/pitch (degrees) as the player turned it, kept within the limits.
+    void limited_view_input(float& yaw, float& pitch, float dt);
+    bool limited_view(Scene::CameraView& out) const;   // the rig's camera, turned by the view
+    bool limited_tap();   // a tap (click, use): the arm console in Minigame wins
+    // Linked objects (CLinkObjectComponent 0x17, [0]: the object it is linked to): carried
+    // with that object (enemies riding a lift, guns on a vehicle); a linked NPC holds its
+    // place (CNPCComponent::SetImobile) until Npc_UnLink. Npc_Link links it to another.
+    bool link(int id, int target);
+    void unlink(int id);
     // TeleportToWaypoint: move an object (actors through combat) to a position.
     void teleport_object(Object& o, const glm::vec3& position);
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
@@ -437,6 +472,29 @@ private:
     bool camera_held_ = false, restore_view_ = false;
     float held_yaw_ = 0, held_pitch_ = 0;
     void update_movers(float dt);
+    struct Limited {
+        bool on = false, gravity = true;
+        std::string state;
+        float time = 0, clip_length = 0;   // seconds in the state; its clip's length
+        size_t next_script = 0;
+        float strafe = 0.05f, limit_yaw = 10, limit_pitch = 10;   // the player type's CPlayerLimitedControlComponent
+        float defaults[3] = {0.05f, 10, 10};
+        float base_yaw = 0;                // the rig's heading
+        float yaw = 0, pitch = 0, idle = 0;   // the view's turn (degrees); seconds since turned
+        int rig_type = -1;
+        size_t rig = size_t(-1);
+    } limited_;
+    void update_limited(float dt);
+    void place_rig();
+    void load_type_scripts(int type);
+    struct Link {
+        int id = 0, target = 0;
+        glm::mat4 local{1};          // the object in the target's frame
+        glm::mat4 last{0};           // the target's transform when last carried
+        bool held = false;           // a linked NPC told to hold its place
+    };
+    std::vector<Link> links_;
+    void update_links();
     void mover_state(Mover& m, const std::string& state);
     bool fading_ = false, fade_in_ = true;
     float fade_total_ = 1, fade_left_ = 0;

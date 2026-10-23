@@ -46,12 +46,25 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
     for (const Value* sp : states) {
         const Value& st = *sp;
         State& state = out.states[lower(st[0].s)];
+        // [2]: it loops; [6]: the state that follows when its clip has played (0: none).
+        state.loop = st[2].i != 0;
+        if (const int next = st[6].i; next > 0 && size_t(next) < states.size()) state.next = states[size_t(next)]->list[0].s;
         for (const Value& clip : st[11].list) {
             if (clip.size() < 3 || clip[0].type != Value::String) continue;
             if (state.clip.empty()) state.clip = clip[0].s;
             std::vector<Event> list;
             for (size_t gi = 2; gi < clip.size(); ++gi)
                 for (const Value& group : clip[gi].list) {
+                    // Script tracks: [name, start ms, end ms, code (function Templ<type>_..._Run), ...].
+                    if (group.size() >= 3 && group[1].s == "Script")
+                        for (const Value& ev : group[2].list) {
+                            if (ev.size() < 4 || ev[3].type != Value::String) continue;
+                            const std::string& code = ev[3].s;
+                            const size_t f = code.find("function ");
+                            if (f == std::string::npos) continue;
+                            const size_t b = f + 9, e = code.find('(', b);
+                            if (e != std::string::npos) state.scripts.push_back({ev[1].as_float(), code.substr(b, e - b)});
+                        }
                     if (group.size() < 3 || group[1].s != "Sound") continue;
                     for (const Value& ev : group[2].list) {
                         if (ev.size() < 13) continue;

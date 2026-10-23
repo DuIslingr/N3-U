@@ -283,14 +283,27 @@ void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
     power_cooldown_ = kPowerCooldown, power_used_ = true;
     sound("sfx_plasma_hand_shot", nullptr);
     effect("bullet_paralyze", eye + aim * 1.5f, aim);
+    // What the shot hits is frozen (any object with health: Boreas' broken doors and power
+    // modules too), and the enemies in a narrow cone around it.
+    float hit_t;
+    glm::vec3 hit_at;
+    if (const int hit = ray_target(eye, aim, 500.0f, hit_t, hit_at); hit >= 0 && line_clear(eye, hit_at - aim * 0.2f)) {
+        Target& t = targets_[size_t(hit)];
+        if (!t.actor || t.hostile) t.paralyzed = t.paralyze_time;
+    }
     for (Target& t : targets_) {
         if (!t.actor || !t.hostile || !alive(t)) continue;
         const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
         const glm::vec3 to = c - eye;
         const float d = glm::length(to);
         if (d > 40.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.85f || !line_clear(eye, c)) continue;
-        t.paralyzed = 5.0f;
+        t.paralyzed = t.paralyze_time;
     }
+}
+
+int Combat::paralyzed(int id) const {
+    const Target* t = find_target(id);
+    return t ? int(t->paralyzed > 0) : -1;
 }
 
 void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
@@ -608,6 +621,7 @@ void Combat::start(bool keep_stats) {
         t.pos = obj.position;
         t.yaw = obj.yaw;
         if (!obj.dead) obj.health = num(*health, 0, 10);   // CHealthComponent: max health
+        if (const float ms = num(*health, 3, 0); ms > 0) t.paralyze_time = ms / 1000.0f;
         if (health->size() > 9) t.hurt_sounds = sound_list((*health)[6]), t.death_sounds = sound_list((*health)[9]);
         if (const Value* tg = component(o, kCompTargetable)) {
             t.hit_effect = effect_name(str(*tg, 12).empty() ? str(*tg, 8) : str(*tg, 12));
@@ -636,6 +650,25 @@ void Combat::start(bool keep_stats) {
     }
 }
 
+bool Combat::set_projectile(Target& t, int type) {
+    auto p = gol_.find(type);
+    if (p == gol_.end()) return false;
+    const Value* pr = resolved_template(p->second, gol_, kCompProjectile);
+    if (!pr || pr->size() <= 8) return false;
+    t.bolt_impacts = read_impacts(*pr);
+    t.ranged = true;
+    t.bolt_damage = num(*pr, 2, 3);
+    t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
+    if (lower(p->second.name).find("throw") != std::string::npos || lower(p->second.name).find("plasma") != std::string::npos)
+        t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
+    return true;
+}
+
+bool Combat::set_bullet_type(int npc, int type) {
+    Target* t = find_target(npc);
+    return t && t->actor && set_projectile(*t, type);
+}
+
 void Combat::setup_actor(Target& t, const LevelObject& o) {
     t.actor = true;
     t.mobile = component(o, kCompGroundNavigation) != nullptr;
@@ -660,17 +693,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if (auto w = gol_.find(weapon); w != gol_.end()) {
             if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
                 if (nw->size() > 22) t.fire_sounds = sound_list((*nw)[22]);
-                if (auto p = gol_.find((*nw)[0].i); p != gol_.end()) {
-                    if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 8) {
-                        t.bolt_impacts = read_impacts(*pr);
-                        t.ranged = true;
-                        t.bolt_damage = num(*pr, 2, 3);
-                        t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
-                        if (lower(p->second.name).find("throw") != std::string::npos ||
-                            lower(p->second.name).find("plasma") != std::string::npos)
-                            t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
-                    }
-                }
+                set_projectile(t, (*nw)[0].i);
             }
         }
     }
@@ -1025,6 +1048,27 @@ bool Combat::push_goal(int actor, const NpcGoal& g) {
             return true;
         }
     return false;
+}
+
+bool Combat::teleport_to_player(int npc, int goal_id) {
+    const Target* t = find_target(npc);
+    if (!t || !t->actor) return false;
+    const glm::vec3 feet = player_center() - glm::vec3(0, 0, player_.radius.z);
+    glm::vec3 away = t->pos - feet;
+    away.z = 0;
+    away = glm::length(away) > 1e-3f ? glm::normalize(away) : glm::vec3(0, 1, 0);
+    NpcGoal g;
+    g.kind = NpcGoal::Kind::Teleport;
+    g.id = goal_id;
+    g.pos = feet + away * 8.0f;
+    for (float d : {8.0f, 5.0f, 3.0f}) {   // the nearest walkable point at that distance or closer
+        glm::vec3 on;
+        if (nav_.nearest(feet + away * d + glm::vec3(0, 0, 0.5f), 4.0f, on) >= 0) {
+            g.pos = on;
+            break;
+        }
+    }
+    return push_goal(npc, g);
 }
 
 bool Combat::goal_pending(int actor, int goal_id) const {
@@ -1494,6 +1538,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             continue;
         }
         if (t.actor) update_actor(t, dt);
+        else if (t.paralyzed > 0) t.paralyzed -= dt;
     }
     // Keep actors apart.
     for (size_t i = 0; i < targets_.size(); ++i) {

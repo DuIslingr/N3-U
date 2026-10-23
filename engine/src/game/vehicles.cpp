@@ -150,6 +150,7 @@ bool LevelLogic::enter_mech(int id) {
 }
 
 void LevelLogic::leave_vehicle() {
+    if (limited_.on) limited_end();   // SwitchToPlayerOnFoot ends limited control too
     if (Object* m = player_mech_ >= 0 ? object(player_mech_) : nullptr) {
         // The mech stays where it was walked to; the player steps out in front.
         m->position = player.center - glm::vec3(0, 0, player.radius.z), m->yaw = player.yaw;

@@ -147,6 +147,14 @@ public:
     // use_machinegun (gun). False if `npc` is no actor or the event is not an order.
     bool npc_order(int npc, const std::string& order, int arg, bool flag);
     bool ignore_target(int npc, int target, bool on);
+    // IsParalyzed: an object the Paralyze power has frozen (doors, power modules, enemies).
+    // -1 if it has no health.
+    int paralyzed(int id) const;
+    // Npc_SetBulletType (CNPCComponent::SetWeaponBulletType): the NPC fires this projectile type.
+    bool set_bullet_type(int npc, int type);
+    // NpcCmd_TeleportToTarget (CNPCComponent::StartTeleportToTarget): the NPC appears on the
+    // walkable area a few metres from the player, on its own side. Queued as goal `goal_id`.
+    bool teleport_to_player(int npc, int goal_id);
     // Npc_SetCustomIdleState (CNPCComponent::SetCustomIdleState): a state of the NPC's
     // state set to idle in ("ConsoleWork", "Talk"); "" for its usual idle.
     bool set_idle_state(int npc, const std::string& state);
@@ -246,6 +254,7 @@ private:
         // mounted gun), AI off, keep within an ai_region box.
         bool follow = false, hold = false, ai_locked = false, has_region = false;
         float paralyzed = 0;   // seconds left frozen by the Paralyze power
+        float paralyze_time = 5;   // CHealthComponent::GetParalyzeDuration (health [3], ms)
         glm::vec3 region_min{0}, region_max{0};          // created by a spawn manager (its body is removed later)
         // CTargetableComponent: particle effects when hit and when killed, at a node.
         std::string hit_effect, hit_node, death_effect, death_node;
@@ -318,6 +327,7 @@ private:
 
     const Value* component(const LevelObject& o, int comp) const;
     void setup_actor(Target& t, const LevelObject& o);
+    bool set_projectile(Target& t, int type);   // its bolts: the projectile type's (CProjectileComponent)
     void play(Target& t, const std::string& clip, bool loop);
     void update_actor(Target& t, float dt);
     void move_along_path(Target& t, float dt, float speed_scale = 1);

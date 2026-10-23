@@ -6,6 +6,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -35,6 +36,9 @@ public:
     struct State {
         std::string clip;
         std::vector<Event> sounds;
+        bool loop = false;
+        std::string next;                                    // the state after its clip ("" none)
+        std::vector<std::pair<float, std::string>> scripts;  // Script tracks: (ms, function)
     };
     const State* state(int type, const std::string& name);
     // Play (or stop) a state's sounds at `at`; returns the handles of those started.

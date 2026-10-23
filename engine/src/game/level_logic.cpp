@@ -280,6 +280,7 @@ void LevelLogic::start(StartMode mode) {
         param_ramps_.clear();
         grading_.dirty = true;
     }
+    if (!keep_player) timer = -1, timer_paused = false;
     if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
                       path_marker = {}, objective_markers.clear();
     objects_.clear();
@@ -321,6 +322,24 @@ void LevelLogic::start(StartMode mode) {
             for (size_t k = 0; k < o.effects.size(); ++k)
                 if (o.effects[k].autostart) start_effect(o, int(k));
     }
+    // The limited-control rig: its scripts, its object (hidden until used), the player
+    // type's defaults (CPlayerLimitedControlComponent::Load: strafe speed, yaw, pitch limits).
+    limited_ = Limited{};
+    for (const auto& [type_id, type] : gol) {
+        if (type.name == "PlayerLimitedControl") limited_.rig_type = type_id;
+        if (type.name == "Player")
+            if (auto c = type.templates.find(0x36); c != type.templates.end() && c->second.size() >= 3)
+                for (int k = 0; k < 3; ++k) limited_.defaults[k] = c->second[size_t(k)].as_float();
+    }
+    if (limited_.rig_type >= 0) {
+        load_type_scripts(limited_.rig_type);
+        limited_.rig = scene.spawn_object(limited_.rig_type, -1002, player.center, 0);
+        if (limited_.rig != size_t(-1)) scene.set_object_viewmodel(limited_.rig), scene.set_object_visible(limited_.rig, false);
+    }
+    links_.clear();
+    for (auto& [id, o] : objects_)
+        if (const Value* l = o.index < scene.level().objects.size() ? object_component(o, 0x17) : nullptr; l && l->size() > 0 && (*l)[0].i > 0)
+            link(id, (*l)[0].i);
     // The camera's zone is looked up by position on the first frame (CZonesManager::
     // UpdateVisibility); only teleports set it. A section reload (LoadLevelSections) puts
     // the player back where it was; the level's start script runs again, the spawn's does not.
@@ -331,6 +350,57 @@ void LevelLogic::start(StartMode mode) {
         if (const Object* sp = object(start_spawn_id_)) teleport_player(*sp);
     if (properties_id_ >= 0) start_script("Obj" + std::to_string(properties_id_) + "_OnEnter", properties_id_);
     if (start_spawn_id_ >= 0 && mode == StartMode::New) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
+}
+
+// --- linked objects -------------------------------------------------------------------
+
+void LevelLogic::load_type_scripts(int type) {
+    auto g = gol.find(type);
+    if (g == gol.end()) return;
+    std::vector<std::string> chunks;
+    for (const auto& [comp, flag] : resolved_components(g->second, gol))
+        if (const Value* t = resolved_template(g->second, gol, comp)) collect_scripts(*t, chunks);
+    for (const std::string& c : chunks) {
+        ++stats_.chunks;
+        if (!runtime_.load(c, g->second.name)) ++stats_.chunk_errors;
+    }
+}
+
+bool LevelLogic::link(int id, int target) {
+    const Object* o = object(id);
+    const Object* t = object(target);
+    constexpr size_t kNone = std::numeric_limits<size_t>::max();
+    if (!o || !t || o->index == kNone || t->index == kNone || id == target) return false;
+    unlink(id);
+    Link l;
+    l.id = id, l.target = target;
+    l.last = scene.object_matrix(t->index);
+    l.local = glm::inverse(l.last) * scene.object_matrix(o->index);
+    links_.push_back(l);
+    return true;
+}
+
+void LevelLogic::unlink(int id) {
+    for (const Link& l : links_)
+        if (l.id == id && l.held && combat) combat->npc_order(id, "imobile", 0, false);
+    std::erase_if(links_, [id](const Link& l) { return l.id == id; });
+}
+
+void LevelLogic::update_links() {
+    for (Link& l : links_) {
+        Object* o = object(l.id);
+        const Object* t = object(l.target);
+        if (!o || !t) continue;
+        const bool actor = combat && combat->is_actor(l.id);
+        if (actor && !l.held) l.held = combat->npc_order(l.id, "imobile", 0, true);
+        const glm::mat4 m = scene.object_matrix(t->index);
+        if (m == l.last) continue;
+        l.last = m;
+        const glm::mat4 placed = m * l.local;
+        o->position = glm::vec3(placed[3]);
+        if (actor) combat->place_actor(l.id, o->position);
+        else scene.set_object_transform(o->index, placed);
+    }
 }
 
 // --- checkpoints ----------------------------------------------------------------------
@@ -1343,12 +1413,19 @@ void LevelLogic::update(float dt) {
     update_grading(dt);
     update_heat_haze(dt);
     update_vehicles(dt);
+    if (timer >= 0 && !timer_paused) {   // ILevelInterface::UpdateTimer
+        const int before = int(timer);
+        timer -= dt;
+        if (timer >= 0 && int(timer) != before && audio) audio->play("sfx_ui_time_counter");
+    }
     fov_t_ += dt;
     objectives.show = std::max(objectives.show - dt, 0.0f);
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);
     update_dialog(dt);
     update_movers(dt);
+    update_links();
+    update_limited(dt);
     update_cinematics(dt);
     update_tutorial(dt);
     look_left_ = std::max(look_left_ - dt, 0.0f);
