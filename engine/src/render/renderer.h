@@ -2,6 +2,7 @@
 // One code path for Vulkan, Direct3D 12 and Metal (SPIR-V shaders for now).
 #pragma once
 
+#include <array>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -125,7 +126,12 @@ struct PostParams {
     bool height_fog = false;           // HEIGHTFOG: fog below a height
     float fog_top = 0, fog_bottom = 0, fog_opacity = 0;
     glm::vec3 fog_color{1};
-    bool active() const { return dof || height_fog; }
+    // Colour grading (ColorCorrection, CCFS.glsl): per-channel curves, 256 RGBA entries
+    // (r from .r, g from .g, b from .b); bump the version when they change.
+    bool grading = false;
+    std::array<uint8_t, 256 * 4> grading_curve{};
+    uint32_t grading_version = 0;
+    bool active() const { return dof || height_fog || grading; }
 };
 
 struct FrameParams {
@@ -231,6 +237,9 @@ private:
     SDL_GPUTexture* scene_color_ = nullptr;             // post effects: the scene, then two blur targets
     SDL_GPUTexture* blur_a_ = nullptr;
     SDL_GPUTexture* blur_b_ = nullptr;
+    SDL_GPUTexture* grading_ = nullptr;                 // 256x1 colour grading curves
+    SDL_GPUTransferBuffer* grading_transfer_ = nullptr;
+    uint32_t grading_version_ = ~0u;
     uint32_t post_w_ = 0, post_h_ = 0;
     std::unordered_map<int, PostPipelines> post_pipelines_;
     SDL_GPUShader* vs_color_ = nullptr;

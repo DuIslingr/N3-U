@@ -664,6 +664,15 @@ int api_set_global_awareness_factor(lua_State* L) {
     return 0;
 }
 
+int api_set_color_grading(lua_State* L) {   // SetColorGrading(lut, ms)
+    ctx(L).set_color_grading(str_arg(L, 1), float(lua_tonumber(L, 2)));
+    return 0;
+}
+int api_disable_color_grading(lua_State* L) {
+    ctx(L).disable_color_grading();
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -787,6 +796,8 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"SetColorGrading", api_set_color_grading},
+    {"DisableColorGrading", api_disable_color_grading},
     {"LockTarget", api_lock_target},
     {"IgnoreTarget", api_ignore_target},
     {"Npc_SetPrimaryTarget", api_set_primary_target},

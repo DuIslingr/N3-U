@@ -232,7 +232,7 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     vs_particle_ = load_shader(shader_dir + "/particle.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs_particle_ = load_shader(shader_dir + "/particle.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     fs_post_blur_ = load_shader(shader_dir + "/post_blur.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
-    fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
+    fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
 
     SDL_GPUSamplerCreateInfo si{};
     si.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -321,8 +321,9 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blur);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.final);
     }
-    for (SDL_GPUTexture* t : {scene_color_, blur_a_, blur_b_})
+    for (SDL_GPUTexture* t : {scene_color_, blur_a_, blur_b_, grading_})
         if (t) SDL_ReleaseGPUTexture(device_, t);
+    if (grading_transfer_) SDL_ReleaseGPUTransferBuffer(device_, grading_transfer_);
     SDL_ReleaseGPUShader(device_, vs_post_);
     SDL_ReleaseGPUShader(device_, vs_particle_);
     SDL_ReleaseGPUShader(device_, fs_particle_);
@@ -949,6 +950,30 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     // Scene to a texture, then the blur (quarter size, horizontal then vertical, as the
     // game's RenderBlur), then everything combined into the target, then the HUD.
     ensure_post_targets(w, h);
+    if (!grading_) {
+        SDL_GPUTextureCreateInfo ti{};
+        ti.type = SDL_GPU_TEXTURETYPE_2D;
+        ti.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        ti.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        ti.width = 256, ti.height = 1, ti.layer_count_or_depth = 1, ti.num_levels = 1;
+        grading_ = SDL_CreateGPUTexture(device_, &ti);
+        SDL_GPUTransferBufferCreateInfo tbi{};
+        tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbi.size = 256 * 4;
+        grading_transfer_ = SDL_CreateGPUTransferBuffer(device_, &tbi);
+        if (!grading_ || !grading_transfer_) fail("colour grading texture");
+    }
+    if (post->grading && post->grading_version != grading_version_) {
+        grading_version_ = post->grading_version;
+        std::memcpy(SDL_MapGPUTransferBuffer(device_, grading_transfer_, true), post->grading_curve.data(), 256 * 4);
+        SDL_UnmapGPUTransferBuffer(device_, grading_transfer_);
+        SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureTransferInfo src{grading_transfer_, 0, 256, 1};
+        SDL_GPUTextureRegion dst{};
+        dst.texture = grading_, dst.w = 256, dst.h = 1, dst.d = 1;
+        SDL_UploadToGPUTexture(copy, &src, &dst, true);
+        SDL_EndGPUCopyPass(copy);
+    }
     encode_scene(cmd, scene_color_, kOffscreenFormat, w, h, items, frame, false);
     const PostPipelines& pp = post_pipelines_for(format);
     auto run = [&](SDL_GPUTexture* out, uint32_t ow, uint32_t oh, SDL_GPUGraphicsPipeline* pipe,
@@ -979,7 +1004,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     }
     struct {
         glm::mat4 inv_view_proj;
-        glm::vec4 camera, forward, dof, fog, fog_color;
+        glm::vec4 camera, forward, dof, fog, fog_color, grading;
     } u;
     u.inv_view_proj = glm::inverse(frame.proj * frame.view);
     u.camera = glm::vec4(frame.camera, 1);
@@ -987,7 +1012,8 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     u.dof = {post->dof_focus, post->dof_range, post->dof_factor, post->dof ? 1.0f : 0.0f};
     u.fog = {post->fog_top, post->fog_bottom, post->fog_opacity, post->height_fog ? 1.0f : 0.0f};
     u.fog_color = glm::vec4(post->fog_color, 1);
-    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_}, &u, sizeof u, !frame.hud3d);
+    u.grading = glm::vec4(post->grading ? 1.0f : 0.0f, 0, 0, 0);
+    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_, grading_}, &u, sizeof u, !frame.hud3d);
     if (frame.hud3d) encode_hud(cmd, target, format, w, h, items, frame);
 }
 

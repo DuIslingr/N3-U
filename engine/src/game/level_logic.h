@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <algorithm>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -89,6 +90,10 @@ public:
         bool on = false;
         glm::vec3 position{0};
     } path_marker;
+    // Colour grading (CLevel: the level's LUT, level properties [38]; SetColorGrading(lut,
+    // ms) blends to another over ms, DisableColorGrading turns it off). Fills post.grading.
+    void set_color_grading(const std::string& lut, float ms);
+    void disable_color_grading() { grading_.on = false, grading_.dirty = true; }
     void set_primary_objective(const std::string& id);
     void add_secondary_objective(const std::string& id);
     void secondary_objective_complete(const std::string& id);
@@ -318,6 +323,15 @@ private:
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
     float time_factor_ = 1, time_factor_left_ = 0;
+    struct Grading {
+        std::string current, previous;
+        float left = 0, total = 0;   // blend from previous to current (seconds)
+        bool on = false, dirty = true;
+    } grading_;
+    std::string default_lut_;
+    std::unordered_map<std::string, std::array<uint8_t, 1024>> luts_;
+    const std::array<uint8_t, 1024>* lut(const std::string& name);   // its curves, nullptr if missing
+    void update_grading(float dt);
     std::unique_ptr<class AnimSounds> anim_sounds_;
     int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
     glm::vec4 level_fog_color_{0};

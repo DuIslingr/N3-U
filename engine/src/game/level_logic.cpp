@@ -77,6 +77,7 @@ void LevelLogic::load_objects() {
                 while (!music_event_.empty() && music_event_.back() == ' ') music_event_.pop_back();
                 music_gap_min_ = o.fields[43].as_float(), music_gap_max_ = o.fields[44].as_float();
             }
+            default_lut_ = o.fields.size() > 38 && o.fields[38].type == Value::String ? o.fields[38].s : "";   // colour grading
             // The level's string table (CComponentLevelProperties [24]), after MAIN.
             strings = StringTable();
             strings.load(scene.vfs(), "MAIN");
@@ -260,7 +261,11 @@ void LevelLogic::start(bool keep_player) {
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
     if (!keep_player) fading_ = false, shake_left_ = 0, time_factor_left_ = 0;
     anim_sounds_->clear();
-    if (!keep_player) post = PostParams{}, post_fades_.clear();
+    if (!keep_player) {   // (the grading version keeps counting so the renderer sees new curves)
+        const uint32_t version = post.grading_version;
+        post = PostParams{}, post.grading_version = version + 1, post_fades_.clear();
+        grading_.dirty = true;
+    }
     if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
                       path_marker = {};
     objects_.clear();
@@ -278,6 +283,10 @@ void LevelLogic::start(bool keep_player) {
     level_fog_end_ = scene.fog_end;
     level_fog_density_ = scene.fog_density;
     load_objects();
+    if (!keep_player) {
+        grading_ = Grading{};
+        if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
+    }
     // Apply the starting state: hidden objects are disabled; doors start closed.
     for (auto& [id, o] : objects_) {
         if (o.index == std::numeric_limits<size_t>::max()) continue;
@@ -917,6 +926,63 @@ void LevelLogic::update_music(float dt) {
     if (music_ < 0) music_wait_ = 30;
 }
 
+const std::array<uint8_t, 1024>* LevelLogic::lut(const std::string& name) {
+    std::string base = name;
+    for (char& c : base) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (const size_t dot = base.rfind('.'); dot != std::string::npos) base.resize(dot);
+    if (auto it = luts_.find(base); it != luts_.end()) return &it->second;
+    // lut3/<name>.pvr: PVR v2 (52-byte header: height at 4, width at 8), RGBA 8888. The
+    // LUTs are per-channel curves: red and blue along x, green along y.
+    if (!scene.vfs().exists(base + ".pvr")) {
+        log("colour grading: no LUT " + name);
+        return nullptr;
+    }
+    const Bytes d = scene.vfs().read(base + ".pvr");
+    auto u32 = [&](size_t p) { return p + 4 <= d.size() ? uint32_t(d[p] | d[p + 1] << 8 | d[p + 2] << 16 | uint32_t(d[p + 3]) << 24) : 0u; };
+    const uint32_t header = u32(0), h = u32(4), w = u32(8);
+    if (w == 0 || h == 0 || d.size() < header + size_t(w) * h * 4) return nullptr;
+    auto texel = [&](uint32_t x, uint32_t y, int c) { return float(d[header + (size_t(y) * w + x) * 4 + size_t(c)]); };
+    // Linear filtering at the colour itself as the coordinate (clamped to the edge texels).
+    auto sample = [&](float u, uint32_t n, auto&& at) {
+        const float p = std::clamp(u * float(n) - 0.5f, 0.0f, float(n - 1));
+        const uint32_t i = uint32_t(p), j = std::min(i + 1, n - 1);
+        return at(i) + (at(j) - at(i)) * (p - float(i));
+    };
+    std::array<uint8_t, 1024>& out = luts_[base];
+    for (int i = 0; i < 256; ++i) {
+        const float u = float(i) / 255.0f;
+        out[size_t(i) * 4 + 0] = uint8_t(std::lround(sample(u, w, [&](uint32_t x) { return texel(x, 0, 0); })));
+        out[size_t(i) * 4 + 1] = uint8_t(std::lround(sample(u, h, [&](uint32_t y) { return texel(0, y, 1); })));
+        out[size_t(i) * 4 + 2] = uint8_t(std::lround(sample(u, w, [&](uint32_t x) { return texel(x, 0, 2); })));
+        out[size_t(i) * 4 + 3] = 255;
+    }
+    return &out;
+}
+
+void LevelLogic::set_color_grading(const std::string& name, float ms) {
+    // CLevel::ChangeColorGrading: with a time and grading on, blend from the current LUT.
+    if (ms > 0 && grading_.on) grading_.previous = grading_.current, grading_.total = grading_.left = ms / 1000.0f;
+    else grading_.left = grading_.total = 0;
+    grading_.current = name;
+    grading_.on = true;
+    grading_.dirty = true;
+}
+
+void LevelLogic::update_grading(float dt) {
+    if (grading_.left > 0) grading_.left = std::max(grading_.left - dt, 0.0f), grading_.dirty = true;
+    if (!grading_.dirty) return;
+    grading_.dirty = false;
+    const std::array<uint8_t, 1024>* now = grading_.on ? lut(grading_.current) : nullptr;
+    post.grading = now != nullptr;
+    if (!now) return;
+    // Blend2: mix(new, old, factor), the factor going from 1 to 0 over the time.
+    const std::array<uint8_t, 1024>* old = grading_.left > 0 ? lut(grading_.previous) : nullptr;
+    const float f = old ? grading_.left / grading_.total : 0.0f;
+    for (size_t i = 0; i < 1024; ++i)
+        post.grading_curve[i] = old ? uint8_t(std::lround(float((*now)[i]) + (float((*old)[i]) - float((*now)[i])) * f)) : (*now)[i];
+    ++post.grading_version;
+}
+
 void LevelLogic::set_primary_objective(const std::string& id) {
     if (audio) audio->play("sfx_menu_objectives_pop_up");
     const std::string t = strings.find(id);
@@ -949,6 +1015,7 @@ void LevelLogic::primary_objective_complete() {
 }
 
 void LevelLogic::update(float dt) {
+    update_grading(dt);
     objectives.show = std::max(objectives.show - dt, 0.0f);
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);
