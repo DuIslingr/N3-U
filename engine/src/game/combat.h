@@ -110,6 +110,11 @@ public:
     void damage_player(float amount, const glm::vec3& from);
 
     bool shoot_enabled = true;         // EnableShootControl
+    // SetGlobalAwarenessFactor: how fast NPCs notice their enemies (0: not at all).
+    float awareness_factor = 1;
+    // LockTarget / IgnoreTarget (object ids; 0 is the player). False if `npc` is no actor.
+    bool lock_target(int npc, int target, bool on);
+    bool ignore_target(int npc, int target, bool on);
     bool player_invulnerable = false;  // debugging (--god)
     float player_health = 150, player_max_health = 150;
     bool player_dead = false;
@@ -174,7 +179,13 @@ private:
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
         bool invulnerable = false;
-        bool spawned = false;          // created by a spawn manager (its body is removed later)
+        bool spawned = false;
+        // Who it fights: -1 the player, >= 0 a target index, kNoEnemy none. Scripts can
+        // lock a target (LockTarget: object id, 0 the player) or make it ignore some.
+        int enemy = kNoEnemy;
+        int locked = -1;               // object id; 0 the player; -1 none
+        std::vector<int> ignored;      // object ids; 0 the player
+        float choose_timer = 0, awareness = 0;          // created by a spawn manager (its body is removed later)
         // CTargetableComponent: particle effects when hit and when killed, at a node.
         std::string hit_effect, hit_node, death_effect, death_node;
         // CHealthComponent sounds; the NPC weapon's shot sounds (one per burst) and impacts.
@@ -252,7 +263,13 @@ private:
     void path_to(Target& t, const glm::vec3& goal);
     void stay_on_mesh(Target& t);
     void face(Target& t, const glm::vec3& towards, float dt);
-    bool sees_player(const Target& t) const;
+    static constexpr int kNoEnemy = -2;
+    // The enemy's feet and the point to shoot at; false if it is gone.
+    bool enemy_points(const Target& t, int enemy, glm::vec3& feet, glm::vec3& chest) const;
+    bool sees_point(const Target& t, const glm::vec3& point) const;
+    bool fights(const Target& t, int enemy) const;   // a valid enemy for t
+    int choose_enemy(const Target& t) const;
+    Target* find_target(int id);
     bool line_clear(const glm::vec3& a, const glm::vec3& b) const;
     void notice(Target& t);
     void apply_damage(Target& t, float amount, bool by_player);
@@ -290,7 +307,7 @@ private:
     std::vector<Grenade> live_grenades_;
     float throw_delay_ = -1, grenade_cooldown_ = 0;
     bool throw_started_ = false;
-    void fire_bolt(Target& t);
+    void fire_bolt(Target& t, const glm::vec3& at);
     // Ray against targets: index and distance, -1 if none within `max_t`.
     int ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t, float& t_hit, glm::vec3& point) const;
     WeaponDef load_weapon(const std::string& type_name) const;

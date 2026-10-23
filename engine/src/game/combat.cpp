@@ -565,9 +565,81 @@ bool Combat::line_clear(const glm::vec3& a, const glm::vec3& b) const {
     return !scene_.collision().raycast(a, b, t);
 }
 
-bool Combat::sees_player(const Target& t) const {
+Combat::Target* Combat::find_target(int id) {
+    for (Target& t : targets_)
+        if (t.id == id) return &t;
+    return nullptr;
+}
+
+bool Combat::lock_target(int npc, int target, bool on) {
+    Target* t = find_target(npc);
+    if (!t || !t->actor) return false;
+    t->locked = on ? target : -1;
+    t->choose_timer = 0;
+    if (on) t->aware = true;
+    return true;
+}
+
+bool Combat::ignore_target(int npc, int target, bool on) {
+    Target* t = find_target(npc);
+    if (!t || !t->actor) return false;
+    auto it = std::find(t->ignored.begin(), t->ignored.end(), target);
+    if (on && it == t->ignored.end()) t->ignored.push_back(target);
+    if (!on && it != t->ignored.end()) t->ignored.erase(it);
+    t->choose_timer = 0;
+    return true;
+}
+
+bool Combat::enemy_points(const Target& t, int enemy, glm::vec3& feet, glm::vec3& chest) const {
+    (void)t;
+    if (enemy == -1) {
+        if (player_dead) return false;
+        feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+        chest = player_center();
+        return true;
+    }
+    if (enemy < 0 || size_t(enemy) >= targets_.size() || !alive(targets_[size_t(enemy)])) return false;
+    const Target& e = targets_[size_t(enemy)];
+    feet = e.pos;
+    chest = e.pos + glm::vec3(0, 0, e.height * (e.actor ? 0.65f : 0.5f));
+    return true;
+}
+
+bool Combat::fights(const Target& t, int enemy) const {
+    const int id = enemy == -1 ? 0 : enemy >= 0 && size_t(enemy) < targets_.size() ? targets_[size_t(enemy)].id : -1;
+    if (id < 0 || std::find(t.ignored.begin(), t.ignored.end(), id) != t.ignored.end()) return false;
+    if (id == t.locked) return true;
+    if (enemy == -1) return (t.attacks & kPlayerTeamBit) != 0 && !player_dead;
+    const Target& e = targets_[size_t(enemy)];
+    return &e != &t && e.actor && alive(e) && (t.attacks & (1u << e.team)) != 0;
+}
+
+int Combat::choose_enemy(const Target& t) const {
+    // A locked target while it lasts; else the nearest enemy in sight (the current one if
+    // none is), by team masks.
+    if (t.locked == 0) return player_dead ? kNoEnemy : -1;
+    if (t.locked > 0) {
+        for (size_t i = 0; i < targets_.size(); ++i)
+            if (targets_[i].id == t.locked) return alive(targets_[i]) ? int(i) : kNoEnemy;
+        return kNoEnemy;
+    }
+    int best = kNoEnemy;
+    float best_d = 1e9f;
+    auto consider = [&](int enemy) {
+        glm::vec3 feet, chest;
+        if (!fights(t, enemy) || !enemy_points(t, enemy, feet, chest)) return;
+        const float d = glm::distance(t.pos, feet) * (enemy == t.enemy ? 0.8f : 1.0f);   // stay on the current one
+        if (d < best_d && d < t.sight && sees_point(t, chest)) best = enemy, best_d = d;
+    };
+    consider(-1);
+    for (size_t i = 0; i < targets_.size(); ++i)
+        if (targets_[i].actor) consider(int(i));
+    if (best == kNoEnemy && t.enemy != kNoEnemy && fights(t, t.enemy)) return t.enemy;   // chase the one it had
+    return best;
+}
+
+bool Combat::sees_point(const Target& t, const glm::vec3& target) const {
     const glm::vec3 eye = t.pos + glm::vec3(0, 0, t.height * 0.85f);
-    const glm::vec3 target = player_.eye();
     const float d = glm::distance(eye, target);
     if (d > t.sight) return false;
     if (d > t.close) {
@@ -578,8 +650,9 @@ bool Combat::sees_player(const Target& t) const {
 }
 
 void Combat::notice(Target& t) {
-    if (t.aware || !t.hostile) return;
+    if (t.aware) return;
     t.aware = true;
+    if (!t.hostile) return;
     logic_.runtime_.send_event("EnemyAware", t.id);
     // Others close by hear about it.
     for (Target& o : targets_)
@@ -760,12 +833,21 @@ void Combat::update_actor(Target& t, float dt) {
         run_goal(t, dt);
         return;
     }
-    if (!t.hostile) return;
-    const glm::vec3 target = player_.center - glm::vec3(0, 0, player_.radius.z);   // the player's feet
+    if (t.attacks == 0 && t.locked < 0) return;
+    if ((t.choose_timer -= dt) <= 0) t.choose_timer = 0.4f, t.enemy = choose_enemy(t);
+    glm::vec3 target, chest;
+    if (!enemy_points(t, t.enemy, target, chest)) t.enemy = kNoEnemy, target = t.pos, chest = t.pos;
+    const bool on_player = t.enemy == -1;
     const float dist = glm::distance(glm::vec2(t.pos), glm::vec2(target));
-    const bool sees = !player_dead && sees_player(t);
-    if (sees) notice(t), t.lost_sight = 0;
-    else t.lost_sight += dt;
+    const bool sees = t.enemy != kNoEnemy && sees_point(t, chest);
+    if (sees) {
+        // Noticing takes a moment, scaled by the global awareness factor (0: never).
+        t.awareness += dt * 2.0f * awareness_factor;
+        if (t.awareness >= 1 || t.locked >= 0) notice(t);
+        t.lost_sight = 0;
+    } else {
+        t.lost_sight += dt;
+    }
     if (t.mobile && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
             glm::vec3 to;
@@ -785,7 +867,13 @@ void Combat::update_actor(Target& t, float dt) {
             return;
         }
     }
-    if (!t.aware || player_dead) {
+    // Allies hold their ground: they fight what they see but do not hunt.
+    const bool idle = !t.aware || t.enemy == kNoEnemy || (!t.hostile && !sees && t.locked < 0);
+    if (idle) {
+        if (!t.hostile) {   // allies: leave whatever the scripts play alone, unless they were fighting
+            if (t.state != S::Idle) t.state = S::Idle, play(t, t.clip_idle, true);
+            return;
+        }
         if (t.state != S::Idle) t.state = S::Idle;
         play(t, t.aware ? t.clip_alert : t.clip_idle, true);
         scene_.set_object_pose(t.object, t.pos, t.yaw);
@@ -800,7 +888,10 @@ void Combat::update_actor(Target& t, float dt) {
         face(t, target, dt);
         if (!t.melee_hit && t.timer > 0.45f) {
             t.melee_hit = true;
-            if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) damage_player(t.melee_damage, t.pos);
+            if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) {
+                if (on_player) damage_player(t.melee_damage, t.pos);
+                else if (t.enemy >= 0) apply_damage(targets_[size_t(t.enemy)], t.melee_damage, false);
+            }
         }
         if (scene_.clip_finished(t.object) || t.timer > 1.4f) t.state = S::Chase, t.timer = 0;
         break;
@@ -810,19 +901,18 @@ void Combat::update_actor(Target& t, float dt) {
         t.fire_timer -= dt;
         if (t.fire_timer <= 0) {
             if (t.shots_left <= 0) {
-                // A new burst needs one of the few attack tokens; otherwise aim and wait.
+                // A new burst at the player needs one of the few attack tokens; otherwise aim and wait.
                 int shooters = 0;
                 for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
-                if (shooters >= kMaxShooters || burst_cooldown_ > 0) {
+                if (on_player && (shooters >= kMaxShooters || burst_cooldown_ > 0)) {
                     t.fire_timer = 0.3f;
                     play(t, t.clip_alert, true);
                     break;
                 }
-                t.token = true;
                 t.shots_left = t.burst;
-                burst_cooldown_ = kBurstInterval;
+                if (on_player) t.token = true, burst_cooldown_ = kBurstInterval;
             }
-            fire_bolt(t);
+            fire_bolt(t, chest);
             --t.shots_left;
             if (t.shots_left > 0) {
                 t.fire_timer = t.burst_gap;
@@ -883,12 +973,12 @@ void Combat::update_actor(Target& t, float dt) {
     scene_.set_object_pose(t.object, t.pos, t.yaw);
 }
 
-void Combat::fire_bolt(Target& t) {
+void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
     muzzle += glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.3f);
-    // Aim at the player's chest with some inaccuracy that grows with distance.
-    glm::vec3 aim = player_center() - muzzle;
+    // Aim at the enemy's chest with some inaccuracy that grows with distance.
+    glm::vec3 aim = at - muzzle;
     const float dist = glm::length(aim);
     std::normal_distribution<float> n(0.0f, 0.05f + 0.004f * dist);
     aim = glm::normalize(aim / std::max(dist, 0.01f) + glm::vec3(n(rng_), n(rng_), n(rng_) * 0.5f));
@@ -921,7 +1011,7 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     if (!o || o->dead || t.invulnerable || !o->enabled) return;
     o->health -= amount;
     if (by_player) logic_.runtime_.send_event("TargetHit", t.id);
-    if (t.actor && t.hostile) notice(t);
+    if (t.actor) notice(t);
     if (o->health <= 0) {
         die(t);
         return;
@@ -1144,8 +1234,21 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         const float s = glm::dot(seg, seg) > 0 ? glm::clamp(glm::dot(pc - b.pos, seg) / glm::dot(seg, seg), 0.0f, 1.0f) : 0.0f;
         const glm::vec3 c = b.pos + seg * s;
         const glm::vec3 off = c - pc;
-        if (!player_dead && glm::length(glm::vec2(off)) < player_.radius.x + 0.15f && std::abs(off.z) < player_.radius.z) {
+        // Other targets the shooter fights (not its friends) in the way.
+        float hit_t = 0;
+        glm::vec3 hit_p;
+        const float seg_len = glm::length(seg);
+        const int hit = seg_len > 1e-4f ? ray_target(b.pos, seg / seg_len, seg_len, hit_t, hit_p) : -1;
+        const Target* shooter = b.owner >= 0 && size_t(b.owner) < targets_.size() ? &targets_[size_t(b.owner)] : nullptr;
+        const bool hits_target = hit >= 0 && hit != b.owner && shooter &&
+                                 ((shooter->attacks & (1u << targets_[size_t(hit)].team)) != 0 || targets_[size_t(hit)].id == shooter->locked);
+        if (!player_dead && shooter && (shooter->attacks & kPlayerTeamBit) && glm::length(glm::vec2(off)) < player_.radius.x + 0.15f &&
+            std::abs(off.z) < player_.radius.z) {
             damage_player(b.damage, b.pos);
+            b.life = 0;
+        } else if (hits_target) {
+            apply_damage(targets_[size_t(hit)], b.damage, false);
+            if (!targets_[size_t(hit)].hit_effect.empty()) effect(targets_[size_t(hit)].hit_effect, hit_p, -seg);
             b.life = 0;
         } else if (wall) {
             if (b.owner >= 0 && size_t(b.owner) < targets_.size() && !targets_[size_t(b.owner)].bolt_impacts.effects.empty())

@@ -6,6 +6,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "assets/bsprite.h"
 
@@ -34,6 +35,16 @@ public:
     // A prompt with touch-button glyphs (^NN^: frames of tutorial.bsprite) drawn inline,
     // centred with its top at `at`.
     void draw_prompt(ParticleList& out, TextRenderer& text, const std::string& s, glm::vec2 at, const glm::vec4& color);
+    // The objectives box (CLevel::RenderPrimaryObjective): from (40, 100) in 480x320 base
+    // pixels, the primary objective with its marker, then the secondaries with check boxes.
+    struct ObjectiveLine {
+        std::string text;
+        bool primary = false, done = false;
+    };
+    void draw_objectives(ParticleList& out, TextRenderer& text, const std::vector<ObjectiveLine>& lines, float alpha, int w, int h);
+    // CLevel::RenderObjective: the guide marker (Chatboard.bsprite) over a point with its
+    // distance; off screen, an arrow at the edge pointing its way.
+    void draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w, int h);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
     void frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numbers, ParticleList& sprites);
 

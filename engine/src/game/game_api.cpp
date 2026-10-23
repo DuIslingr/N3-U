@@ -636,8 +636,54 @@ int api_show_dialog(lua_State* L) {
     return 0;
 }
 
-int api_objective(lua_State* L) {
-    ctx(L).message("Objective: " + str_arg(L, 1), 5);
+// EnablePath(waypoint[, text id, flag]): CPlayerBaseComponent's guide waypoint.
+int api_enable_path(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1)));
+    c.path_marker.on = wp != nullptr;
+    if (wp) c.path_marker.position = wp->position;
+    return 0;
+}
+
+// LockTarget(npc, target, on), IgnoreTarget(npc, target, on): target 0 is the player.
+// Npc_SetPrimaryTarget(npc, target) is taken as a lock.
+int api_lock_target(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->lock_target(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), lua_toboolean(L, 3) != 0);
+    return 0;
+}
+int api_ignore_target(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->ignore_target(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), lua_toboolean(L, 3) != 0);
+    return 0;
+}
+int api_set_primary_target(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->lock_target(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), true);
+    return 0;
+}
+int api_set_global_awareness_factor(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->awareness_factor = float(lua_tonumber(L, 1));
+    return 0;
+}
+
+int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
+    ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+
+// Objectives by string id (Application::GetStringIdFromName).
+int api_set_primary_objective(lua_State* L) {
+    ctx(L).set_primary_objective(str_arg(L, 1));
+    return 0;
+}
+int api_add_secondary_objective(lua_State* L) {
+    ctx(L).add_secondary_objective(str_arg(L, 1));
+    return 0;
+}
+int api_secondary_objective_complete(lua_State* L) {
+    ctx(L).secondary_objective_complete(str_arg(L, 1));
+    return 0;
+}
+int api_primary_objective_complete(lua_State* L) {   // the game ignores any argument
+    ctx(L).primary_objective_complete();
     return 0;
 }
 
@@ -737,9 +783,16 @@ const Entry kImplemented[] = {
     {"ShowMessage", api_show_message},
     {"ShowMessageEx", api_show_message},
     {"ShowDialogMessage", api_show_dialog},
-    {"AddObjective", api_objective},
-    {"AddSecondaryObjective", api_objective},
-    {"SetPrimaryObjective", api_objective},
+    {"AddSecondaryObjective", api_add_secondary_objective},
+    {"SetPrimaryObjective", api_set_primary_objective},
+    {"StartBulletTime", api_start_bullet_time},
+    {"EnablePath", api_enable_path},
+    {"LockTarget", api_lock_target},
+    {"IgnoreTarget", api_ignore_target},
+    {"Npc_SetPrimaryTarget", api_set_primary_target},
+    {"SetGlobalAwarenessFactor", api_set_global_awareness_factor},
+    {"SecondaryObjectiveComplete", api_secondary_objective_complete},
+    {"PrimaryObjectiveComplete", api_primary_objective_complete},
     // Accepted without effect: saving, persistence of state the engine does not have yet.
     {"SaveGame", api_save_game},
     {"StartRotateTutorial", api_tutorial_step<kRotate>},

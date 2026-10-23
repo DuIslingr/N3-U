@@ -346,6 +346,7 @@ int main(int argc, char** argv) {
             Hud hud(scene);
             TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
             TouchControls touch(hud);   // the Touch scheme's on-screen controls
+            TextRenderer objective_text(vfs, renderer, "Days.ttf", std::max(13.0f, float(opt.height) * 0.026f));
             auto draw_text = [&](FrameParams& f, int w, int h) {
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
@@ -366,6 +367,15 @@ int main(int argc, char** argv) {
                     } else {
                         touch.release_all();
                     }
+                }
+                if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
+                    hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
+                                    glm::distance(f.camera, logic.path_marker.position), w, h);
+                if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked()) {
+                    std::vector<Hud::ObjectiveLine> lines;
+                    if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
+                    for (const auto& s : logic.objectives.secondary) lines.push_back({s.text, false, s.done});
+                    hud.draw_objectives(hud_sprites, objective_text, lines, logic.objectives.alpha, w, h);
                 }
                 if (opt.scripts && !logic.messages().empty()) {
                     const LevelLogic::Message& m = logic.messages().back();
@@ -834,6 +844,10 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
+                    if (opt.scripts) {   // bullet time: the game runs slower for a while of real time
+                        logic.advance_real_time(dt);
+                        dt *= logic.time_scale();
+                    }
                     static int frames_counted = 0;
                     static float frames_time = 0, worst_frame = 0, fps_shown = 0, worst_shown = 0;
                     ++frames_counted;

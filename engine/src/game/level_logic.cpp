@@ -258,10 +258,11 @@ void LevelLogic::start(bool keep_player) {
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
-    if (!keep_player) fading_ = false, shake_left_ = 0;
+    if (!keep_player) fading_ = false, shake_left_ = 0, time_factor_left_ = 0;
     anim_sounds_->clear();
     if (!keep_player) post = PostParams{}, post_fades_.clear();
-    if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear();
+    if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
+                      path_marker = {};
     objects_.clear();
     triggers_.clear();
     doors_.clear();
@@ -916,7 +917,40 @@ void LevelLogic::update_music(float dt) {
     if (music_ < 0) music_wait_ = 30;
 }
 
+void LevelLogic::set_primary_objective(const std::string& id) {
+    if (audio) audio->play("sfx_menu_objectives_pop_up");
+    const std::string t = strings.find(id);
+    objectives.primary = t.empty() ? id : t;
+    objectives.primary_done = false;
+    objectives.secondary.clear();
+    objectives.show = 5;
+}
+
+void LevelLogic::add_secondary_objective(const std::string& id) {
+    if (audio) audio->play("sfx_menu_objectives_pop_up");
+    const std::string t = strings.find(id);
+    objectives.secondary.push_back({id, t.empty() ? id : t, false});
+    objectives.show = 5;
+}
+
+void LevelLogic::secondary_objective_complete(const std::string& id) {
+    if (audio) audio->play("sfx_menu_objective_completed");
+    for (auto& s : objectives.secondary)
+        if (s.id == id) s.done = true, objectives.show = 5;
+    if (!objectives.secondary.empty() &&
+        std::all_of(objectives.secondary.begin(), objectives.secondary.end(), [](const auto& s) { return s.done; }))
+        primary_objective_complete();
+}
+
+void LevelLogic::primary_objective_complete() {
+    if (audio) audio->play("sfx_menu_objective_completed");
+    objectives.primary_done = true;
+    objectives.show = 5;
+}
+
 void LevelLogic::update(float dt) {
+    objectives.show = std::max(objectives.show - dt, 0.0f);
+    objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);
     update_dialog(dt);
     update_movers(dt);

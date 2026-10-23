@@ -1,6 +1,7 @@
 #include "game/hud.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <utility>
 #include <vector>
@@ -127,6 +128,61 @@ void Hud::draw_prompt(ParticleList& out, TextRenderer& text, const std::string& 
         }
         x += pc.size.x;
     }
+}
+
+void Hud::draw_objectives(ParticleList& out, TextRenderer& text, const std::vector<ObjectiveLine>& lines, float alpha, int w, int h) {
+    const Sprite* icons = sprite("controls.bsprite");   // 16 unchecked, 17 checked, 18 primary marker
+    if (lines.empty() || alpha <= 0) return;
+    const float sx = float(std::max(w, h)) / 480.0f, sy = float(std::min(w, h)) / 320.0f;
+    const float scale = float(std::min(w, h)) / 640.0f;
+    const float x0 = 40 * sx;
+    float y = 100 * sy;
+    const float line = text.measure("Ag", 100000).y;
+    for (const ObjectiveLine& l : lines) {
+        const int frame = l.primary ? 18 : l.done ? 17 : 16;
+        float x = x0;
+        if (icons) {
+            const glm::vec4 b = frame_bounds(*icons, frame) * scale;
+            // Primary: the marker left of the text; secondaries: the box starts the line.
+            const float left = l.primary ? x0 - (b.z - b.x) - 4 * sx : x0;
+            draw_frame(out, *icons, frame, {left - b.x, y + line * 0.5f - (b.y + b.w) * 0.5f}, scale, glm::vec4(1, 1, 1, alpha));
+            if (!l.primary) x = x0 + (b.z - b.x) + 4 * sx;
+        }
+        const int wrap = int(float(w) - 5 * sx - x);
+        const glm::vec4 color = l.done && !l.primary ? glm::vec4(0.6f, 0.9f, 0.6f, alpha) : glm::vec4(1, 1, 1, alpha);
+        const float off = std::max(1.0f, float(h) / 480.0f);
+        text.draw(out, l.text, {x + off, y + off}, wrap, glm::vec4(0, 0, 0, alpha * 0.7f), {0.0f, 0.0f});   // shadow
+        text.draw(out, l.text, {x, y}, wrap, color, {0.0f, 0.0f});
+        y += text.measure(l.text, wrap).y + 6 * sy;
+    }
+}
+
+void Hud::draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w,
+                      int h) {
+    const Sprite* s = sprite("Chatboard.bsprite");
+    if (!s) return;
+    // Frames: 226 on screen, 222 left edge, 223 right, 224 top, 225 bottom.
+    const float scale = float(std::min(w, h)) / 640.0f;
+    glm::vec4 c = view_proj * glm::vec4(at, 1);
+    const bool behind = c.w <= 1e-3f;
+    if (behind) c = -c;   // mirrored: off screen the arrow still points the right way
+    glm::vec2 p((c.x / std::max(std::abs(c.w), 1e-3f) * 0.5f + 0.5f) * float(w), (0.5f - c.y / std::max(std::abs(c.w), 1e-3f) * 0.5f) * float(h));
+    if (behind) p = glm::vec2(float(w) * 0.5f, float(h) * 0.5f) + glm::normalize(p - glm::vec2(float(w), float(h)) * 0.5f + 1e-3f) * float(w);
+    const float margin_x = 24 * scale, margin_y = 24 * scale + text.measure("0", 1000).y;
+    int frame = 226;
+    if (p.x < margin_x) frame = 222;
+    else if (p.x > float(w) - margin_x) frame = 223;
+    else if (p.y < margin_y) frame = 224;
+    else if (p.y > float(h) - margin_y) frame = 225;
+    p = glm::clamp(p, glm::vec2(margin_x, margin_y), glm::vec2(float(w) - margin_x, float(h) - margin_y));
+    const glm::vec4 white(1);
+    draw_frame(out, *s, frame, p - glm::vec2(0, frame == 226 ? 9 * scale : 0), scale, white);
+    char label[32];
+    std::snprintf(label, sizeof label, "%dm", int(distance * 0.5f));   // the game shows half the world distance
+    // The distance above the marker (below it when the marker sits on the top edge).
+    const glm::vec2 at_text = frame == 224 ? p + glm::vec2(0, 26 * scale) : p - glm::vec2(0, 26 * scale + text.measure(label, 1000).y);
+    text.draw(out, label, at_text + glm::vec2(1), w, glm::vec4(0, 0, 0, 0.7f));
+    text.draw(out, label, at_text, w, white);
 }
 
 void Hud::place(const std::string& node, glm::vec2 px, const glm::mat4& view_proj, int w, int h) {

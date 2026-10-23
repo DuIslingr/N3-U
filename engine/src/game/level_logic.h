@@ -13,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -66,6 +67,32 @@ public:
     bool hud_enabled = true;               // EnableHud
     bool interface_in_cinematic = false;   // ForceInterfaceInCinematic: the HUD stays up in a cinematic
     std::string weapon_state;              // SetCrtWeaponState request, taken by the view model
+    // Mission objectives (CLevel: SetPrimaryObjective clears the secondaries; each change
+    // shows the objectives box for 5 s; completing every secondary completes the primary).
+    struct Objectives {
+        std::string primary;               // text
+        bool primary_done = false;
+        struct Secondary {
+            std::string id, text;
+            bool done = false;
+        };
+        std::vector<Secondary> secondary;
+        float show = 0, alpha = 0;         // seconds left on screen; fade
+    } objectives;
+    // StartBulletTime(ms, factor): the game runs `factor` times as fast for `ms` of real
+    // time (Application's time factor and its duration). Advance with real time.
+    void bullet_time(float ms, float factor) { time_factor_ = factor, time_factor_left_ = ms / 1000.0f; }
+    float time_scale() const { return time_factor_left_ > 0 ? time_factor_ : 1.0f; }
+    void advance_real_time(float dt) { time_factor_left_ = std::max(time_factor_left_ - dt, 0.0f); }
+    // EnablePath(waypoint): the guide marker the HUD shows over a waypoint (-1: none).
+    struct PathMarker {
+        bool on = false;
+        glm::vec3 position{0};
+    } path_marker;
+    void set_primary_objective(const std::string& id);
+    void add_secondary_objective(const std::string& id);
+    void secondary_objective_complete(const std::string& id);
+    void primary_objective_complete();
     const std::deque<Message>& messages() const { return messages_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function
@@ -290,6 +317,7 @@ private:
     bool fading_ = false, fade_in_ = true;
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
+    float time_factor_ = 1, time_factor_left_ = 0;
     std::unique_ptr<class AnimSounds> anim_sounds_;
     int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
     glm::vec4 level_fog_color_{0};
