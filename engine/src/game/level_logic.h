@@ -261,6 +261,16 @@ public:
     bool cinematic_mode = false;     // StartCinematic .. EndCinematic
     // PlayerLookTo(waypoint, ms): turn the player's view to a point.
     void player_look_to(const glm::vec3& at, float seconds);
+    // PostEffect_HeatHazeStart(ms, object) / Stop(ms) (CLevel::UpdatePostEffect_HeatHaze):
+    // the haze grows over ms; with an object, it is strongest while the player faces it.
+    void heat_haze(bool start, float ms, int object = -1) {
+        if (start) {
+            heat_.max = std::max(ms, heat_.now), heat_.stopping = false, heat_.object = object;
+        } else {
+            if (ms < heat_.now) heat_.max -= heat_.now - ms, heat_.now = ms;
+            heat_.stopping = true;
+        }
+    }
     void motion_follow(int id, int leader, float metres) {
         if (Mover* m = mover(id)) m->follow = leader, m->follow_distance = metres;
     }
@@ -395,6 +405,12 @@ private:
     bool fading_ = false, fade_in_ = true;
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
+    struct HeatHaze {
+        float now = 0, max = 0;   // ms grown, ms to grow
+        bool stopping = true;
+        int object = -1;
+    } heat_;
+    void update_heat_haze(float dt);
     float time_factor_ = 1, time_factor_left_ = 0;
     float fov_from_ = 70, fov_to_ = 70, fov_len_ = 0, fov_t_ = 0;
     struct Vehicle {

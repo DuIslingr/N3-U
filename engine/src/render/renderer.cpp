@@ -234,7 +234,7 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     vs_particle_ = load_shader(shader_dir + "/particle.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs_particle_ = load_shader(shader_dir + "/particle.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     fs_post_blur_ = load_shader(shader_dir + "/post_blur.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
-    fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
+    fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1);
 
     SDL_GPUSamplerCreateInfo si{};
     si.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -1005,7 +1005,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
         SDL_SetGPUViewport(pass, &vp);
         SDL_BindGPUGraphicsPipeline(pass, pipe);
         std::vector<SDL_GPUTextureSamplerBinding> tex;
-        for (SDL_GPUTexture* t : inputs) tex.push_back({t, clamp_sampler_});
+        for (SDL_GPUTexture* t : inputs) tex.push_back({t, tex.size() == 4 ? sampler_ : clamp_sampler_});   // the 5th repeats (heat haze)
         SDL_BindGPUFragmentSamplers(pass, 0, tex.data(), uint32_t(tex.size()));
         SDL_PushGPUFragmentUniformData(cmd, 0, uniforms, size);
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
@@ -1022,7 +1022,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     }
     struct {
         glm::mat4 inv_view_proj;
-        glm::vec4 camera, forward, dof, fog, fog_color, grading;
+        glm::vec4 camera, forward, dof, fog, fog_color, grading, heat;
     } u;
     u.inv_view_proj = glm::inverse(frame.proj * frame.view);
     u.camera = glm::vec4(frame.camera, 1);
@@ -1031,7 +1031,10 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     u.fog = {post->fog_top, post->fog_bottom, post->fog_opacity, post->height_fog ? 1.0f : 0.0f};
     u.fog_color = glm::vec4(post->fog_color, 1);
     u.grading = glm::vec4(post->grading ? 1.0f : 0.0f, 0, 0, 0);
-    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_, grading_}, &u, sizeof u, !frame.hud3d);
+    const bool heat = post->heat_haze && post->heat_texture;
+    u.heat = heat ? glm::vec4(post->heat_strength, post->heat_overbright, post->heat_blend, post->heat_time) : glm::vec4(0, 1, 1, -1);
+    run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_, grading_, heat ? post->heat_texture->texture : grading_}, &u,
+        sizeof u, !frame.hud3d);
     if (frame.hud3d) encode_hud(cmd, target, format, w, h, items, frame);
 }
 

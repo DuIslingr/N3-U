@@ -131,7 +131,12 @@ struct PostParams {
     bool grading = false;
     std::array<uint8_t, 256 * 4> grading_curve{};
     uint32_t grading_version = 0;
-    bool active() const { return dof || height_fog || grading; }
+    // HeatHaze (HeatHazeFS.glsl): the image shifted by two scrolling layers of a bump texture,
+    // tinted orange as blend drops below 1, brightened by overbright.
+    bool heat_haze = false;
+    float heat_strength = 0, heat_overbright = 1, heat_blend = 1, heat_time = 0;   // time: seconds
+    const struct GpuTexture* heat_texture = nullptr;
+    bool active() const { return dof || height_fog || grading || heat_haze; }
 };
 
 struct FrameParams {

@@ -377,6 +377,14 @@ int api_remove_objective(lua_State* L) {
     v.erase(std::remove_if(v.begin(), v.end(), [id](const LevelLogic::ObjectiveMarker& m) { return m.id == id; }), v.end());
     return 0;
 }
+int api_heat_haze_start(lua_State* L) {   // PostEffect_HeatHazeStart(ms, object)
+    ctx(L).heat_haze(true, float(lua_tointeger(L, 1)), lua_isnumber(L, 2) ? int(lua_tointeger(L, 2)) : -1);
+    return 0;
+}
+int api_heat_haze_stop(lua_State* L) {   // PostEffect_HeatHazeStop(ms)
+    ctx(L).heat_haze(false, float(lua_tointeger(L, 1)));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1118,6 +1126,8 @@ const Entry kImplemented[] = {
     {"PlayerLookTo", api_player_look_to},
     {"PlayerLookToDirection", api_player_look_to_direction},
     {"AddObjective", api_add_objective},
+    {"PostEffect_HeatHazeStart", api_heat_haze_start},
+    {"PostEffect_HeatHazeStop", api_heat_haze_stop},
     {"RemoveObjective", api_remove_objective},
     {"GameObject_MotionOnPathSetFollowTarget", api_motion_follow},
     {"ShowProgressSavedMessage", api_progress_saved},

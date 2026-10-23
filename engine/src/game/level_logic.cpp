@@ -269,6 +269,7 @@ void LevelLogic::start(bool keep_player) {
     if (!keep_player) {   // (the grading version keeps counting so the renderer sees new curves)
         const uint32_t version = post.grading_version;
         post = PostParams{}, post.grading_version = version + 1, post_fades_.clear();
+        heat_ = HeatHaze{};
         grading_.dirty = true;
     }
     if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
@@ -1121,8 +1122,31 @@ void LevelLogic::primary_objective_complete() {
     objectives.show = 5;
 }
 
+void LevelLogic::update_heat_haze(float dt) {
+    HeatHaze& h = heat_;
+    const float ms = dt * 1000.0f;
+    if (h.stopping) h.now = std::max(h.now - ms, 0.0f);
+    else h.now = std::min(h.now + ms, h.max);
+    post.heat_haze = h.now > 0 && h.max > 0;
+    if (!post.heat_haze) return;
+    // Facing the haze's source (0 behind .. 1 straight at it) deepens the tint.
+    float strength = 0.84375f, tint = 0.415f;
+    if (const Object* o = h.object >= 0 ? object(h.object) : nullptr) {
+        const glm::vec3 to = o->position - player.center;
+        const float facing = glm::length(to) > 1e-3f ? (glm::dot(glm::normalize(to), player.view_forward()) + 1) * 0.5f : 0.5f;
+        tint = 0.332f + facing * 0.15f, strength = facing + 0.3f;
+    }
+    const float k = h.now / h.max;
+    post.heat_strength = k * strength;
+    post.heat_overbright = 1 + k * 0.68421f;
+    post.heat_blend = 1 - k * tint;
+    post.heat_time += dt;
+    if (!post.heat_texture) post.heat_texture = scene.texture("PE_HeatDistort");
+}
+
 void LevelLogic::update(float dt) {
     update_grading(dt);
+    update_heat_haze(dt);
     update_vehicles(dt);
     fov_t_ += dt;
     objectives.show = std::max(objectives.show - dt, 0.0f);
