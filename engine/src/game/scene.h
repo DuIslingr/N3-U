@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "assets/animation.h"
@@ -79,6 +80,9 @@ public:
     // Actors: objects that game logic moves. Place the object's model at `position`
     // turned `yaw` degrees about Z (keeping its scale), and update its bounds and lighting.
     bool set_object_pose(size_t object, const glm::vec3& position, float yaw);
+    // Moving level objects (elevators, platforms): place the object at `position` (its
+    // placement's rotation kept) and move its collision with it.
+    bool move_object(size_t object, const glm::vec3& position);
     // Keep the named node's horizontal translation at the clip's first frame: the
     // animations carry root motion, and the game moves actors itself.
     bool set_root_lock(size_t object, const std::string& node);
@@ -246,6 +250,7 @@ private:
         glm::vec3 world_min{0}, world_max{0}, local_min{0}, local_max{0};   // bounds (local: placement space)
     };
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
+    std::unordered_set<size_t> moving_;                   // objects moved by move_object
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
     void light_instance(Instance& inst, const glm::vec3& center);
     struct Skybox {

@@ -266,6 +266,26 @@ int api_teleport_to_waypoint(lua_State* L) {
     return 0;
 }
 
+// GameObject_MotionOnPathStart(id) / Stop(id) / StopAtWaypoint(id, wp) /
+// ChangeLinearVelocityMax(id, speed): objects on paths (elevators).
+int api_motion_start(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (!c.motion_start(int(lua_tointeger(L, 1)))) c.log("GameObject_MotionOnPathStart: no path for " + std::to_string(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_motion_stop(lua_State* L) {
+    ctx(L).motion_stop(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_motion_stop_at(lua_State* L) {
+    ctx(L).motion_stop(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)));
+    return 0;
+}
+int api_motion_speed(lua_State* L) {
+    ctx(L).motion_max_speed(int(lua_tointeger(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+
 // --- NPC commands (CAIComponent goals) -------------------------------------------------
 // NpcCmd_*(npc, goal id, waypoint, ...): queue a goal; WaitNpcCmdFinished(npc, goal id or
 // -1) waits while it is queued (Combat sends NpcCmdFinished_<npc>_<id> when it is done).
@@ -513,6 +533,10 @@ const Entry kImplemented[] = {
     {"WaitForEnemiesDead", api_wait_for_enemies_dead},
     {"WaitNpcCmdFinished", api_wait_npc_cmd},
     {"StartFadeIn", api_fade<true>},
+    {"GameObject_MotionOnPathStart", api_motion_start},
+    {"GameObject_MotionOnPathStop", api_motion_stop},
+    {"GameObject_MotionOnPathStopAtWaypoint", api_motion_stop_at},
+    {"GameObject_MotionOnPathChangeLinearVelocityMax", api_motion_speed},
     {"StartFadeOut", api_fade<false>},
     {"CameraShake", api_camera_shake},
     {"TeleportToWaypoint", api_teleport_to_waypoint},

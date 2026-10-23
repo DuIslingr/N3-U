@@ -707,6 +707,7 @@ void Scene::build_collision() {
 }
 
 void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
+    moving_.clear();
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
     particles_.clear();
@@ -925,6 +926,14 @@ int Scene::find_node(const LoadedModel& m, const std::string& name) const {
     return -1;
 }
 
+bool Scene::move_object(size_t object, const glm::vec3& position) {
+    if (object >= level_.objects.size() || !level_.objects[object].base) return false;
+    const Transform& base = *level_.objects[object].base;
+    moving_.insert(object);
+    collision_.set_owner_offset(uint32_t(object), position - base.position);
+    return set_object_pose(object, position, base.rotation.z);
+}
+
 bool Scene::set_object_pose(size_t object, const glm::vec3& position, float yaw) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return false;
@@ -1044,7 +1053,8 @@ void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj) {
     int floor_zone = ZoneSystem::kNone;
     float floor_z = 0;
     uint32_t owner = 0;
-    if (collision_.ray_down(camera, 8.0f, floor_z, &owner)) floor_zone = zones_.object_zone(owner);
+    // (Not from a moving object: it keeps the zone it was placed in.)
+    if (collision_.ray_down(camera, 8.0f, floor_z, &owner) && !moving_.count(owner)) floor_zone = zones_.object_zone(owner);
     zones_.update(camera, view_proj, floor_zone);
     for (const Instance& inst : instances_) {
         if (inst.draw_count && draws_[inst.first_draw].sky) continue;

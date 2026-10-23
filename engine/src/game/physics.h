@@ -9,6 +9,7 @@
 // candidate triangles come from a uniform XY grid.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -29,6 +30,9 @@ public:
              uint32_t owner = 0);
     // Disabled owners' triangles are ignored by move() and the ray queries.
     void set_owner_enabled(uint32_t owner, bool enabled);
+    // Moving owners (elevators, platforms): translate an owner's triangles by `offset` from
+    // where they were added. The first call takes them out of the static grid.
+    void set_owner_offset(uint32_t owner, const glm::vec3& offset);
     void build(float cell_size = 4.0f);
     size_t triangle_count() const { return tris_.size(); }
 
@@ -61,6 +65,12 @@ private:
 
     std::vector<Triangle> tris_;
     std::vector<uint8_t> owner_disabled_;   // by owner
+    struct Mover {
+        std::vector<uint32_t> tris;
+        std::vector<std::array<glm::vec3, 3>> base;   // as added
+        glm::vec3 lo{0}, hi{0};                      // current bounds
+    };
+    std::unordered_map<uint32_t, Mover> movers_;
     float cell_ = 4.0f;
     std::unordered_map<int64_t, std::vector<uint32_t>> grid_;
     mutable std::vector<uint32_t> stamp_;

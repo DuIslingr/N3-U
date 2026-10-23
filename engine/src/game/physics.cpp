@@ -63,6 +63,27 @@ void CollisionWorld::set_owner_enabled(uint32_t owner, bool enabled) {
     owner_disabled_[owner] = !enabled;
 }
 
+void CollisionWorld::set_owner_offset(uint32_t owner, const glm::vec3& offset) {
+    auto it = movers_.find(owner);
+    if (it == movers_.end()) {
+        Mover m;
+        for (uint32_t i = 0; i < tris_.size(); ++i)
+            if (tris_[i].owner == owner) m.tris.push_back(i), m.base.push_back({tris_[i].a, tris_[i].b, tris_[i].c});
+        if (m.tris.empty()) return;
+        for (auto& [key, cell] : grid_)
+            cell.erase(std::remove_if(cell.begin(), cell.end(), [&](uint32_t i) { return tris_[i].owner == owner; }), cell.end());
+        it = movers_.emplace(owner, std::move(m)).first;
+    }
+    Mover& m = it->second;
+    m.lo = glm::vec3(1e30f), m.hi = glm::vec3(-1e30f);
+    for (size_t k = 0; k < m.tris.size(); ++k) {
+        Triangle& t = tris_[m.tris[k]];
+        t.a = m.base[k][0] + offset, t.b = m.base[k][1] + offset, t.c = m.base[k][2] + offset;
+        m.lo = glm::min(m.lo, glm::min(glm::min(t.a, t.b), t.c));
+        m.hi = glm::max(m.hi, glm::max(glm::max(t.a, t.b), t.c));
+    }
+}
+
 void CollisionWorld::build(float cell_size) {
     cell_ = cell_size;
     grid_.clear();
@@ -97,6 +118,12 @@ void CollisionWorld::candidates(const glm::vec3& lo, const glm::vec3& hi, std::v
                 out.push_back(i);
             }
         }
+    }
+    for (const auto& [owner, m] : movers_) {
+        if (owner < owner_disabled_.size() && owner_disabled_[owner]) continue;
+        if (glm::any(glm::lessThan(m.hi, lo)) || glm::any(glm::greaterThan(m.lo, hi))) continue;
+        for (uint32_t i : m.tris)
+            if (stamp_[i] != epoch_) stamp_[i] = epoch_, out.push_back(i);
     }
 }
 

@@ -25,6 +25,8 @@ constexpr int kCompEffects = 0x92;        // CEffectsComponent: [[effect, node, 
 constexpr int kCompEffectBuiltIn = 0xAE;  // CEffectBuiltInComponent: effect, ?, node, autostart, ?
 constexpr int kCompBuiltinBox = 0xA6;     // CComponentBuiltinBox: width, depth, height
 constexpr int kCompBuiltinCylinder = 0xA8;   // CComponentBuiltinCylinder: radius, height
+constexpr int kCompPath = 0x15;            // CPathComponent: id, ?, first waypoint, last waypoint, ?
+constexpr int kCompMotionOnPath = 0x16;    // CMotionOnPathComponent: node, path id, max speed, accel, brake, loop
 
 constexpr float kUseRange = 2.5f;         // metres from the player's eye
 
@@ -82,6 +84,7 @@ void LevelLogic::load_objects() {
         }
         if (o.kind == "waypoint" && o.fields.size() > 4) {
             obj.id = o.fields[0].i;
+            if (o.fields.size() > 5 && o.fields[5].i >= 0) waypoint_next_[obj.id] = o.fields[5].i;
             obj.position = {o.fields[2].as_float(), o.fields[3].as_float(), o.fields[4].as_float()};
             objects_[obj.id] = obj;
             continue;
@@ -98,6 +101,8 @@ void LevelLogic::load_objects() {
         if (o.kind != "object") continue;
         auto g = gol.find(o.type);
         if (g == gol.end()) continue;
+        if (auto p = o.components.find(kCompPath); p != o.components.end() && p->second.size() >= 3)
+            path_first_[p->second[0].i] = p->second[2].i;
         auto comp = [&](int c) -> const Value* {
             if (auto it = o.components.find(c); it != o.components.end()) return &it->second;
             return resolved_template(g->second, gol, c);
@@ -152,6 +157,15 @@ void LevelLogic::load_objects() {
             ++stats_.doors;
         }
         read_effects(obj, o);
+        if (const Value* mp = comp(kCompMotionOnPath); mp && mp->size() >= 6 && o.base) {
+            Mover m;
+            m.id = obj.id, m.type = o.type, m.index = i;
+            m.path = (*mp)[1].i;
+            m.max_speed = (*mp)[2].as_float(), m.accel = (*mp)[3].as_float(), m.brake = (*mp)[4].as_float();
+            m.loop = (*mp)[5].i != 0;
+            m.position = o.base->position;
+            movers_.push_back(m);
+        }
         if (const Value* it = comp(kCompInteractive); it && it->size() >= 1) {
             obj.interactive = true;
             obj.interact_enabled = (*it)[0].i != 0;
@@ -160,6 +174,7 @@ void LevelLogic::load_objects() {
         objects_[obj.id] = obj;
     }
     stats_.objects = objects_.size();
+    // Movers listed before their path objects were read: nothing to do, paths resolve on start.
 }
 
 void LevelLogic::read_effects(Object& obj, const LevelObject& o) {
@@ -224,6 +239,7 @@ bool LevelLogic::set_post_var(const std::string& effect, const std::string& var,
 
 void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
+    movers_.clear(), waypoint_next_.clear(), path_first_.clear();
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
@@ -453,6 +469,8 @@ void LevelLogic::set_door(Object& o, bool open_now) {
     if (open_now) {
         if (d.state == Door::State::Open || d.state == Door::State::Opening) return;
         d.state = Door::State::Opening;
+        if (audio && o.index < scene.level().objects.size())
+            anim_sounds_->play_state(*audio, scene.level().objects[o.index].type, "Opening", o.position);
         // Its collision (which also hides what is behind it from view rays) goes once half open.
         if (!scene.play_clip(o.index, "opening", false)) {
             d.state = Door::State::Open;
@@ -463,6 +481,8 @@ void LevelLogic::set_door(Object& o, bool open_now) {
         // There is no closing clip: "opening" plays backwards. Collision returns at once,
         // so nothing can walk into a closing door.
         d.state = Door::State::Closing;
+        if (audio && o.index < scene.level().objects.size())
+            anim_sounds_->play_state(*audio, scene.level().objects[o.index].type, "Closing", o.position);
         if (!scene.play_clip(o.index, "opening", false, true)) {
             d.state = Door::State::Closed;
             scene.play_clip(o.index, "closed", true);
@@ -519,6 +539,105 @@ void LevelLogic::teleport_object(Object& o, const glm::vec3& position) {
     if (o.index != std::numeric_limits<size_t>::max()) scene.set_object_pose(o.index, position, o.yaw);
 }
 
+void LevelLogic::mover_state(Mover& m, const std::string& state) {
+    const AnimSounds::State* st = anim_sounds_->state(m.type, state);
+    if (!st) return;
+    if (!st->clip.empty()) scene.play_clip(m.index, st->clip, state == "Move" || state == "Idle");
+    if (!audio) return;
+    for (int h : anim_sounds_->play_state(*audio, m.type, state, m.position)) m.sounds.push_back(h);
+}
+
+bool LevelLogic::motion_start(int id) {
+    for (Mover& m : movers_) {
+        if (m.id != id) continue;
+        if (m.moving) return true;
+        // The route: the path's waypoint chain, from where the object is if it is not at
+        // the start (CMotionOnPathComponent::MotionStart).
+        m.points.clear(), m.point_ids.clear();
+        auto first = path_first_.find(m.path);
+        std::unordered_set<int> seen;
+        for (int w = first != path_first_.end() ? first->second : -1; w >= 0 && seen.insert(w).second;) {
+            const Object* wp = object(w);
+            if (!wp) break;
+            m.points.push_back(wp->position), m.point_ids.push_back(w);
+            auto next = waypoint_next_.find(w);
+            w = next == waypoint_next_.end() ? -1 : next->second;
+        }
+        if (m.points.empty()) return false;
+        if (glm::distance(m.points.front(), m.position) > 0.5f) m.points.insert(m.points.begin(), m.position), m.point_ids.insert(m.point_ids.begin(), -1);
+        if (m.points.size() < 2) return false;
+        m.segment = 0, m.along = 0, m.speed = 0, m.moving = true, m.stop_at = -1;
+        if (trace) log("motion start " + std::to_string(id));
+        mover_state(m, "MoveStart");
+        return true;
+    }
+    return false;
+}
+
+void LevelLogic::motion_stop(int id, int at_waypoint) {
+    for (Mover& m : movers_) {
+        if (m.id != id || !m.moving) continue;
+        if (at_waypoint >= 0) m.stop_at = at_waypoint;
+        else m.speed = 0, m.moving = false;
+    }
+}
+
+void LevelLogic::motion_max_speed(int id, float speed) {
+    for (Mover& m : movers_)
+        if (m.id == id && speed > 0) m.max_speed = speed;
+}
+
+void LevelLogic::update_movers(float dt) {
+    for (Mover& m : movers_) {
+        if (!m.moving) continue;
+        // Distance left to the end (or the waypoint to stop at).
+        float left = glm::distance(m.points[m.segment], m.points[m.segment + 1]) - m.along;
+        for (size_t s = m.segment + 1; s + 1 < m.points.size() && m.point_ids[s] != m.stop_at; ++s)
+            left += glm::distance(m.points[s], m.points[s + 1]);
+        // UpdateAccelBrake: accelerate to the maximum, brake when the stopping distance
+        // reaches what is left.
+        if (m.speed * m.speed * 0.5f / std::max(m.brake, 0.01f) >= left) m.speed = std::max(m.speed - m.brake * dt, 0.5f);
+        else m.speed = std::min(m.speed + m.accel * dt, m.max_speed);
+        float step = std::min(m.speed * dt, left);
+        bool arrived = left <= 1e-3f;
+        while (step > 0 && !arrived) {
+            const float len = glm::distance(m.points[m.segment], m.points[m.segment + 1]);
+            if (m.along + step < len) {
+                m.along += step;
+                break;
+            }
+            step -= len - m.along;
+            m.along = 0;
+            ++m.segment;
+            if (m.segment + 1 >= m.points.size() || m.point_ids[m.segment] == m.stop_at) arrived = true;
+        }
+        if (m.segment + 1 >= m.points.size()) m.segment = m.points.size() - 2, m.along = glm::distance(m.points[m.segment], m.points[m.segment + 1]);
+        const glm::vec3 a = m.points[m.segment], b = m.points[m.segment + 1];
+        const float len = glm::distance(a, b);
+        const glm::vec3 pos = len > 0 ? a + (b - a) * (m.along / len) : b;
+        const glm::vec3 delta = pos - m.position;
+        // Carry the player standing on it (the floor under the player is its collision).
+        float floor_z;
+        uint32_t owner = 0;
+        const glm::vec3 feet = player.center - glm::vec3(0, 0, player.radius.z - 0.05f);
+        const bool riding = scene.collision().ray_down(feet + glm::vec3(0, 0, 0.3f), 0.8f, floor_z, &owner) && owner == m.index;
+        m.position = pos;
+        scene.move_object(m.index, pos);
+        if (riding) player.center += delta;
+        if (audio)
+            for (int h : m.sounds) audio->set_position(h, pos);
+        if (arrived) {
+            m.moving = false, m.speed = 0;
+            if (audio)
+                for (int h : m.sounds) audio->stop(h, 300);
+            m.sounds.clear();
+            mover_state(m, "MoveStopAt");
+            m.sounds.clear();
+            if (trace) log("motion end " + std::to_string(m.id));
+        }
+    }
+}
+
 void LevelLogic::dialog(const std::vector<std::string>& lines) {
     for (const std::string& l : lines) dialog_.push_back(l);
     dialog_active_ = true;
@@ -564,15 +683,18 @@ void LevelLogic::update_music(float dt) {
 void LevelLogic::update(float dt) {
     update_music(dt);
     update_dialog(dt);
+    update_movers(dt);
     if (fading_) {
         fade_left_ = std::max(fade_left_ - dt, 0.0f);
         if (fade_left_ <= 0 && fade_in_) fading_ = false;   // faded out stays covered
     }
     shake_clock_ += dt;
     shake_left_ = std::max(shake_left_ - dt, 0.0f);
-    if (audio)
+    if (audio)   // (doors and movers play their states' sounds as they enter them)
         for (const auto& [id, o] : objects_)
-            if (o.index < scene.level().objects.size() && o.visible) anim_sounds_->update(scene, *audio, o.index, scene.level().objects[o.index].type);
+            if (o.index < scene.level().objects.size() && o.visible && o.door < 0 &&
+                std::none_of(movers_.begin(), movers_.end(), [&](const Mover& m) { return m.index == o.index; }))
+                anim_sounds_->update(scene, *audio, o.index, scene.level().objects[o.index].type);
     // PostEffects::Update: variables move linearly to their targets.
     for (PostFade& f : post_fades_) {
         f.elapsed += dt;

@@ -621,6 +621,9 @@ int main(int argc, char** argv) {
                                     d.anim_hidden ? " anim-hidden" : "", d.zone_hidden ? " zone-hidden" : "", di.min.x, di.min.y,
                                     di.min.z, di.max.x, di.max.y, di.max.z);
                     }
+                if (opt.log_player)
+                    std::printf("player at (%.2f %.2f %.2f) %s\n", player.center.x, player.center.y, player.center.z,
+                                player.on_ground ? "on the ground" : "in the air");
                 std::printf("coronas: %zu of %zu shown\n", scene.stats().coronas_shown, scene.stats().corona_controllers);
                 std::printf("particles: %zu in %zu batches\n", scene.particles().particle_count(), particle_list.batches.size());
                 std::printf("wrote %s\n", opt.screenshot.c_str());

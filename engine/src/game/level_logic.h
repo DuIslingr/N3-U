@@ -136,6 +136,11 @@ public:
     glm::vec3 fade_color{0};
     void shake(float ms, float amount) { shake_total_ = shake_left_ = ms / 1000.0f, shake_amount_ = amount; }
     glm::vec2 shake_offset() const;   // yaw, pitch (degrees) to add to the view
+    // Objects moving on paths (CMotionOnPathComponent: elevators, platforms), started by
+    // GameObject_MotionOnPathStart. False if the object has no path.
+    bool motion_start(int id);
+    void motion_stop(int id, int at_waypoint = -1);
+    void motion_max_speed(int id, float speed);
     // TeleportToWaypoint: move an object (actors through combat) to a position.
     void teleport_object(Object& o, const glm::vec3& position);
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
@@ -190,6 +195,24 @@ private:
     int dialog_voice_ = -1;
     float dialog_wait_ = 0;
     void update_dialog(float dt);
+    // Paths: waypoint chains (each waypoint's next) and CPathComponent objects (id -> first waypoint).
+    std::unordered_map<int, int> waypoint_next_, path_first_;
+    struct Mover {
+        int id = 0, type = 0, path = -1;
+        size_t index = 0;
+        float max_speed = 0, accel = 0, brake = 0;
+        bool loop = false, moving = false;
+        std::vector<glm::vec3> points;   // the route of the current motion
+        std::vector<int> point_ids;      // its waypoints (-1: where it started)
+        size_t segment = 0;
+        float along = 0, speed = 0;      // metres into the segment, metres per second
+        int stop_at = -1;                // waypoint to stop at (GameObject_MotionOnPathStopAtWaypoint)
+        glm::vec3 position{0};
+        std::vector<int> sounds;         // started with the motion (loops stop with it)
+    };
+    std::vector<Mover> movers_;
+    void update_movers(float dt);
+    void mover_state(Mover& m, const std::string& state);
     bool fading_ = false, fade_in_ = true;
     float fade_total_ = 1, fade_left_ = 0;
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
