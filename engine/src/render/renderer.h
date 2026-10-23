@@ -82,6 +82,22 @@ struct PointLight {
     bool fake = false;                          // zone "fake light": specular (L0_*) only
 };
 
+// A coloured vertex for effects and the HUD. rgba: red in the low byte.
+struct ColorVertex {
+    glm::vec3 position;
+    uint32_t rgba;
+};
+inline uint32_t pack_rgba(const glm::vec4& c) {
+    const glm::vec4 v = glm::clamp(c, 0.0f, 1.0f) * 255.0f + 0.5f;
+    return uint32_t(v.r) | uint32_t(v.g) << 8 | uint32_t(v.b) << 16 | uint32_t(v.a) << 24;
+}
+// Coloured triangles drawn after the scene: additive world-space effects (tracers,
+// bolts) and the screen-space HUD (pixels, origin top-left, alpha-blended on top).
+struct Overlay {
+    std::vector<ColorVertex> world, screen;
+    void clear() { world.clear(), screen.clear(); }
+};
+
 struct FrameParams {
     glm::mat4 view{1};
     glm::mat4 proj{1};
@@ -96,6 +112,7 @@ struct FrameParams {
     float fog_start = 50, fog_end = 250, fog_density = 0;
     float time = 0;                             // seconds
     std::vector<PointLight> lights;
+    const Overlay* overlay = nullptr;
 };
 
 class Renderer {
@@ -125,7 +142,10 @@ private:
         SDL_GPUGraphicsPipeline* blend = nullptr;
         SDL_GPUGraphicsPipeline* opaque_skinned = nullptr;
         SDL_GPUGraphicsPipeline* blend_skinned = nullptr;
+        SDL_GPUGraphicsPipeline* effects = nullptr;    // overlay: world, additive
+        SDL_GPUGraphicsPipeline* hud = nullptr;        // overlay: screen, alpha
     };
+    void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
     const Pipelines& pipelines_for(SDL_GPUTextureFormat format);
     SDL_GPUShader* load_shader(const std::string& path, SDL_GPUShaderStage stage, uint32_t samplers, uint32_t uniforms);
     void ensure_depth(uint32_t w, uint32_t h);
@@ -141,6 +161,11 @@ private:
     SDL_GPUShader* vs_ = nullptr;
     SDL_GPUShader* vs_skinned_ = nullptr;
     SDL_GPUShader* fs_ = nullptr;
+    SDL_GPUShader* vs_color_ = nullptr;
+    SDL_GPUShader* fs_color_ = nullptr;
+    SDL_GPUBuffer* overlay_buffer_ = nullptr;
+    SDL_GPUTransferBuffer* overlay_transfer_ = nullptr;
+    uint32_t overlay_capacity_ = 0;                    // vertices
     SDL_GPUSampler* sampler_ = nullptr;
     SDL_GPUTexture* depth_ = nullptr;
     uint32_t depth_w_ = 0, depth_h_ = 0;

@@ -93,7 +93,10 @@ void read_nav_mesh(DictStream& st, LevelObject& o) {
         o.nav.polygons.push_back(p);
     }
     const int nlinks = st.H();
-    for (int k = 0; k < nlinks; ++k) st.spec("h c f f f i");
+    for (int k = 0; k < nlinks; ++k) {
+        const Value l = st.spec("h c f f f i");
+        o.nav.links.push_back({l[0].i, {l[2].as_float(), l[3].as_float(), l[4].as_float()}, l[5].i});
+    }
     st.spec("f f f f f f H H");
     const int nnodes = st.H();
     for (int k = 0; k < nnodes; ++k) st.spec("H H f f i H H");

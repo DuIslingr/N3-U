@@ -26,6 +26,7 @@ namespace nova {
 
 class Scene;
 class Player;
+class Combat;
 
 class LevelLogic {
 public:
@@ -91,6 +92,8 @@ public:
         int trigger = -1, door = -1;
     };
     Object* object(int id);
+    // Register an object created at runtime (spawned enemies); it starts disabled.
+    Object& add_object(int id, size_t index, const std::string& type, const glm::vec3& position, float yaw);
     void enable(Object& o, bool on);
     void show(Object& o, bool on);
     void set_door(Object& o, bool open_now);
@@ -102,6 +105,12 @@ public:
 
     Scene& scene;
     Player& player;
+    Combat* combat = nullptr;        // enemies and damage, if the game runs combat
+    std::vector<glm::vec3> actor_positions;   // moving actors (doors open for them too)
+    bool door_passable(int id) {     // for actors' paths: doors that are not locked
+        const Object* o = object(id);
+        return !o || o->door < 0 || !doors_[size_t(o->door)].locked || doors_[size_t(o->door)].keep_unlocked;
+    }
     const Gol& gol;
     ScriptRuntime runtime_;
     std::unordered_map<int, Object> objects_;

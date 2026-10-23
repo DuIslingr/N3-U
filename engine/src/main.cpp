@@ -33,6 +33,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "core/vfs.h"
+#include "game/combat.h"
 #include "game/player.h"
 #include "game/level_logic.h"
 #include "game/scene.h"
@@ -48,6 +49,9 @@ struct Options {
     std::string screenshot;
     float walk_test = 0;
     bool log_player = false;    // print the player's state every second (interactive)
+    float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
+    bool god = false;           // the player takes no damage
+    bool list_actors = false;   // print combat targets after the level starts
     float time = 0;           // advance animations by this many seconds before a screenshot
     bool have_eye = false;
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
@@ -94,6 +98,9 @@ Options parse(int argc, char** argv) {
         else if (a == "--section") o.section = std::stoi(next());
         else if (a == "--trace-zones") o.trace_zones = true;
         else if (a == "--log-player") o.log_player = true;
+        else if (a == "--combat-test") o.combat_test = std::stof(next());
+        else if (a == "--god") o.god = true;
+        else if (a == "--list-actors") o.list_actors = true;
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -235,11 +242,19 @@ int main(int argc, char** argv) {
                 std::printf("[script] %s\n", line.c_str());
             };
             std::printf("zones: %zu zones, %zu portals\n", scene.zones().zones().size(), scene.zones().portals().size());
+            Combat combat(scene, player, logic, gol);
+            combat.log = [](const std::string& line) { std::printf("[combat] %s\n", line.c_str()); };
+            combat.player_invulnerable = opt.god;
+            logic.combat = &combat;
+            Overlay overlay;
             if (opt.scripts) {
                 logic.start();
                 const auto& ls = logic.stats();
                 std::printf("scripts: %zu chunks (%zu with errors), %zu objects, %zu triggers, %zu doors, %zu usable\n",
                             ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
+                combat.start();
+                if (opt.list_actors)
+                    for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
             }
             if (!opt.spawn_at.empty()) {
                 float v[4] = {0, 0, 0, 0};
@@ -265,6 +280,7 @@ int main(int argc, char** argv) {
                     scene.load_level(opt.level, section);
                     player.spawn(feet, yaw);
                     logic.start(true);
+                    combat.start();
                 }
             };
             constexpr float kPhysicsStep = 1.0f / 120.0f;
@@ -328,21 +344,50 @@ int main(int argc, char** argv) {
             }
             if (headless || opt.walk_test > 0) {
                 if (opt.screenshot.empty()) return 0;
-                for (float t = 0; t < opt.run; t += kPhysicsStep) {   // stand still and let the scripts run
+                float report = 0;
+                const float run_time = std::max(opt.run, opt.combat_test);
+                for (float t = 0; t < run_time; t += kPhysicsStep) {   // stand still and let the scripts run
                     player.update(scene.collision(), PlayerInput{}, kPhysicsStep);
                     step_logic(kPhysicsStep);
+                    if (opt.scripts) {
+                        CombatInput ci;
+                        glm::vec3 aim = player.view_forward(), target;
+                        if (opt.combat_test > 0 && combat.nearest_enemy(player.eye(), target)) {
+                            aim = glm::normalize(target - player.eye());
+                            player.yaw = glm::degrees(std::atan2(-aim.x, aim.y));
+                            player.pitch = glm::degrees(std::asin(glm::clamp(aim.z, -1.0f, 1.0f)));
+                            ci.fire = true;
+                        }
+                        combat.update(kPhysicsStep, ci, player.eye(), aim);
+                        combat.push_player_out();
+                        if (opt.combat_test > 0 && (report += kPhysicsStep) >= 1.0f) {
+                            report = 0;
+                            const auto& cs = combat.stats();
+                            std::printf("t=%5.1fs health %5.1f%s, enemies alive %d, shots %zu hits %zu kills %zu, enemy shots %zu, "
+                                        "damage taken %.0f, ammo %d/%d\n", t, combat.player_health,
+                                        combat.player_dead ? " (dead)" : "", combat.enemies_alive(), cs.shots, cs.hits,
+                                        cs.kills, cs.enemy_shots, cs.damage_taken, combat.ammo_in_clip(), combat.ammo_reserve());
+                        }
+                    }
                     scene.update(kPhysicsStep, cam.position);
                     Camera eye = cam;
                     if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw;
                     const FrameParams rf = frame(eye, opt.width, opt.height);
                     scene.cull(rf.camera, rf.proj * rf.view);
                 }
-                if (opt.run > 0 && !opt.have_eye && opt.focus.empty()) {
+                if (opt.list_actors && opt.scripts)
+                    for (const std::string& line : combat.describe())
+                        if (line.find(" enabled") != std::string::npos) std::printf("  end: %s\n", line.c_str());
+                if (run_time > 0 && !opt.have_eye && opt.focus.empty()) {
                     cam.position = player.eye();
                     cam.yaw = player.yaw;
+                    if (opt.combat_test > 0) cam.pitch = player.pitch;
                 }
                 scene.update(opt.time, cam.position);
-                const FrameParams shot = frame(cam, opt.width, opt.height);
+                FrameParams shot = frame(cam, opt.width, opt.height);
+                overlay.clear();
+                if (opt.scripts) combat.draw(overlay, shot.camera, opt.width, opt.height);
+                shot.overlay = &overlay;
                 scene.cull(shot.camera, shot.proj * shot.view);
                 if (opt.trace_zones) {
                     const ZoneSystem& z = scene.zones();
@@ -378,6 +423,7 @@ int main(int argc, char** argv) {
             } else {
                 bool flying = false;
                 float accumulator = 0;
+                CombatInput combat_in;
                 SDL_SetWindowRelativeMouseMode(window, true);
                 bool running = true;
                 auto last = std::chrono::steady_clock::now();
@@ -392,6 +438,9 @@ int main(int argc, char** argv) {
                         }
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Z && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_1) combat_in.select = 0;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_2) combat_in.select = 1;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
                         }
@@ -427,6 +476,12 @@ int main(int argc, char** argv) {
                             step_logic(kPhysicsStep);
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
+                        if (opt.scripts) {
+                            combat_in.fire = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
+                            combat.update(dt, combat_in, player.eye(), cam.forward());
+                            combat.push_player_out();
+                            combat_in = {};
+                        }
                         cam.position = player.eye();
                         static float log_timer = 0;
                         if (opt.log_player && (log_timer += dt) >= 1.0f) {
@@ -442,8 +497,11 @@ int main(int argc, char** argv) {
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     clock += dt;
-                    const FrameParams f = frame(cam, w, h);
+                    FrameParams f = frame(cam, w, h);
                     scene.cull(f.camera, f.proj * f.view);
+                    overlay.clear();
+                    if (opt.scripts && !flying) combat.draw(overlay, f.camera, w, h);
+                    f.overlay = &overlay;
                     renderer.render_to_window(scene.draws(), f);
                 }
             }

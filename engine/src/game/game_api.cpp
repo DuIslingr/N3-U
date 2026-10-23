@@ -9,6 +9,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include "game/combat.h"
 #include "game/level_logic.h"
 #include "game/player.h"
 #include "game/scene.h"
@@ -221,13 +222,47 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
-int api_zero(lua_State* L) {
-    lua_pushinteger(L, 0);
+// Combat (game/combat.cpp): enemies, damage, the player's health.
+int api_get_no_enemies(lua_State* L) {   // CAIController::GetNoOpponentsByTeams: living hostile actors
+    Combat* c = ctx(L).combat;
+    lua_pushinteger(L, c ? c->enemies_alive() : 0);
     return 1;
 }
-int api_empty_table(lua_State* L) {   // GetEnemies(): the active enemies' ids (none yet)
+int api_get_enemies(lua_State* L) {
     lua_newtable(L);
+    if (Combat* c = ctx(L).combat) {
+        int i = 1;
+        for (int id : c->enemy_ids()) {
+            lua_pushinteger(L, id);
+            lua_rawseti(L, -2, i++);
+        }
+    }
     return 1;
+}
+int api_set_invulnerable(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->set_invulnerable(int(lua_tointeger(L, 1)), lua_toboolean(L, 2) != 0);
+    return 0;
+}
+int api_give_damage(lua_State* L) {   // GiveDamage(id, amount)
+    if (Combat* c = ctx(L).combat) c->damage(int(lua_tointeger(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+int api_kill_all_enemies(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->kill_all_enemies();
+    return 0;
+}
+int api_enable_shoot_control(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->shoot_enabled = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+int api_get_health_mc(lua_State* L) {   // the player ("MC": main character)
+    Combat* c = ctx(L).combat;
+    lua_pushnumber(L, c ? c->player_health : 100);
+    return 1;
+}
+int api_give_damage_mc(lua_State* L) {   // GiveDamageMC(amount, ...)
+    if (Combat* c = ctx(L).combat) c->damage_player(float(lua_tonumber(L, 1)), ctx(L).player.center);
+    return 0;
 }
 int api_get_random(lua_State* L) {   // GetRandom(n) -> 0..n-1, GetRandom(a, b) -> a..b
     static std::mt19937 rng(12345);
@@ -297,8 +332,13 @@ const Entry kImplemented[] = {
     {"IsLowDevice", api_false},
     {"IsLowDeviceForEffects", api_false},
     {"IsServer", api_false},
-    {"GetNoEnemies", api_zero},
-    {"GetEnemies", api_empty_table},
+    {"GetNoEnemies", api_get_no_enemies},
+    {"GetEnemies", api_get_enemies},
+    {"KillAllEnemies", api_kill_all_enemies},
+    {"GiveDamage", api_give_damage},
+    {"EnableShootControl", api_enable_shoot_control},
+    {"GetHealthMC", api_get_health_mc},
+    {"GiveDamageMC", api_give_damage_mc},
     {"GetRandom", api_get_random},
     {"ShowMessage", api_show_message},
     {"ShowMessageEx", api_show_message},
@@ -313,7 +353,7 @@ const Entry kImplemented[] = {
     {"EnablePortal", api_portal<true>},
     {"LoadLevelSections", api_load_level_sections},
     {"DisablePortal", api_portal<false>},
-    {"SetInvulnerable", api_return_now},
+    {"SetInvulnerable", api_set_invulnerable},
 };
 
 }  // namespace

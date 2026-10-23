@@ -226,6 +226,8 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     vs_ = load_shader(shader_dir + "/mesh.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     vs_skinned_ = load_shader(shader_dir + "/mesh_skinned.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 2);
     fs_ = load_shader(shader_dir + "/mesh.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+    vs_color_ = load_shader(shader_dir + "/color.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    fs_color_ = load_shader(shader_dir + "/color.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
 
     SDL_GPUSamplerCreateInfo si{};
     si.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -291,7 +293,13 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blend);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.opaque_skinned);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blend_skinned);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.effects);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.hud);
     }
+    if (overlay_buffer_) SDL_ReleaseGPUBuffer(device_, overlay_buffer_);
+    if (overlay_transfer_) SDL_ReleaseGPUTransferBuffer(device_, overlay_transfer_);
+    SDL_ReleaseGPUShader(device_, vs_color_);
+    SDL_ReleaseGPUShader(device_, fs_color_);
     if (depth_) SDL_ReleaseGPUTexture(device_, depth_);
     SDL_ReleaseGPUSampler(device_, sampler_);
     SDL_ReleaseGPUShader(device_, vs_);
@@ -439,7 +447,49 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
         if (!p) fail("SDL_CreateGPUGraphicsPipeline");
         return p;
     };
-    return pipelines_[int(format)] = Pipelines{make(false, false), make(true, false), make(false, true), make(true, true)};
+    // Overlay: position + colour; effects add light (depth-tested, no depth writes),
+    // the HUD is alpha-blended over everything.
+    SDL_GPUVertexBufferDescription cvb{};
+    cvb.slot = 0;
+    cvb.pitch = sizeof(ColorVertex);
+    cvb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+    SDL_GPUVertexAttribute cattrs[2] = {
+        {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(ColorVertex, position))},
+        {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(ColorVertex, rgba))},
+    };
+    auto make_color = [&](bool additive) {
+        SDL_GPUColorTargetDescription ct{};
+        ct.format = format;
+        ct.blend_state.enable_blend = true;
+        ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        ct.blend_state.dst_color_blendfactor = additive ? SDL_GPU_BLENDFACTOR_ONE : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        ct.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+        ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+        SDL_GPUGraphicsPipelineCreateInfo pi{};
+        pi.vertex_shader = vs_color_;
+        pi.fragment_shader = fs_color_;
+        pi.vertex_input_state.vertex_buffer_descriptions = &cvb;
+        pi.vertex_input_state.num_vertex_buffers = 1;
+        pi.vertex_input_state.vertex_attributes = cattrs;
+        pi.vertex_input_state.num_vertex_attributes = 2;
+        pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pi.depth_stencil_state.enable_depth_test = additive;
+        pi.depth_stencil_state.enable_depth_write = false;
+        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+        pi.target_info.color_target_descriptions = &ct;
+        pi.target_info.num_color_targets = 1;
+        pi.target_info.depth_stencil_format = kDepthFormat;
+        pi.target_info.has_depth_stencil_target = true;
+        SDL_GPUGraphicsPipeline* p = SDL_CreateGPUGraphicsPipeline(device_, &pi);
+        if (!p) fail("SDL_CreateGPUGraphicsPipeline (overlay)");
+        return p;
+    };
+    return pipelines_[int(format)] = Pipelines{make(false, false), make(true, false), make(false, true), make(true, true),
+                                               make_color(true), make_color(false)};
 }
 
 void Renderer::ensure_depth(uint32_t w, uint32_t h) {
@@ -551,6 +601,8 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
                       uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
     ensure_depth(w, h);
     const Pipelines& pipes = pipelines_for(format);
+    const Overlay* overlay = frame.overlay && (!frame.overlay->world.empty() || !frame.overlay->screen.empty()) ? frame.overlay : nullptr;
+    if (overlay) upload_overlay(cmd, *overlay);
 
     SDL_GPUColorTargetInfo color{};
     color.texture = target;
@@ -691,7 +743,51 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     }
     for (const DrawItem* it : opaque) draw(*it, pipes.opaque);
     for (const DrawItem* it : blended) draw(*it, pipes.blend);
+    if (overlay) {
+        SDL_GPUBufferBinding vb{overlay_buffer_, 0};
+        SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+        if (!overlay->world.empty()) {
+            SDL_BindGPUGraphicsPipeline(pass, pipes.effects);
+            SDL_PushGPUVertexUniformData(cmd, 0, &view_proj, sizeof view_proj);
+            SDL_DrawGPUPrimitives(pass, uint32_t(overlay->world.size()), 1, 0, 0);
+        }
+        if (!overlay->screen.empty()) {
+            // Pixels, origin top-left (SDL GPU clip space has +Y up).
+            const glm::mat4 pixels = glm::mat4(glm::vec4(2.0f / float(w), 0, 0, 0), glm::vec4(0, -2.0f / float(h), 0, 0),
+                                               glm::vec4(0, 0, 1, 0), glm::vec4(-1, 1, 0, 1));
+            SDL_BindGPUGraphicsPipeline(pass, pipes.hud);
+            SDL_PushGPUVertexUniformData(cmd, 0, &pixels, sizeof pixels);
+            SDL_DrawGPUPrimitives(pass, uint32_t(overlay->screen.size()), 1, uint32_t(overlay->world.size()), 0);
+        }
+    }
     SDL_EndGPURenderPass(pass);
+}
+
+void Renderer::upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o) {
+    const uint32_t count = uint32_t(o.world.size() + o.screen.size());
+    if (count > overlay_capacity_) {
+        if (overlay_buffer_) SDL_ReleaseGPUBuffer(device_, overlay_buffer_);
+        if (overlay_transfer_) SDL_ReleaseGPUTransferBuffer(device_, overlay_transfer_);
+        overlay_capacity_ = std::max(count * 2, 4096u);
+        SDL_GPUBufferCreateInfo bi{};
+        bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+        bi.size = overlay_capacity_ * uint32_t(sizeof(ColorVertex));
+        overlay_buffer_ = SDL_CreateGPUBuffer(device_, &bi);
+        SDL_GPUTransferBufferCreateInfo ti{};
+        ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        ti.size = bi.size;
+        overlay_transfer_ = SDL_CreateGPUTransferBuffer(device_, &ti);
+        if (!overlay_buffer_ || !overlay_transfer_) fail("overlay buffer");
+    }
+    auto* dst = static_cast<ColorVertex*>(SDL_MapGPUTransferBuffer(device_, overlay_transfer_, true));
+    std::copy(o.world.begin(), o.world.end(), dst);
+    std::copy(o.screen.begin(), o.screen.end(), dst + o.world.size());
+    SDL_UnmapGPUTransferBuffer(device_, overlay_transfer_);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation src{overlay_transfer_, 0};
+    SDL_GPUBufferRegion region{overlay_buffer_, 0, count * uint32_t(sizeof(ColorVertex))};
+    SDL_UploadToGPUBuffer(copy, &src, &region, true);
+    SDL_EndGPUCopyPass(copy);
 }
 
 bool Renderer::render_to_window(const std::vector<DrawItem>& items, const FrameParams& frame) {

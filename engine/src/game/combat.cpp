@@ -1,0 +1,972 @@
+#include "game/combat.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cmath>
+#include <limits>
+
+#include "game/level_logic.h"
+#include "game/player.h"
+#include "game/scene.h"
+
+namespace nova {
+
+namespace {
+
+constexpr int kCompHealth = 0x11;
+constexpr int kCompAirNavigation = 0x1b;
+constexpr int kCompGroundNavigation = 0x1d;
+constexpr int kCompAwareness = 0x1f;
+constexpr int kCompProjectile = 0x28;
+constexpr int kCompWeapon = 0x47;
+constexpr int kCompNpcWeapon = 0x48;
+constexpr int kCompNpc = 0x4b;
+constexpr int kCompAi = 0x4e;
+constexpr int kCompActorsCollision = 0x0d;
+constexpr int kCompTargetable = 0x8d;
+constexpr int kPlayerTeamBit = 1 << 1;   // the player's team (1) in awareness masks
+constexpr int kCompSpawnManager = 0x62;
+
+std::string lower(std::string s) {
+    for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// The first clip (in `keys` order) whose name contains a key.
+std::string pick_clip(const std::vector<std::string>& clips, std::initializer_list<const char*> keys) {
+    for (const char* k : keys)
+        for (const std::string& c : clips)
+            if (lower(c).find(k) != std::string::npos) return c;
+    return {};
+}
+
+float num(const Value& v, size_t i, float fallback) {
+    if (i >= v.size()) return fallback;
+    const Value& x = v[i];
+    return x.type == Value::Float || x.type == Value::Int ? x.as_float() : fallback;
+}
+
+float yaw_towards(const glm::vec3& from, const glm::vec3& to) {
+    const glm::vec2 d(to - from);
+    return glm::degrees(std::atan2(-d.x, d.y));   // yaw 0 faces +Y, positive turns left
+}
+
+float angle_diff(float a, float b) {   // b - a in (-180, 180]
+    float d = std::fmod(b - a, 360.0f);
+    if (d > 180) d -= 360;
+    if (d <= -180) d += 360;
+    return d;
+}
+
+// Additive effect quad from `a` to `b`, `width` wide, facing `eye`.
+void beam(std::vector<ColorVertex>& out, const glm::vec3& a, const glm::vec3& b, float width, const glm::vec4& ca,
+          const glm::vec4& cb, const glm::vec3& eye) {
+    const glm::vec3 dir = b - a;
+    glm::vec3 side = glm::cross(dir, eye - (a + b) * 0.5f);
+    if (glm::length(side) < 1e-6f) return;
+    side = glm::normalize(side) * (width * 0.5f);
+    const uint32_t pa = pack_rgba(ca), pb = pack_rgba(cb);
+    out.insert(out.end(), {{a - side, pa}, {a + side, pa}, {b + side, pb}, {a - side, pa}, {b + side, pb}, {b - side, pb}});
+}
+
+void glow(std::vector<ColorVertex>& out, const glm::vec3& p, float size, const glm::vec4& c, const glm::vec3& eye) {
+    const glm::vec3 view = glm::normalize(p - eye);
+    glm::vec3 right = glm::cross(view, glm::vec3(0, 0, 1));
+    if (glm::length(right) < 1e-4f) right = glm::vec3(1, 0, 0);
+    right = glm::normalize(right) * size;
+    const glm::vec3 up = glm::normalize(glm::cross(right, view)) * size;
+    const uint32_t centre = pack_rgba(c), edge = pack_rgba(glm::vec4(glm::vec3(c), 0));
+    const glm::vec3 ring[4] = {p + right, p + up, p - right, p - up};
+    for (int k = 0; k < 4; ++k) out.insert(out.end(), {{p, centre}, {ring[k], edge}, {ring[(k + 1) % 4], edge}});
+}
+
+void rect(std::vector<ColorVertex>& out, float x, float y, float w, float h, const glm::vec4& c) {
+    const uint32_t p = pack_rgba(c);
+    out.insert(out.end(), {{{x, y, 0}, p}, {{x + w, y, 0}, p}, {{x + w, y + h, 0}, p},
+                           {{x, y, 0}, p}, {{x + w, y + h, 0}, p}, {{x, y + h, 0}, p}});
+}
+
+// Seven-segment digits for the ammo counter.
+void digits(std::vector<ColorVertex>& out, int value, float x, float y, float h, const glm::vec4& c) {
+    static const uint8_t kSegments[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+    const std::string s = std::to_string(std::max(value, 0));
+    const float w = h * 0.5f, t = h * 0.12f;
+    for (char ch : s) {
+        const uint8_t m = kSegments[ch - '0'];
+        const float hh = h * 0.5f;
+        if (m & 0x01) rect(out, x, y, w, t, c);                    // a: top
+        if (m & 0x02) rect(out, x + w - t, y, t, hh, c);           // b: top right
+        if (m & 0x04) rect(out, x + w - t, y + hh, t, hh, c);      // c: bottom right
+        if (m & 0x08) rect(out, x, y + h - t, w, t, c);            // d: bottom
+        if (m & 0x10) rect(out, x, y + hh, t, hh, c);              // e: bottom left
+        if (m & 0x20) rect(out, x, y, t, hh, c);                   // f: top left
+        if (m & 0x40) rect(out, x, y + hh - t * 0.5f, w, t, c);    // g: middle
+        x += w + t * 2.5f;
+    }
+}
+
+}  // namespace
+
+Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
+    : scene_(scene), player_(player), logic_(logic), gol_(gol) {
+    for (const char* name : {"AssaultRifle_Player", "Handgun_Player"}) weapons_.push_back(load_weapon(name));
+    for (const WeaponDef& w : weapons_) {
+        clip_.push_back(w.clip);
+        reserve_.push_back(w.reserve);
+    }
+    // The player: CHealthComponent and CPlayerBaseComponent (regeneration per second, delay).
+    for (const auto& [id, type] : gol_) {
+        if (type.name != "Player") continue;
+        if (const Value* h = resolved_template(type, gol_, kCompHealth)) player_max_health = num(*h, 0, 150);
+        if (const Value* b = resolved_template(type, gol_, 0x29)) {
+            regen_rate_ = num(*b, 1, 20);
+            regen_pause_ = num(*b, 2, 3000) / 1000.0f;
+        }
+    }
+    player_health = player_max_health;
+}
+
+const Value* Combat::component(const LevelObject& o, int comp) const {
+    if (auto it = o.components.find(comp); it != o.components.end()) return &it->second;
+    auto g = gol_.find(o.type);
+    return g == gol_.end() ? nullptr : resolved_template(g->second, gol_, comp);
+}
+
+WeaponDef Combat::load_weapon(const std::string& type_name) const {
+    WeaponDef w;
+    w.name = type_name;
+    for (const auto& [id, type] : gol_) {
+        if (type.name != type_name) continue;
+        const Value* v = resolved_template(type, gol_, kCompWeapon);
+        if (!v || v->size() < 28) break;
+        const Value& f = *v;
+        w.name = f[0].s;
+        // CComponentWeapon::Load: ..., max ammo (+0x4c), clip size (+0x50), ...
+        w.reserve = f[16].i;
+        w.clip = std::max(f[17].i, 1);
+        w.spread_step = f[27].as_float();
+        // Fire modes {?, projectile type, continuous, continuous delay (ms), ...}.
+        if (f[4].size() > 0 && f[4][0].size() > 3) {
+            const Value& mode = f[4][0];
+            w.automatic = mode[2].i != 0;
+            const int delay = mode[3].i;
+            w.interval = delay > 0 ? delay / 1000.0f : 0.1f;
+            if (auto p = gol_.find(mode[1].i); p != gol_.end()) {
+                if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 4) {
+                    w.damage_far = num(*pr, 1, 1), w.damage_near = num(*pr, 2, 2);
+                    w.far_dist = num(*pr, 3, 30), w.near_dist = num(*pr, 4, 30);
+                }
+            }
+        }
+        w.reload_time = w.clip > 15 ? 1.8f : 1.3f;
+        break;
+    }
+    return w;
+}
+
+void Combat::start() {
+    nav_.build(scene_.level());
+    targets_.clear();
+    spawners_.clear();
+    bolts_.clear();
+    stats_ = {};
+    const Level& level = scene_.level();
+    for (auto& [id, obj] : logic_.objects_) {
+        if (obj.index >= level.objects.size()) continue;
+        const LevelObject& o = level.objects[obj.index];
+        if (o.kind != "object") continue;
+        if (const Value* sm = o.components.count(kCompSpawnManager) ? &o.components.at(kCompSpawnManager) : nullptr;
+            sm && sm->size() >= 4) {
+            // CComponentSpawnManager::Load: spawn points, waves {entries {type, delay, waypoint},
+            // group, threshold}, loop, team mask, ?
+            SpawnManager m;
+            m.id = id;
+            for (const Value& p : (*sm)[0].list) m.points.push_back(p.list.empty() ? p.i : p[0].i);
+            for (const Value& w : (*sm)[1].list) {
+                if (w.size() < 3) continue;
+                SpawnManager::Wave wave;
+                for (const Value& e : w[0].list)
+                    if (e.size() >= 3) wave.entries.push_back({e[0].i, e[1].i, e[2].i});
+                wave.group = w[1].i;
+                wave.threshold = w[2].i;
+                m.waves.push_back(std::move(wave));
+            }
+            m.loop = (*sm)[2].i != 0;
+            m.teams = uint32_t((*sm)[3].i);
+            spawners_.push_back(std::move(m));
+            continue;
+        }
+        const Value* health = component(o, kCompHealth);
+        if (!health || !component(o, kCompTargetable)) continue;
+        Target t;
+        t.id = id;
+        t.object = obj.index;
+        t.type = o.name;
+        t.pos = obj.position;
+        t.yaw = obj.yaw;
+        if (!obj.dead) obj.health = num(*health, 0, 10);   // CHealthComponent: max health
+        t.explosive = lower(o.name).find("explosive") != std::string::npos;
+        if (t.explosive) t.radius = 0.5f, t.height = 1.0f;
+        const bool ai = component(o, kCompAi) || component(o, 0x55) || component(o, 0x21) || component(o, 0x57) ||
+                        component(o, 0x59) || component(o, 0x23);
+        if (ai && (component(o, kCompGroundNavigation) || component(o, kCompAirNavigation))) setup_actor(t, o);
+        targets_.push_back(std::move(t));
+        ++stats_.targets;
+        if (targets_.back().actor) ++stats_.actors;
+        if (targets_.back().hostile) ++stats_.hostile;
+    }
+    log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
+        std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, nav mesh " +
+        std::to_string(nav_.triangle_count()) + " triangles");
+}
+
+void Combat::setup_actor(Target& t, const LevelObject& o) {
+    t.actor = true;
+    t.mobile = component(o, kCompGroundNavigation) != nullptr;
+    t.headshots = true;
+    if (const Value* aw = component(o, kCompAwareness); aw && aw->size() > 5) {
+        t.team = (*aw)[0].i;
+        t.attacks = uint32_t((*aw)[1].i);
+        t.sight = num(*aw, 2, 40);
+        t.fov = num(*aw, 3, 180);
+        t.close = num(*aw, 5, 10);
+    }
+    t.hostile = (t.attacks & kPlayerTeamBit) != 0;
+    if (const Value* c = component(o, kCompActorsCollision); c && c->size() > 1 && num(*c, 0, 0) > 0) {
+        t.radius = num(*c, 0, 0.6f);
+        t.height = num(*c, 1, 1.9f);
+    } else {
+        t.radius = 0.9f, t.height = 1.1f, t.headshots = false;   // spiders and other low creatures
+    }
+    // Ranged weapon: CNPCComponent weapon list -> CNPCWeaponComponent -> its projectile.
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 1 && (*npc)[1].size() > 0) {
+        const int weapon = (*npc)[1][0][0].i;
+        if (auto w = gol_.find(weapon); w != gol_.end()) {
+            if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
+                if (auto p = gol_.find((*nw)[0].i); p != gol_.end()) {
+                    if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 8) {
+                        t.ranged = true;
+                        t.bolt_damage = num(*pr, 2, 3);
+                        t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
+                        if (lower(p->second.name).find("throw") != std::string::npos ||
+                            lower(p->second.name).find("plasma") != std::string::npos)
+                            t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
+                    }
+                }
+            }
+        }
+    }
+    t.fire_range = std::min(t.sight, 35.0f);
+    t.melee_damage = t.ranged ? 15.0f : 8.0f;
+
+    const auto clips = scene_.clip_names(t.object);
+    t.clip_idle = pick_clip(clips, {"001_idle", "idle1", "_idle"});
+    t.clip_alert = pick_clip(clips, {"idle_attack_assaultrifle", "002_idle_attack", "008_idle_attack", "idle_attack"});
+    t.clip_run = pick_clip(clips, {"068_fast_run", "024_walk_very_fast", "009_run", "fast_run", "walk_fast", "_run", "walk"});
+    t.clip_fire = pick_clip(clips, {"106_upper_fire_suppresive", "030_plasma_fire_multi", "_fire"});
+    t.clip_melee = pick_clip(clips, {"025_atack_both_claws", "004_atack_right_claw", "066_melee_attack_right_hand_onplace",
+                                     "melee", "atack", "attack"});
+    t.clip_hurt = pick_clip(clips, {"108_demage_from_front", "018_hurt_front_chest", "036_hurt_torso", "hurt", "demage"});
+    t.clip_jump = pick_clip(clips, {"009_jump_cycle", "125_jump_loop", "jump_cycle", "jump_loop", "jump"});
+    for (const std::string& c : clips) {
+        const std::string l = lower(c);
+        const bool death = l.find("death") != std::string::npos || l.find("_die") != std::string::npos;
+        const bool special = l.find("cover") != std::string::npos || l.find("by_") != std::string::npos ||
+                             l.find("expl") != std::string::npos || l.find("fire") != std::string::npos;
+        if (death && !special && scene_.clip_length(t.object, c) >= 0.5f) t.clip_deaths.push_back(c);
+    }
+    if (t.clip_deaths.empty()) {
+        const std::string any = pick_clip(clips, {"die", "death"});
+        if (!any.empty()) t.clip_deaths.push_back(any);
+    }
+    if (t.clip_alert.empty()) t.clip_alert = t.clip_idle;
+    if (t.clip_fire.empty()) t.clip_fire = t.clip_alert;
+    if (t.mobile) {
+        scene_.set_root_lock(t.object, "Bip01");
+        if (!t.clip_run.empty()) t.run_speed = std::clamp(scene_.clip_root_speed(t.object, t.clip_run), 1.5f, 9.0f);
+        glm::vec3 on;
+        t.tri = nav_.nearest(t.pos + glm::vec3(0, 0, 0.5f), 3.0f, on);
+        if (t.tri >= 0) t.pos = on;
+    }
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    play(t, t.clip_idle, true);
+    t.fire_timer = std::uniform_real_distribution<float>(0.3f, 1.5f)(rng_);
+}
+
+void Combat::play(Target& t, const std::string& clip, bool loop) {
+    if (clip.empty() || (t.playing == clip && loop)) return;
+    if (scene_.play_clip(t.object, clip, loop)) t.playing = clip;
+}
+
+bool Combat::alive(const Target& t) const {
+    const LevelLogic::Object* o = logic_.object(t.id);
+    return o && o->enabled && !o->dead && t.state != Target::State::Dying && t.state != Target::State::Dead;
+}
+
+glm::vec3 Combat::player_center() const { return player_.center + glm::vec3(0, 0, 0.3f); }
+
+bool Combat::line_clear(const glm::vec3& a, const glm::vec3& b) const {
+    float t = 1;
+    return !scene_.collision().raycast(a, b, t);
+}
+
+bool Combat::sees_player(const Target& t) const {
+    const glm::vec3 eye = t.pos + glm::vec3(0, 0, t.height * 0.85f);
+    const glm::vec3 target = player_.eye();
+    const float d = glm::distance(eye, target);
+    if (d > t.sight) return false;
+    if (d > t.close) {
+        const float off = std::abs(angle_diff(t.yaw, yaw_towards(t.pos, target)));
+        if (off > t.fov * 0.5f) return false;
+    }
+    return line_clear(eye, target);
+}
+
+void Combat::notice(Target& t) {
+    if (t.aware || !t.hostile) return;
+    t.aware = true;
+    logic_.runtime_.send_event("EnemyAware", t.id);
+    // Others close by hear about it.
+    for (Target& o : targets_)
+        if (&o != &t && o.actor && o.hostile && !o.aware && alive(o) && glm::distance(o.pos, t.pos) < 15.0f) {
+            o.aware = true;
+            logic_.runtime_.send_event("EnemyAware", o.id);
+        }
+}
+
+void Combat::face(Target& t, const glm::vec3& towards, float dt) {
+    const float want = yaw_towards(t.pos, towards);
+    const float d = angle_diff(t.yaw, want);
+    const float step = 360.0f * dt;
+    t.yaw += std::clamp(d, -step, step);
+}
+
+void Combat::move_along_path(Target& t, float dt) {
+    float budget = t.run_speed * dt;
+    while (budget > 0 && t.path_next < t.path.size()) {
+        const glm::vec3 next = t.path[t.path_next];
+        glm::vec2 d = glm::vec2(next - t.pos);
+        const float len = glm::length(d);
+        // Corners count as reached within the actor's radius: crowds can't all stand on one point.
+        const bool last = t.path_next + 1 == t.path.size();
+        if (len < (last ? 0.05f : std::max(t.radius, 0.3f))) {
+            ++t.path_next;
+            continue;
+        }
+        const float step = std::min(budget, len);
+        t.pos += glm::vec3(d / len * step, 0);
+        budget -= step;
+        face(t, next, dt);
+        if (step >= len) ++t.path_next;
+    }
+    // Through a doorway the mesh has a gap: keep going in a straight line.
+    if (t.path_next < t.path_off_mesh.size() && t.path_off_mesh[t.path_next]) {
+        const glm::vec3 next = t.path[t.path_next];
+        const int tri = nav_.locate(t.pos + glm::vec3(0, 0, 0.3f), 2.0f);
+        if (tri >= 0) t.tri = tri, t.pos.z = nav_.height(tri, glm::vec2(t.pos));
+        else t.pos.z += (next.z - t.pos.z) * std::min(1.0f, dt * 5);
+        return;
+    }
+    stay_on_mesh(t);
+}
+
+void Combat::stay_on_mesh(Target& t) {
+    // Follow the surface; pushed or cut off it, step back onto the nearest point.
+    int tri = nav_.locate(t.pos + glm::vec3(0, 0, 0.3f), 2.0f);
+    if (tri >= 0) {
+        t.pos.z = nav_.height(tri, glm::vec2(t.pos));
+    } else {
+        glm::vec3 on;
+        tri = nav_.nearest(t.pos + glm::vec3(0, 0, 0.3f), 3.0f, on);
+        if (tri >= 0) t.pos = on;
+    }
+    if (tri >= 0) t.tri = tri;
+}
+
+void Combat::update_actor(Target& t, float dt) {
+    using S = Target::State;
+    t.timer += dt;
+    t.hurt_cooldown = std::max(t.hurt_cooldown - dt, 0.0f);
+    if (t.state == S::Dying) {
+        if (scene_.clip_finished(t.object)) t.state = S::Dead;
+        return;
+    }
+    if (t.state == S::Dead || !t.hostile) return;
+    const glm::vec3 target = player_.center - glm::vec3(0, 0, player_.radius.z);   // the player's feet
+    const float dist = glm::distance(glm::vec2(t.pos), glm::vec2(target));
+    const bool sees = !player_dead && sees_player(t);
+    if (sees) notice(t), t.lost_sight = 0;
+    else t.lost_sight += dt;
+    if (t.mobile && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
+        if (!t.leaping) {
+            glm::vec3 to;
+            const int tri = nav_.nearest(t.pos, 15.0f, to);
+            if (tri >= 0) {
+                t.leaping = true, t.leap_t = 0, t.leap_from = t.pos, t.leap_to = to, t.leap_tri = tri;
+                play(t, t.clip_jump.empty() ? t.clip_run : t.clip_jump, true);
+            }
+        }
+        if (t.leaping) {
+            const float duration = std::clamp(glm::distance(t.leap_from, t.leap_to) / 8.0f, 0.4f, 1.0f);
+            t.leap_t = std::min(t.leap_t + dt / duration, 1.0f);
+            t.pos = glm::mix(t.leap_from, t.leap_to, t.leap_t) + glm::vec3(0, 0, 4 * t.leap_t * (1 - t.leap_t) * 1.5f);
+            face(t, t.leap_to, dt);
+            if (t.leap_t >= 1) t.leaping = false, t.tri = t.leap_tri, t.pos = t.leap_to;
+            scene_.set_object_pose(t.object, t.pos, t.yaw);
+            return;
+        }
+    }
+    if (!t.aware || player_dead) {
+        if (t.state != S::Idle) t.state = S::Idle;
+        play(t, t.aware ? t.clip_alert : t.clip_idle, true);
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
+
+    switch (t.state) {
+    case S::Hurt:
+        if (scene_.clip_finished(t.object) || t.timer > 0.8f) t.state = S::Chase, t.timer = 0;
+        break;
+    case S::Melee:
+        face(t, target, dt);
+        if (!t.melee_hit && t.timer > 0.45f) {
+            t.melee_hit = true;
+            if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) damage_player(t.melee_damage, t.pos);
+        }
+        if (scene_.clip_finished(t.object) || t.timer > 1.4f) t.state = S::Chase, t.timer = 0;
+        break;
+    case S::Attack:
+        face(t, target, dt);
+        play(t, t.clip_fire, true);
+        t.fire_timer -= dt;
+        if (t.fire_timer <= 0) {
+            if (t.shots_left <= 0) t.shots_left = t.burst;
+            fire_bolt(t);
+            --t.shots_left;
+            t.fire_timer = t.shots_left > 0 ? t.burst_gap
+                                            : t.burst_pause * std::uniform_real_distribution<float>(0.7f, 1.4f)(rng_);
+        }
+        // Lost the line of fire, or too far: close in again.
+        if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0;
+        if (dist < t.melee_range && !t.clip_melee.empty() && t.fire_timer > 0.3f) {
+            t.state = S::Melee, t.timer = 0, t.melee_hit = false;
+            play(t, t.clip_melee, false);
+        }
+        break;
+    case S::Idle:
+    case S::Chase:
+    default: {
+        t.state = S::Chase;
+        const bool in_melee = dist < t.melee_range;
+        if (in_melee && !t.ranged) {
+            t.state = S::Melee, t.timer = 0, t.melee_hit = false;
+            play(t, t.clip_melee, false);
+            break;
+        }
+        if (t.ranged && sees && dist < t.fire_range) {
+            t.state = S::Attack, t.timer = 0;
+            break;
+        }
+        if (!t.mobile || nav_.empty() || t.tri < 0) {
+            face(t, target, dt);
+            play(t, t.clip_alert, true);
+            break;
+        }
+        t.repath -= dt;
+        const bool crossing = t.path_next < t.path_off_mesh.size() && t.path_off_mesh[t.path_next];
+        if (!crossing && (t.repath <= 0 || glm::distance(t.path_goal, target) > 2.0f)) {
+            t.repath = 0.5f;
+            glm::vec3 goal;
+            const int goal_tri = nav_.nearest(target + glm::vec3(0, 0, 0.3f), 4.0f, goal);
+            t.path.clear();
+            t.path_next = 0;
+            if (goal_tri >= 0 &&
+                nav_.find_path(t.tri, t.pos, goal_tri, goal, t.path, [this](int door) { return logic_.door_passable(door); },
+                               &t.path_off_mesh))
+                t.path_goal = target;
+        }
+        if (t.path_next < t.path.size() && dist > (t.ranged ? 1.5f : t.melee_range * 0.8f)) {
+            play(t, t.clip_run, true);
+            move_along_path(t, dt);
+        } else {
+            face(t, target, dt);
+            play(t, t.clip_alert, true);
+        }
+        break;
+    }
+    }
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+}
+
+void Combat::fire_bolt(Target& t) {
+    glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
+    const float y = glm::radians(t.yaw);
+    muzzle += glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.3f);
+    // Aim at the player's chest with some inaccuracy that grows with distance.
+    glm::vec3 aim = player_center() - muzzle;
+    const float dist = glm::length(aim);
+    std::normal_distribution<float> n(0.0f, 0.04f + 0.004f * dist);
+    aim = glm::normalize(aim / std::max(dist, 0.01f) + glm::vec3(n(rng_), n(rng_), n(rng_) * 0.5f));
+    bolts_.push_back({muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())});
+    ++stats_.enemy_shots;
+}
+
+void Combat::damage_player(float amount, const glm::vec3& from) {
+    (void)from;
+    if (player_dead || player_invulnerable || amount <= 0) return;
+    player_health -= amount;
+    stats_.damage_taken += amount;
+    regen_delay_ = regen_pause_;
+    damage_flash_ = std::min(damage_flash_ + amount / 30.0f + 0.15f, 1.0f);
+    if (player_health <= 0) {
+        player_health = 0;
+        player_dead = true;
+        dead_timer_ = 0;
+        log("player died");
+    }
+}
+
+void Combat::apply_damage(Target& t, float amount, bool by_player) {
+    LevelLogic::Object* o = logic_.object(t.id);
+    if (!o || o->dead || t.invulnerable || !o->enabled) return;
+    o->health -= amount;
+    if (by_player) logic_.runtime_.send_event("TargetHit", t.id);
+    if (t.actor && t.hostile) notice(t);
+    if (o->health <= 0) {
+        die(t);
+        return;
+    }
+    // Flinch now and then.
+    if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee &&
+        std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f) {
+        t.state = Target::State::Hurt;
+        t.timer = 0;
+        t.hurt_cooldown = 2.5f;
+        play(t, t.clip_hurt, false);
+    }
+}
+
+void Combat::die(Target& t) {
+    LevelLogic::Object* o = logic_.object(t.id);
+    if (!o || o->dead) return;
+    o->dead = true;
+    o->health = 0;
+    t.timer = 0;
+    ++stats_.kills;
+    log("killed " + t.type + " #" + std::to_string(t.id));
+    if (t.actor && !t.clip_deaths.empty()) {
+        t.state = Target::State::Dying;
+        play(t, t.clip_deaths[std::uniform_int_distribution<size_t>(0, t.clip_deaths.size() - 1)(rng_)], false);
+    } else {
+        t.state = Target::State::Dead;
+        if (!t.actor) logic_.show(*o, false);
+    }
+    if (t.explosive) {
+        // Plasma pods: splash damage around them.
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, 0.5f);
+        for (int k = 0; k < 24; ++k)
+            sparks_.push_back({c + glm::vec3(std::cos(k * 0.8f), std::sin(k * 0.8f), (k % 5) * 0.3f) * (0.4f + 0.1f * (k % 4)),
+                               0.6f, {0.4f, 0.8f, 1.0f, 1}});
+        for (Target& other : targets_) {
+            if (&other == &t || !alive(other)) continue;
+            const float d = glm::distance(other.pos, t.pos);
+            if (d < 6.0f) apply_damage(other, 40.0f * (1 - d / 6.0f), true);
+        }
+        const float d = glm::distance(player_center(), c);
+        if (d < 6.0f) damage_player(40.0f * (1 - d / 6.0f), c);
+    }
+    logic_.runtime_.send_event("TargetableDied", t.id);
+    logic_.start_script("Obj" + std::to_string(t.id) + "_OnDead", t.id);
+}
+
+int Combat::ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t, float& t_hit, glm::vec3& point) const {
+    int best = -1;
+    t_hit = max_t;
+    for (size_t i = 0; i < targets_.size(); ++i) {
+        const Target& t = targets_[i];
+        if (!alive(t)) continue;
+        // Vertical cylinder: solve in XY, then check the height.
+        const glm::vec2 o = glm::vec2(from - t.pos), d = glm::vec2(dir);
+        const float a = glm::dot(d, d), b = 2 * glm::dot(o, d), c = glm::dot(o, o) - t.radius * t.radius;
+        if (a < 1e-8f) continue;
+        const float disc = b * b - 4 * a * c;
+        if (disc < 0) continue;
+        const float s = std::sqrt(disc);
+        for (float h : {(-b - s) / (2 * a), (-b + s) / (2 * a)}) {
+            if (h < 0 || h >= t_hit) continue;
+            const glm::vec3 p = from + dir * h;
+            if (p.z < t.pos.z || p.z > t.pos.z + t.height) continue;
+            t_hit = h, best = int(i), point = p;
+            break;
+        }
+    }
+    return best;
+}
+
+void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
+    const WeaponDef& w = weapon();
+    --clip_[size_t(current_)];
+    ++stats_.shots;
+    // Spread: a cone that widens while firing.
+    std::normal_distribution<float> n(0.0f, glm::radians(0.3f + spread_) * 0.5f);
+    glm::vec3 right = glm::cross(aim, glm::vec3(0, 0, 1));
+    right = glm::length(right) > 1e-4f ? glm::normalize(right) : glm::vec3(1, 0, 0);
+    const glm::vec3 up = glm::normalize(glm::cross(right, aim));
+    const glm::vec3 dir = glm::normalize(aim + right * n(rng_) + up * n(rng_));
+    spread_ = std::min(spread_ + w.spread_step * 0.35f, 4.0f);
+
+    const float range = 300;
+    float wall_t = 1;
+    const bool wall = scene_.collision().raycast(eye, eye + dir * range, wall_t);
+    float target_t = 0;
+    glm::vec3 point;
+    const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
+    const glm::vec3 end = hit >= 0 ? point : eye + dir * (wall ? wall_t * range : range);
+    const glm::vec3 muzzle = eye + aim * 0.6f + right * 0.18f - up * 0.16f;
+    tracers_.push_back({muzzle, end, 0.06f});
+    if (hit >= 0) {
+        Target& t = targets_[size_t(hit)];
+        const float d = glm::distance(eye, point);
+        float dmg = w.damage_near;
+        if (d > w.far_dist) dmg = w.damage_far;
+        else if (d > w.near_dist) dmg = w.damage_near + (d - w.near_dist) * (w.damage_far - w.damage_near) / (w.far_dist - w.near_dist);
+        if (t.headshots && point.z > t.pos.z + t.height * 0.84f) dmg *= 2;   // CTargetableComponent head multiplier
+        ++stats_.hits;
+        hit_marker_ = 0.15f;
+        sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
+        apply_damage(t, dmg, true);
+    } else if (wall) {
+        sparks_.push_back({end, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
+    }
+}
+
+void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim) {
+    last_eye_ = eye;
+    last_aim_ = aim;
+    update_spawners(dt);
+    logic_.actor_positions.clear();
+    for (const Target& t : targets_)
+        if (t.actor && t.mobile && t.aware && alive(t)) logic_.actor_positions.push_back(t.pos + glm::vec3(0, 0, 1));
+    // Spawned bodies go back to the pool after a while.
+    for (Target& t : targets_) {
+        if (!t.spawned || t.state != Target::State::Dead) continue;
+        if ((t.timer += dt) > 8.0f)
+            if (LevelLogic::Object* o = logic_.object(t.id); o && o->visible) logic_.show(*o, false);
+    }
+    for (Target& t : targets_) {
+        LevelLogic::Object* o = logic_.object(t.id);
+        if (!o || !o->enabled) continue;
+        if (t.state != Target::State::Dying && t.state != Target::State::Dead && (o->dead || o->health <= 0)) {
+            o->dead = false;
+            die(t);   // SetHealth(id, 0) from a script
+            continue;
+        }
+        if (t.actor) update_actor(t, dt);
+    }
+    // Keep actors apart.
+    for (size_t i = 0; i < targets_.size(); ++i) {
+        Target& a = targets_[i];
+        if (!a.actor || !a.mobile || !alive(a)) continue;
+        for (size_t j = i + 1; j < targets_.size(); ++j) {
+            Target& b = targets_[j];
+            if (!b.actor || !b.mobile || !alive(b)) continue;
+            glm::vec2 d = glm::vec2(b.pos - a.pos);
+            const float len = glm::length(d), min = a.radius + b.radius;
+            if (len >= min || std::abs(a.pos.z - b.pos.z) > 2) continue;
+            d = len > 1e-4f ? d / len : glm::vec2(1, 0);
+            const glm::vec2 push = d * (min - len) * 0.5f;
+            a.pos -= glm::vec3(push, 0), b.pos += glm::vec3(push, 0);
+            for (Target* x : {&a, &b}) {
+                const bool crossing = x->path_next < x->path_off_mesh.size() && x->path_off_mesh[x->path_next];
+                if (x->tri >= 0 && !crossing) stay_on_mesh(*x);
+            }
+        }
+    }
+
+    // Projectiles: move, hit the player or the world.
+    for (Bolt& b : bolts_) {
+        const glm::vec3 next = b.pos + b.vel * dt;
+        b.life -= dt;
+        float t = 1;
+        const bool wall = scene_.collision().raycast(b.pos, next, t);
+        const glm::vec3 end = wall ? b.pos + (next - b.pos) * t : next;
+        // Closest approach to the player along this step.
+        const glm::vec3 pc = player_center();
+        const glm::vec3 seg = end - b.pos;
+        const float s = glm::dot(seg, seg) > 0 ? glm::clamp(glm::dot(pc - b.pos, seg) / glm::dot(seg, seg), 0.0f, 1.0f) : 0.0f;
+        const glm::vec3 c = b.pos + seg * s;
+        const glm::vec3 off = c - pc;
+        if (!player_dead && glm::length(glm::vec2(off)) < player_.radius.x + 0.15f && std::abs(off.z) < player_.radius.z) {
+            damage_player(b.damage, b.pos);
+            b.life = 0;
+        } else if (wall) {
+            sparks_.push_back({end, 0.15f, b.color});
+            b.life = 0;
+        }
+        b.pos = end;
+    }
+    bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
+    for (Tracer& t : tracers_) t.life -= dt;
+    tracers_.erase(std::remove_if(tracers_.begin(), tracers_.end(), [](const Tracer& t) { return t.life <= 0; }), tracers_.end());
+    for (Spark& s : sparks_) s.life -= dt;
+    sparks_.erase(std::remove_if(sparks_.begin(), sparks_.end(), [](const Spark& s) { return s.life <= 0; }), sparks_.end());
+
+    // The player: death and revival, regeneration.
+    damage_flash_ = std::max(damage_flash_ - dt * 1.5f, 0.0f);
+    hit_marker_ = std::max(hit_marker_ - dt, 0.0f);
+    if (player_dead) {
+        dead_timer_ += dt;
+        if (dead_timer_ > 3.0f) {   // no checkpoints yet: get up where you fell
+            player_dead = false;
+            player_health = player_max_health;
+            log("player revived");
+        }
+        return;
+    }
+    regen_delay_ -= dt;
+    if (regen_delay_ <= 0 && player_health < player_max_health)
+        player_health = std::min(player_health + regen_rate_ * dt, player_max_health);
+
+    // Weapon.
+    if (in.select >= 0 && in.select < int(weapons_.size()) && in.select != current_) {
+        current_ = in.select;
+        reload_left_ = 0;
+        fire_cooldown_ = 0.4f;
+    }
+    fire_cooldown_ = std::max(fire_cooldown_ - dt, 0.0f);
+    spread_ = std::max(spread_ - dt * 6.0f, 0.0f);
+    int& clip = clip_[size_t(current_)];
+    int& reserve = reserve_[size_t(current_)];
+    const WeaponDef& w = weapon();
+    if (reload_left_ > 0) {
+        reload_left_ -= dt;
+        if (reload_left_ <= 0) {
+            const int want = w.clip - clip;
+            const int take = reserve < 0 ? want : std::min(want, reserve);
+            clip += take;
+            if (reserve >= 0) reserve -= take;
+        }
+    } else if ((in.reload && clip < w.clip) || (clip <= 0 && in.fire)) {
+        if (reserve != 0) reload_left_ = w.reload_time;
+    } else if (in.fire && shoot_enabled && fire_cooldown_ <= 0 && clip > 0 && (w.automatic || !trigger_held_)) {
+        fire_player(eye, aim);
+        fire_cooldown_ = w.interval;
+    }
+    trigger_held_ = in.fire;
+    float t_hit;
+    glm::vec3 p;
+    float wall_t = 1;
+    const bool wall = scene_.collision().raycast(eye, eye + aim * 200.0f, wall_t);
+    const int under = ray_target(eye, aim, wall ? wall_t * 200.0f : 200.0f, t_hit, p);
+    aim_on_enemy_ = under >= 0 && targets_[size_t(under)].hostile;
+}
+
+void Combat::push_player_out() {
+    for (const Target& t : targets_) {
+        if (!t.actor || !alive(t)) continue;
+        const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+        if (feet.z > t.pos.z + t.height || feet.z + 2 * player_.radius.z < t.pos.z) continue;
+        glm::vec2 d = glm::vec2(player_.center - t.pos);
+        const float len = glm::length(d), min = t.radius + player_.radius.x;
+        if (len >= min) continue;
+        d = len > 1e-4f ? d / len : glm::vec2(0, 1);
+        player_.center += glm::vec3(d * (min - len), 0);
+    }
+}
+
+void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const {
+    for (const Tracer& t : tracers_) {
+        const float a = t.life / 0.06f;
+        beam(o.world, t.from, t.to, 0.035f, {1.0f, 0.85f, 0.5f, 0.9f * a}, {1.0f, 0.7f, 0.3f, 0.2f * a}, eye);
+    }
+    for (const Bolt& b : bolts_) {
+        const glm::vec3 tail = b.pos - glm::normalize(b.vel) * 1.2f;
+        beam(o.world, tail, b.pos, 0.12f, glm::vec4(glm::vec3(b.color), 0), b.color, eye);
+        glow(o.world, b.pos, 0.18f, b.color, eye);
+    }
+    for (const Spark& s : sparks_) glow(o.world, s.pos, 0.25f, glm::vec4(glm::vec3(s.color), std::min(s.life * 8, 1.0f)), eye);
+
+    // HUD, in pixels.
+    const float w = float(width), h = float(height), u = h / 720.0f;
+    const float cx = w * 0.5f, cy = h * 0.5f;
+    if (damage_flash_ > 0 || player_dead) {
+        const float a = player_dead ? 0.55f : damage_flash_ * 0.45f;
+        const float edge = 90 * u;
+        const glm::vec4 red(0.7f, 0.0f, 0.0f, a), clear(0.7f, 0.0f, 0.0f, 0);
+        auto grad = [&](float x0, float y0, float x1, float y1, bool horizontal, bool flip) {
+            const uint32_t pa = pack_rgba(flip ? clear : red), pb = pack_rgba(flip ? red : clear);
+            if (horizontal)
+                o.screen.insert(o.screen.end(), {{{x0, y0, 0}, pa}, {{x1, y0, 0}, pb}, {{x1, y1, 0}, pb},
+                                                 {{x0, y0, 0}, pa}, {{x1, y1, 0}, pb}, {{x0, y1, 0}, pa}});
+            else
+                o.screen.insert(o.screen.end(), {{{x0, y0, 0}, pa}, {{x1, y0, 0}, pa}, {{x1, y1, 0}, pb},
+                                                 {{x0, y0, 0}, pa}, {{x1, y1, 0}, pb}, {{x0, y1, 0}, pb}});
+        };
+        grad(0, 0, edge, h, true, false);
+        grad(w - edge, 0, w, h, true, true);
+        grad(0, 0, w, edge, false, false);
+        grad(0, h - edge, w, h, false, true);
+        if (player_dead) rect(o.screen, 0, 0, w, h, {0.25f, 0, 0, 0.35f});
+    }
+    // Crosshair: red over an enemy, wider while the spread is open.
+    const glm::vec4 cc = aim_on_enemy_ ? glm::vec4(1, 0.25f, 0.2f, 0.9f) : glm::vec4(1, 1, 1, 0.75f);
+    const float gap = (6 + spread_ * 4) * u, len = 9 * u, th = std::max(2 * u, 1.0f);
+    rect(o.screen, cx - gap - len, cy - th / 2, len, th, cc);
+    rect(o.screen, cx + gap, cy - th / 2, len, th, cc);
+    rect(o.screen, cx - th / 2, cy - gap - len, th, len, cc);
+    rect(o.screen, cx - th / 2, cy + gap, th, len, cc);
+    if (hit_marker_ > 0) {
+        const float s = 7 * u, a = hit_marker_ / 0.15f;
+        for (int k = 0; k < 4; ++k) {
+            const float dx = (k & 1) ? 1.0f : -1.0f, dy = (k & 2) ? 1.0f : -1.0f;
+            rect(o.screen, cx + dx * (s + 2 * u) - th / 2, cy + dy * (s + 2 * u) - th / 2, th * 2, th * 2, {1, 1, 1, a});
+        }
+    }
+    // Health (bottom left) and ammo (bottom right).
+    const float bw = 240 * u, bh = 14 * u, bx = 30 * u, by = h - 40 * u;
+    rect(o.screen, bx - 2 * u, by - 2 * u, bw + 4 * u, bh + 4 * u, {0, 0, 0, 0.5f});
+    const float frac = player_health / player_max_health;
+    const glm::vec4 hc = frac > 0.5f ? glm::vec4(0.3f, 0.85f, 1.0f, 0.85f) : frac > 0.25f ? glm::vec4(1, 0.75f, 0.2f, 0.9f)
+                                                                                         : glm::vec4(1, 0.2f, 0.15f, 0.95f);
+    rect(o.screen, bx, by, bw * frac, bh, hc);
+    const float dh = 34 * u;
+    const int clip = ammo_in_clip(), reserve = ammo_reserve();
+    const glm::vec4 ac = clip == 0 ? glm::vec4(1, 0.3f, 0.2f, 0.9f) : glm::vec4(0.3f, 0.85f, 1.0f, 0.85f);
+    digits(o.screen, clip, w - 230 * u, h - 60 * u, dh, ac);
+    if (reserve >= 0) digits(o.screen, reserve, w - 120 * u, h - 50 * u, dh * 0.6f, {0.8f, 0.9f, 1.0f, 0.7f});
+    if (reload_left_ > 0) {
+        const float rw = 120 * u;
+        rect(o.screen, cx - rw / 2, cy + 40 * u, rw, 5 * u, {0, 0, 0, 0.5f});
+        rect(o.screen, cx - rw / 2, cy + 40 * u, rw * (1 - reload_left_ / weapon().reload_time), 5 * u, {1, 1, 1, 0.8f});
+    }
+}
+
+int Combat::count_teams(uint32_t team_mask) const {
+    int n = 0;
+    for (const Target& t : targets_) n += t.actor && ((1u << t.team) & team_mask) && alive(t);
+    return n;
+}
+
+void Combat::spawn(SpawnManager& m, size_t slot, const SpawnManager::Entry& e) {
+    const int wp = slot < m.points.size() ? m.points[slot] : -1;
+    const LevelLogic::Object* point = logic_.object(wp);
+    if (!point || e.type < 0) return;
+    const int id = next_spawn_id_++;
+    const float yaw = yaw_towards(point->position, player_.center);
+    const size_t index = scene_.spawn_object(e.type, id, point->position, yaw);
+    const LevelObject& lo = scene_.level().objects[index];
+    LevelLogic::Object& o = logic_.add_object(id, index, lo.name, point->position, yaw);
+    Target t;
+    t.id = id;
+    t.object = index;
+    t.type = lo.name;
+    t.pos = point->position;
+    t.yaw = yaw;
+    t.spawned = true;
+    if (const Value* health = component(lo, kCompHealth)) o.health = num(*health, 0, 10);
+    setup_actor(t, lo);
+    t.aware = t.hostile;   // they come to fight
+    targets_.push_back(std::move(t));
+    logic_.enable(o, true);
+    ++stats_.actors;
+    // The waypoint's spawn script (CWayPointObject::RunSpawnScript), if any.
+    if (e.waypoint >= 0) logic_.start_script("Obj" + std::to_string(e.waypoint) + "_OnSpawnStart", id);
+}
+
+void Combat::update_spawners(float dt) {
+    for (SpawnManager& m : spawners_) {
+        LevelLogic::Object* self = logic_.object(m.id);
+        if (m.ended || !self || !self->enabled || m.waves.empty()) continue;
+        if (m.wave < 0) {
+            m.wave = 0, m.time = 0;
+            m.spawned.assign(m.waves[0].entries.size(), 0);
+        }
+        m.time += dt;
+        const SpawnManager::Wave& w = m.waves[size_t(m.wave)];
+        bool complete = true;
+        for (size_t i = 0; i < w.entries.size(); ++i) {
+            if (m.spawned[i] || w.entries[i].type < 0) continue;
+            if (m.time * 1000.0f >= float(w.entries[i].delay_ms)) {
+                m.spawned[i] = 1;
+                spawn(m, i, w.entries[i]);
+            } else {
+                complete = false;
+            }
+        }
+        if (!complete) continue;
+        if (m.wave + 1 >= int(m.waves.size())) {
+            if (m.loop) {
+                m.wave = -1;
+                continue;
+            }
+            m.ended = true;
+            logic_.enable(*self, false);
+            logic_.runtime_.send_event("SpawnEnd_" + std::to_string(m.id));
+            log("spawn manager " + std::to_string(m.id) + " ended");
+        } else if (count_teams(m.teams) < m.waves[size_t(m.wave) + 1].threshold) {
+            ++m.wave;
+            m.time = 0;
+            m.spawned.assign(m.waves[size_t(m.wave)].entries.size(), 0);
+        }
+    }
+}
+
+std::vector<int> Combat::enemy_ids() const {
+    std::vector<int> out;
+    for (const Target& t : targets_)
+        if (t.actor && ((1u << t.team) & ~kPlayerTeams) && alive(t)) out.push_back(t.id);
+    return out;
+}
+
+bool Combat::damage(int id, float amount) {
+    for (Target& t : targets_)
+        if (t.id == id) {
+            apply_damage(t, amount, false);
+            return true;
+        }
+    return false;
+}
+
+void Combat::kill_all_enemies() {
+    for (Target& t : targets_)
+        if (t.actor && t.hostile && alive(t)) die(t);
+}
+
+void Combat::set_invulnerable(int id, bool on) {
+    for (Target& t : targets_)
+        if (t.id == id) t.invulnerable = on;
+}
+
+std::vector<std::string> Combat::describe() const {
+    std::vector<std::string> out;
+    for (const Target& t : targets_) {
+        const LevelLogic::Object* o = logic_.object(t.id);
+        char line[256];
+        static const char* kStates[] = {"idle", "chase", "attack", "melee", "hurt", "dying", "dead"};
+        std::snprintf(line, sizeof line, "%7d %-22s (%7.1f %7.1f %6.1f) %s%s%s%s team %d hp %.0f tri %d run %.1f m/s %s %s%s path %zu/%zu",
+                      t.id, t.type.c_str(), t.pos.x, t.pos.y, t.pos.z, t.actor ? "actor " : "", t.hostile ? "hostile " : "",
+                      t.ranged ? "ranged " : "", o && o->enabled ? "enabled" : "disabled", t.team, o ? o->health : 0.0f, t.tri,
+                      t.run_speed, t.clip_run.c_str(), kStates[int(t.state)], t.aware ? " aware" : "", t.path_next, t.path.size());
+        std::string l = line;
+        for (const glm::vec3& p : t.path) {
+            char pt[64];
+            std::snprintf(pt, sizeof pt, " (%.1f %.1f %.1f)", p.x, p.y, p.z);
+            l += pt;
+        }
+        out.push_back(l);
+    }
+    return out;
+}
+
+bool Combat::nearest_enemy(const glm::vec3& eye, glm::vec3& out) const {
+    float best = std::numeric_limits<float>::max();
+    for (const Target& t : targets_) {
+        if (!t.actor || !t.hostile || !alive(t)) continue;
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.6f);
+        const float d = glm::distance(eye, c);
+        if (d < best && d < 60 && line_clear(eye, c)) best = d, out = c;
+    }
+    return best < std::numeric_limits<float>::max();
+}
+
+}  // namespace nova

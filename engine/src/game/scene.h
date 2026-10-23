@@ -59,6 +59,23 @@ public:
     bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false);
     // The object's current clip has played through (never true for looping clips).
     bool clip_finished(size_t object) const;
+
+    // Create an object of a gol type at runtime (spawn managers); it starts hidden.
+    // Returns its index into level().objects.
+    size_t spawn_object(int type, int id, const glm::vec3& position, float yaw);
+    // Actors: objects that game logic moves. Place the object's model at `position`
+    // turned `yaw` degrees about Z (keeping its scale), and update its bounds and lighting.
+    bool set_object_pose(size_t object, const glm::vec3& position, float yaw);
+    // Keep the named node's horizontal translation at the clip's first frame: the
+    // animations carry root motion, and the game moves actors itself.
+    bool set_root_lock(size_t object, const std::string& node);
+    // Clips of the object's animation; a clip's length (seconds) and root-node speed (m/s).
+    std::vector<std::string> clip_names(size_t object) const;
+    float clip_length(size_t object, const std::string& clip) const;
+    float clip_root_speed(size_t object, const std::string& clip) const;
+    void set_clip_speed(size_t object, float speed);
+    // World position of one of the object's nodes (by name or id), e.g. Bip01_Head.
+    bool node_position(size_t object, const std::string& node, glm::vec3& out) const;
     const SceneStats& stats() const { return stats_; }
 
     // Draw with the game's own shaders (default) or the built-in fallback shader.
@@ -135,7 +152,11 @@ private:
         };
         std::vector<ValueBinding> values;
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
+        int root_lock = -1;                  // node whose horizontal translation is held (actors)
+        glm::vec2 root_xy{0};
     };
+    const AnimatedInstance* object_anim(size_t object) const;
+    int find_node(const LoadedModel& m, const std::string& name) const;
 
     // A material whose FadeFactor follows the camera's distance from a node's XZ plane
     // (CGameObject::Update with mesh flags 4/8; fadeNear=/fadeFar= in the node properties).
@@ -192,6 +213,7 @@ private:
     };
     std::unordered_map<size_t, size_t> object_instances_;   // level object index -> instance
     std::deque<Instance> instances_;                    // stable addresses: draws point at .lighting
+    void light_instance(Instance& inst, const glm::vec3& center);
     struct Skybox {
         int id = 0;
         size_t instance = 0;

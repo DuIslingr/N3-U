@@ -181,6 +181,19 @@ void LevelLogic::start_script(const std::string& function, int owner) {
     if (runtime_.start(function, owner) && trace) log("start " + function);
 }
 
+LevelLogic::Object& LevelLogic::add_object(int id, size_t index, const std::string& type, const glm::vec3& position, float yaw) {
+    Object& o = objects_[id];
+    o = Object{};
+    o.id = id;
+    o.index = index;
+    o.type = type;
+    o.position = position;
+    o.yaw = yaw;
+    o.enabled = o.visible = false;
+    ++stats_.objects;
+    return o;
+}
+
 void LevelLogic::enable(Object& o, bool on) {
     if (o.enabled == on) return;
     if (trace) log((on ? "enable " : "disable ") + std::to_string(o.id) + " " + o.type);
@@ -301,7 +314,8 @@ void LevelLogic::update_doors(float) {
     for (auto& [id, o] : objects_) {
         if (o.door < 0 || !o.enabled) continue;
         Door& d = doors_[size_t(o.door)];
-        const bool near = glm::distance(eye, o.position) <= d.radius;
+        bool near = glm::distance(eye, o.position) <= d.radius;
+        for (const glm::vec3& a : actor_positions) near = near || glm::distance(a, o.position) <= d.radius * 0.6f;
         const bool locked = d.locked && !d.keep_unlocked;
         switch (d.state) {
             case Door::State::Closed:

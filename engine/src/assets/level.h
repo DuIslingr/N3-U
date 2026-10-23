@@ -48,6 +48,13 @@ using Gol = std::unordered_map<int, GolType>;
 struct NavMesh {
     std::vector<glm::vec3> vertices;                // world space
     std::vector<std::array<int16_t, 8>> polygons;   // 3 vertex indices, 3 neighbours, 2 flags
+    // Links to other nav meshes through doors: polygon, a point in the doorway, the door's id.
+    struct Link {
+        int polygon = -1;
+        glm::vec3 point{0};
+        int door = -1;
+    };
+    std::vector<Link> links;
 };
 
 struct LevelObject {

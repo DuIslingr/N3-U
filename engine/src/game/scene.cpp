@@ -439,7 +439,12 @@ void Scene::compute_object_lighting() {
         if (!inst.draw_count) continue;
         glm::vec3 center(0);
         for (size_t i = 0; i < inst.draw_count; ++i) center += draws_[inst.first_draw + i].center;
-        center /= float(inst.draw_count);
+        light_instance(inst, center / float(inst.draw_count));
+    }
+}
+
+void Scene::light_instance(Instance& inst, const glm::vec3& center) {
+    {
         ObjectLighting& L = inst.lighting;
         L.center = center;
         L.probe = irradiance_parameters(sample_irradiance(irradiance_, center));
@@ -455,7 +460,7 @@ void Scene::compute_object_lighting() {
             }
         }
         L.has_light = best >= 0;
-        if (!L.has_light) continue;
+        if (!L.has_light) return;
         const PointLight& a = lights_[size_t(best)];
         L.l0_position = a.position;
         L.l0_color = a.diffuse;
@@ -515,6 +520,7 @@ void Scene::pose(AnimatedInstance& a) {
         const ModelNode& node = m.cpu.nodes[n];
         NodePose p{node.translation, node.rotation, node.scale};
         if (a.tracks[n]) sample_tracks(*a.tracks[n], t, p);
+        if (int(n) == a.root_lock) p.translation.x = a.root_xy.x, p.translation.y = a.root_xy.y;
         const glm::mat4 parent = m.parent[n] < 0 ? a.placement : a.world[m.parent[n]];
         a.world[n] = parent * local_matrix(p.translation, p.rotation, p.scale);
     }
@@ -753,7 +759,127 @@ bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool re
     a->time = 0;
     a->loop = loop;
     a->reverse = reverse;
+    if (a->root_lock >= 0 && a->tracks[size_t(a->root_lock)]) {
+        const ModelNode& node = a->model->cpu.nodes[size_t(a->root_lock)];
+        NodePose p{node.translation, node.rotation, node.scale};
+        sample_tracks(*a->tracks[size_t(a->root_lock)], reverse ? c->end : c->start, p);
+        a->root_xy = {p.translation.x, p.translation.y};
+    }
     pose(*a);
+    return true;
+}
+
+size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float yaw) {
+    auto g = gol_.find(type);
+    LevelObject o;
+    o.kind = "object";
+    o.type = type;
+    o.name = g != gol_.end() ? g->second.name : "";
+    Transform t;
+    t.id = id;
+    t.position = position;
+    t.rotation = {0, 0, yaw};
+    o.base = t;
+    const size_t index = level_.objects.size();
+    level_.objects.push_back(o);
+    Level one;
+    one.objects.push_back(o);
+    for (Placement p : model_placements(one, gol_)) {
+        p.object_index = index;
+        if (const LoadedModel* lm = model(p.model)) {
+            const size_t inst = add_instance(*lm, placement_matrix(p.transform), &p);
+            object_instances_[index] = inst;
+            Instance& in = instances_[inst];
+            light_instance(in, (in.world_min + in.world_max) * 0.5f);
+            set_object_visible(index, false);
+        }
+    }
+    stats_.draws = draws_.size();
+    return index;
+}
+
+const Scene::AnimatedInstance* Scene::object_anim(size_t object) const {
+    auto it = object_instances_.find(object);
+    return it == object_instances_.end() ? nullptr : instances_[it->second].anim;
+}
+
+int Scene::find_node(const LoadedModel& m, const std::string& name) const {
+    for (size_t n = 0; n < m.cpu.nodes.size(); ++n)
+        if (m.cpu.nodes[n].name == name || m.cpu.nodes[n].id == name) return int(n);
+    return -1;
+}
+
+bool Scene::set_object_pose(size_t object, const glm::vec3& position, float yaw) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return false;
+    Instance& inst = instances_[it->second];
+    AnimatedInstance* a = inst.anim;
+    if (!a) return false;
+    const glm::vec3 scale(glm::length(glm::vec3(a->placement[0])), glm::length(glm::vec3(a->placement[1])),
+                          glm::length(glm::vec3(a->placement[2])));
+    a->placement = glm::scale(glm::rotate(glm::translate(glm::mat4(1), position), glm::radians(yaw), glm::vec3(0, 0, 1)), scale);
+    a->placement_inverse = glm::inverse(a->placement);
+    pose(*a);
+    // Bounds from the placement-space box; actors leave their zone, so test them against the view.
+    glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+    for (int k = 0; k < 8; ++k) {
+        const glm::vec3 c((k & 1) ? inst.local_max.x : inst.local_min.x, (k & 2) ? inst.local_max.y : inst.local_min.y,
+                          (k & 4) ? inst.local_max.z : inst.local_min.z);
+        const glm::vec3 w = glm::vec3(a->placement * glm::vec4(c, 1));
+        lo = glm::min(lo, w), hi = glm::max(hi, w);
+    }
+    inst.world_min = lo, inst.world_max = hi;
+    inst.zone = ZoneSystem::kNone;
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].center = (lo + hi) * 0.5f;
+    light_instance(inst, (lo + hi) * 0.5f);
+    return true;
+}
+
+bool Scene::set_root_lock(size_t object, const std::string& node) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return false;
+    AnimatedInstance& a = *instances_[it->second].anim;
+    a.root_lock = find_node(*a.model, node);
+    return a.root_lock >= 0;
+}
+
+std::vector<std::string> Scene::clip_names(size_t object) const {
+    std::vector<std::string> out;
+    const AnimatedInstance* a = object_anim(object);
+    if (a && a->library)
+        for (const AnimClip& c : a->library->clips) out.push_back(c.name);
+    return out;
+}
+
+float Scene::clip_length(size_t object, const std::string& clip) const {
+    const AnimatedInstance* a = object_anim(object);
+    const AnimClip* c = a && a->library ? a->library->clip(clip) : nullptr;
+    return c ? (c->end - c->start) / 1000.0f : 0.0f;
+}
+
+float Scene::clip_root_speed(size_t object, const std::string& clip) const {
+    const AnimatedInstance* a = object_anim(object);
+    const AnimClip* c = a && a->library ? a->library->clip(clip) : nullptr;
+    if (!c || a->root_lock < 0 || !a->tracks[size_t(a->root_lock)] || c->end <= c->start) return 0;
+    const ModelNode& node = a->model->cpu.nodes[size_t(a->root_lock)];
+    NodePose p0{node.translation, node.rotation, node.scale}, p1 = p0;
+    sample_tracks(*a->tracks[size_t(a->root_lock)], c->start, p0);
+    sample_tracks(*a->tracks[size_t(a->root_lock)], c->end, p1);
+    const float scale = glm::length(glm::vec3(a->placement[0]));
+    return glm::length(glm::vec2(p1.translation - p0.translation)) * scale / ((c->end - c->start) / 1000.0f);
+}
+
+void Scene::set_clip_speed(size_t object, float speed) {
+    auto it = object_instances_.find(object);
+    if (it != object_instances_.end() && instances_[it->second].anim) instances_[it->second].anim->speed = speed;
+}
+
+bool Scene::node_position(size_t object, const std::string& node, glm::vec3& out) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a) return false;
+    const int n = find_node(*a->model, node);
+    if (n < 0) return false;
+    out = glm::vec3(a->world[size_t(n)][3]);
     return true;
 }
 
