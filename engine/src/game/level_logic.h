@@ -78,6 +78,7 @@ public:
         enum class State { Closed, Opening, Open, Closing } state = State::Closed;
         float radius = 10;
         bool locked = false, keep_unlocked = false, forced_open = false;
+        std::string unlock_light, lock_light;   // nodes shown while unlocked / locked (CDoorAIComponent::SetDoorLocked)
     };
     struct Object {
         int id = 0;

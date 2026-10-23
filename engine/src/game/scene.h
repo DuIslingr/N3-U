@@ -74,6 +74,8 @@ public:
     float clip_length(size_t object, const std::string& clip) const;
     float clip_root_speed(size_t object, const std::string& clip) const;
     void set_clip_speed(size_t object, float speed);
+    // Show or hide one of the object's nodes (by name or id) regardless of its animation.
+    void set_node_visible(size_t object, const std::string& node, bool visible);
     // World position of one of the object's nodes (by name or id), e.g. Bip01_Head.
     bool node_position(size_t object, const std::string& node, glm::vec3& out) const;
     const SceneStats& stats() const { return stats_; }
@@ -152,6 +154,7 @@ private:
         };
         std::vector<ValueBinding> values;
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
+        std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)
         int root_lock = -1;                  // node whose horizontal translation is held (actors)
         glm::vec2 root_xy{0};
     };

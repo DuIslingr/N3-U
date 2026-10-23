@@ -129,6 +129,8 @@ void LevelLogic::load_objects() {
         if (const Value* d = comp(kCompDoor); d && d->size() >= 1) {
             Door door;
             door.radius = (*d)[0].as_float();
+            if (d->size() >= 3 && (*d)[1].type == Value::String) door.unlock_light = (*d)[1].s;
+            if (d->size() >= 3 && (*d)[2].type == Value::String) door.lock_light = (*d)[2].s;
             obj.door = int(doors_.size());
             doors_.push_back(door);
             ++stats_.doors;
@@ -317,6 +319,9 @@ void LevelLogic::update_doors(float) {
         bool near = glm::distance(eye, o.position) <= d.radius;
         for (const glm::vec3& a : actor_positions) near = near || glm::distance(a, o.position) <= d.radius * 0.6f;
         const bool locked = d.locked && !d.keep_unlocked;
+        // The lock lights follow the lock state, whatever the door's clip says.
+        if (!d.unlock_light.empty()) scene.set_node_visible(o.index, d.unlock_light, !locked);
+        if (!d.lock_light.empty()) scene.set_node_visible(o.index, d.lock_light, locked);
         switch (d.state) {
             case Door::State::Closed:
                 if (d.forced_open || (near && !locked)) set_door(o, true);

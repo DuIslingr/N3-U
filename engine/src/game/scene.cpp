@@ -550,6 +550,11 @@ void Scene::pose(AnimatedInstance& a) {
             a.palettes[s][j] = node >= 0 ? a.placement_inverse * a.world[node] * sk.inverse_bind[j] : glm::mat4(1);
         }
     }
+    for (size_t n = 0; n < a.node_forced.size(); ++n) {
+        if (a.node_forced[n] < 0) continue;
+        a.node_hidden[n] = a.node_forced[n] == 0;
+        any_visibility = true;
+    }
     if (any_visibility) {
         for (size_t n = 0; n < m.cpu.nodes.size(); ++n)   // parents come before children
             if (m.parent[n] >= 0 && a.node_hidden[size_t(m.parent[n])]) a.node_hidden[n] = 1;
@@ -872,6 +877,20 @@ float Scene::clip_root_speed(size_t object, const std::string& clip) const {
 void Scene::set_clip_speed(size_t object, float speed) {
     auto it = object_instances_.find(object);
     if (it != object_instances_.end() && instances_[it->second].anim) instances_[it->second].anim->speed = speed;
+}
+
+void Scene::set_node_visible(size_t object, const std::string& node, bool visible) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return;
+    AnimatedInstance& a = *instances_[it->second].anim;
+    int n = find_node(*a.model, node);
+    if (n < 0) n = find_node(*a.model, node + "-node");
+    if (n < 0) return;
+    if (a.node_forced.size() != a.model->cpu.nodes.size()) a.node_forced.assign(a.model->cpu.nodes.size(), -1);
+    const int8_t want = visible ? 1 : 0;
+    if (a.node_forced[size_t(n)] == want) return;
+    a.node_forced[size_t(n)] = want;
+    pose(a);
 }
 
 bool Scene::node_position(size_t object, const std::string& node, glm::vec3& out) const {
