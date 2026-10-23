@@ -124,6 +124,8 @@ public:
     bool reloading() const { return reload_left_ > 0; }
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
+    int current_weapon() const { return current_; }
+    int weapon_count() const { return int(weapons_.size()); }
     float since_shot() const { return since_shot_; }   // seconds since the last shot
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }

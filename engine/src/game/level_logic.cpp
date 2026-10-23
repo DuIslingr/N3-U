@@ -254,6 +254,7 @@ void LevelLogic::start(bool keep_player) {
     movers_.clear(), waypoint_next_.clear(), path_first_.clear();
     if (!keep_player) checkpoint_ = -1;
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
+    tutorial_ = TutorialStep{};
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
@@ -341,16 +342,17 @@ void LevelLogic::message(const std::string& id, float seconds) {
         if (!t.empty()) text = prefix + t;
     }
     if (text.empty()) text = id;
-    // ^NN^: the touch buttons' glyphs; this port shows its keys instead.
-    static const std::unordered_map<std::string, std::string> keys = {
-        {"28", "[Space]"}, {"29", "[Left mouse]"}, {"30", "[Q]"}, {"31", "[Shift]"}, {"32", "[Q]"}, {"33", "[Right mouse]"},
-        {"34", "[G]"}, {"35", "[1]/[2]"}, {"36", "[G]"}, {"37", "[G]"}, {"38", "[W][A][S][D]"}};
-    for (size_t at = text.find('^'); at != std::string::npos; at = text.find('^', at + 1)) {
-        const size_t end = text.find('^', at + 1);
-        if (end == std::string::npos) break;
-        auto k = keys.find(text.substr(at + 1, end - at - 1));
-        if (k == keys.end()) continue;
-        text.replace(at, end - at + 1, k->second);
+    // Desktop: the prompts' wording for mouse and keyboard, and keys for any button glyphs
+    // (^NN^) left. Touch keeps the original (its glyphs are the on-screen buttons).
+    if (input == InputScheme::Desktop) {
+        if (std::string d = desktop_text(id); !d.empty()) text = d;
+        for (size_t at = text.find('^'); at != std::string::npos; at = text.find('^', at + 1)) {
+            const size_t end = text.find('^', at + 1);
+            if (end == std::string::npos) break;
+            const std::string key = desktop_key(std::atoi(text.substr(at + 1, end - at - 1).c_str()));
+            if (key.empty()) continue;
+            text.replace(at, end - at + 1, key);
+        }
     }
     messages_.push_back({id, text, seconds});
     while (messages_.size() > 8) messages_.pop_front();
@@ -697,6 +699,54 @@ bool LevelLogic::look_target(float& yaw, float& pitch) const {
     return true;
 }
 
+void LevelLogic::start_tutorial_step(const std::string& kind, float ms) {
+    tutorial_ = TutorialStep{};
+    tutorial_.kind = kind;
+    tutorial_.time_left = ms > 0 ? ms / 1000.0f : -1;
+    tutorial_.start = player.center;
+    tutorial_.last_yaw = player.yaw, tutorial_.last_pitch = player.pitch;
+    if (combat) tutorial_.weapon = combat->weapon_type();
+    tutorial_.active = true;
+    if (trace) log("tutorial step " + kind);
+}
+
+void LevelLogic::update_tutorial(float dt) {
+    TutorialStep& t = tutorial_;
+    if (!t.active) return;
+    bool done = false;
+    if (t.kind == "Rotate") {   // a good look around
+        float dy = std::fmod(player.yaw - t.last_yaw + 540.0f, 360.0f) - 180.0f;
+        t.progress += std::abs(dy) + std::abs(player.pitch - t.last_pitch);
+        t.last_yaw = player.yaw, t.last_pitch = player.pitch;
+        done = t.progress > 90;
+    } else if (t.kind == "Move") {
+        done = glm::distance(glm::vec2(player.center), glm::vec2(t.start)) > 3;
+    } else if (t.kind == "Jump") {
+        done = !player.on_ground && player.vertical_speed > 1;
+    } else if (t.kind == "Reload") {
+        done = combat && combat->reloading();
+    } else if (t.kind == "Shoot") {
+        done = combat && combat->since_shot() < 0.1f;
+    } else if (t.kind == "ChangeWeapon") {
+        done = combat && combat->weapon_type() != t.weapon;
+    }
+    // Steps for things this port does not have yet (sprint, aiming, grenades, powers)
+    // end with their time (or at once without one).
+    else if (t.time_left < 0) {
+        done = true;
+    }
+    if (t.time_left >= 0 && (t.time_left -= dt) <= 0) done = true;
+    if (!done) return;
+    t.active = false;
+    if (trace) log("tutorial step " + t.kind + " done");
+    runtime_.send_event("TutorialStepEnded");
+}
+
+void LevelLogic::hide_message(const std::string& id) {
+    for (Message& m : messages_)
+        if (m.id == id) m.seconds_left = 0;
+}
+
 void LevelLogic::save_checkpoint(int spawn_id) {
     if (spawn_id <= 0 || !object(spawn_id)) {
         log("SaveGame: no spawn point " + std::to_string(spawn_id));
@@ -870,6 +920,7 @@ void LevelLogic::update(float dt) {
     update_dialog(dt);
     update_movers(dt);
     update_cinematics(dt);
+    update_tutorial(dt);
     look_left_ = std::max(look_left_ - dt, 0.0f);
     if (fading_) {
         fade_left_ = std::max(fade_left_ - dt, 0.0f);

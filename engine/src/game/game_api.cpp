@@ -338,6 +338,24 @@ int api_player_look_to(lua_State* L) {
     return 0;
 }
 
+// Tutorials: Start<Kind>Tutorial([ms]); TutorialMessage(id, ms) (0 hides it).
+template <const char* Kind>
+int api_tutorial_step(lua_State* L) {
+    ctx(L).start_tutorial_step(Kind, lua_gettop(L) >= 1 ? float(lua_tointeger(L, 1)) : 0.0f);
+    return 0;
+}
+constexpr char kRotate[] = "Rotate", kMove[] = "Move", kJump[] = "Jump", kReload[] = "Reload", kShoot[] = "Shoot",
+               kChangeWeapon[] = "ChangeWeapon", kRush[] = "Rush", kIronSight[] = "IronSight", kGrenade[] = "Grenade",
+               kSpecialPower[] = "SpecialPower", kParalyze[] = "Paralyze", kDetonate[] = "Detonate", kShield[] = "Shield";
+int api_tutorial_message(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const std::string id = str_arg(L, 1);
+    const int ms = int(lua_tointeger(L, 2));
+    if (ms > 0) c.message(id, float(ms) / 1000.0f);
+    else c.hide_message(id);
+    return 0;
+}
+
 // SaveGame(spawn point): a checkpoint. ShowProgressSavedMessage().
 int api_save_game(lua_State* L) {
     ctx(L).save_checkpoint(int(lua_tointeger(L, 1)));
@@ -671,6 +689,23 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_objective},
     // Accepted without effect: saving, persistence of state the engine does not have yet.
     {"SaveGame", api_save_game},
+    {"StartRotateTutorial", api_tutorial_step<kRotate>},
+    {"StartMoveTutorial", api_tutorial_step<kMove>},
+    {"StartJumpTutorial", api_tutorial_step<kJump>},
+    {"StartReloadTutorial", api_tutorial_step<kReload>},
+    {"StartShootTutorial", api_tutorial_step<kShoot>},
+    {"StartChangeWeaponTutorial", api_tutorial_step<kChangeWeapon>},
+    {"StartRushTutorial", api_tutorial_step<kRush>},
+    {"StartIronSightTutorial", api_tutorial_step<kIronSight>},
+    {"StartGrenadeTutorial", api_tutorial_step<kGrenade>},
+    {"StartSpecialPowerTutorial", api_tutorial_step<kSpecialPower>},
+    {"StartParalyzeTutorial", api_tutorial_step<kParalyze>},
+    {"StartDetonateTutorial", api_tutorial_step<kDetonate>},
+    {"StartShieldTutorial", api_tutorial_step<kShield>},
+    {"TutorialMessage", api_tutorial_message},
+    {"StartTutorial", api_return_now},
+    {"StopTutorial", api_return_now},
+    {"EndTutorial", api_return_now},
     {"StartCinematicObject", api_start_cinematic_object},
     {"EndCinematicObject", api_end_cinematic_object},
     {"StartCinematic", api_cinematic_mode<true>},

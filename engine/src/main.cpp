@@ -56,6 +56,7 @@ struct Options {
     std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
     bool sound_check = false;           // decode every sound in the sound table and exit
     bool mute = false;
+    bool touch = false;                 // the touch scheme (mobile prompts and controls) on desktop
     glm::vec3 probe{0};                 // --probe: list the draws whose bounds contain this point
     bool have_probe = false;
     std::string probe_model;            // --probe-model: list the draws of models whose name contains this
@@ -110,6 +111,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--exec") o.exec.push_back(next());
         else if (a == "--effect") o.effects.push_back(next());
         else if (a == "--sound-check") o.sound_check = true;
+        else if (a == "--touch") o.touch = true;
         else if (a == "--probe-model") o.probe_model = next();
         else if (a == "--probe") {
             float v[3];
@@ -304,6 +306,7 @@ int main(int argc, char** argv) {
             Player player;
             player.spawn(scene.start_position, scene.start_yaw);
             LevelLogic logic(scene, player, gol);
+            if (opt.touch) logic.input = InputScheme::Touch;
             std::unique_ptr<Audio> audio;
             if ((!headless && !opt.mute) || !opt.sound_render.empty()) {
                 audio = std::make_unique<Audio>(vfs, opt.sound_render.empty());
@@ -689,20 +692,25 @@ int main(int argc, char** argv) {
                     while (SDL_PollEvent(&e)) {
                         if (e.type == SDL_EVENT_QUIT) running = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F && !e.key.repeat) {
+                        // Debug: F1 free flight, F2 zone culling, F3 built-in shaders.
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F1 && !e.key.repeat) {
                             flying = !flying;
                             if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
                         }
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Z && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
                         if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_1) combat_in.select = 0;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_2) combat_in.select = 1;
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat) {
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F3 && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
+                        }
+                        if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && combat.weapon_count() > 1) {   // cycle weapons
+                            const int n = combat.weapon_count();
+                            combat_in.select = (combat.current_weapon() + (e.wheel.y < 0 ? 1 : n - 1)) % n;
                         }
                         if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && logic.player_locked())) {
                             cam.yaw -= e.motion.xrel * 0.12f;

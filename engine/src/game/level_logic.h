@@ -22,6 +22,7 @@
 
 #include "assets/level.h"
 #include "assets/strings.h"
+#include "game/controls.h"
 #include "render/renderer.h"
 #include "game/scene.h"
 #include "script/lua_runtime.h"
@@ -55,6 +56,7 @@ public:
         float seconds_left = 0;
     };
     StringTable strings;             // MAIN and the level's table (English)
+    InputScheme input = default_input_scheme();   // prompts are worded for it
     const std::deque<Message>& messages() const { return messages_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function
@@ -166,6 +168,11 @@ public:
     // GetPlayerPositionFromCameraPosition: the next teleport keeps the camera's view.
     void handover_view(const glm::vec3& forward) { handover_ = forward, have_handover_ = true; }
     bool look_target(float& yaw, float& pitch) const;   // the view while turning (degrees)
+    // Tutorial steps (CLevelTutorial*): Start<Kind>Tutorial(ms) waits for the player to do
+    // it (turn, reload, jump, move, shoot, switch weapons, sprint...) or for `ms` to pass,
+    // then sends "TutorialStepEnded".
+    void start_tutorial_step(const std::string& kind, float ms);
+    void hide_message(const std::string& id);
     // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame): the game saves and
     // reloads there when the player dies. Here the world stays as it is: the player comes
     // back at the checkpoint's spawn point, whose Obj<id>_Default script runs again.
@@ -243,6 +250,16 @@ private:
     };
     std::vector<Mover> movers_;
     int checkpoint_ = -1;
+    struct TutorialStep {
+        std::string kind;
+        float time_left = -1;   // seconds; < 0: no time limit
+        float progress = 0;
+        glm::vec3 start{0};
+        float last_yaw = 0, last_pitch = 0;
+        std::string weapon;
+        bool active = false;
+    } tutorial_;
+    void update_tutorial(float dt);
     struct Cinematic {
         int id = 0;
         size_t index = 0;
