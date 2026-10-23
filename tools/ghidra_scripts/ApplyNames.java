@@ -32,15 +32,28 @@ public class ApplyNames extends GhidraScript {
 			// A comment keeps the match's strength.
 			Namespace ns = currentProgram.getGlobalNamespace();
 			String name = full;
-			int cut = full.lastIndexOf("::");
-			if (cut > 0 && !full.contains("(")) {
-				String[] parts = full.substring(0, cut).split("::");
-				for (String part : parts) {
+			// Split on "::" outside template arguments ("std::vector<a::B>::push_back").
+			java.util.List<String> parts = new java.util.ArrayList<>();
+			int depth = 0, start = 0;
+			for (int i = 0; i < full.length(); ++i) {
+				char c = full.charAt(i);
+				if (c == '<' || c == '(') ++depth;
+				else if (c == '>' || c == ')') --depth;
+				else if (depth == 0 && c == ':' && i + 1 < full.length() && full.charAt(i + 1) == ':') {
+					parts.add(full.substring(start, i));
+					start = i + 2;
+					++i;
+				}
+			}
+			parts.add(full.substring(start));
+			int cut = parts.size() > 1 ? 1 : 0;
+			if (cut > 0) {
+				for (String part : parts.subList(0, parts.size() - 1)) {
 					Namespace next = currentProgram.getSymbolTable().getNamespace(part, ns);
 					if (next == null) next = currentProgram.getSymbolTable().createNameSpace(ns, part, SourceType.ANALYSIS);
 					ns = next;
 				}
-				name = full.substring(cut + 2);
+				name = parts.get(parts.size() - 1);
 			}
 			try {
 				f.setParentNamespace(ns);

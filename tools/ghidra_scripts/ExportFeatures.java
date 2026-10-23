@@ -16,6 +16,8 @@ import java.util.Set;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.scalar.Scalar;
+import java.util.TreeSet;
 import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
@@ -65,11 +67,19 @@ public class ExportFeatures extends GhidraScript {
 				Function f = fi.next();
 				if (f.isExternal()) continue;
 				List<String> calls = new ArrayList<>();
+				TreeSet<Long> consts = new TreeSet<>();
 				InstructionIterator ii = currentProgram.getListing().getInstructions(f.getBody(), true);
 				int count = 0;
 				while (ii.hasNext()) {
 					Instruction ins = ii.next();
 					++count;
+					// Immediates (assert line numbers, sizes, ids) that survive any compiler.
+					for (int op = 0; op < ins.getNumOperands(); ++op)
+						for (Object o : ins.getOpObjects(op))
+							if (o instanceof Scalar) {
+								long v = ((Scalar) o).getUnsignedValue();
+								if (v >= 2 && v <= 100000) consts.add(v);
+							}
 					if (!ins.getFlowType().isCall()) continue;
 					for (Address t : ins.getFlows()) {
 						Function g = getFunctionAt(t);
@@ -90,6 +100,13 @@ public class ExportFeatures extends GhidraScript {
 					if (!first) b.append(',');
 					b.append('"').append(esc(s)).append('"');
 					first = false;
+				}
+				b.append("],\"consts\":[");
+				boolean firstc = true;
+				for (Long v : consts) {
+					if (!firstc) b.append(',');
+					b.append(v);
+					firstc = false;
 				}
 				b.append("],\"calls\":[");
 				for (int k = 0; k < calls.size(); ++k) {
