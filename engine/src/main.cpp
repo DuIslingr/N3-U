@@ -563,8 +563,26 @@ int main(int argc, char** argv) {
                         }
                     }
                     const auto now = std::chrono::steady_clock::now();
-                    const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
+                    // Frame times arrive unevenly even at a steady refresh rate (swapchain images
+                    // are handed back in bursts); step the game by the average of the last few so
+                    // motion stays smooth, which keeps the total time the same.
+                    const float raw_dt = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
                     last = now;
+                    static std::array<float, 8> recent{};
+                    static size_t recent_n = 0;
+                    recent[recent_n++ % recent.size()] = raw_dt;
+                    float dt = 0;
+                    for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
+                    dt /= float(std::min(recent_n, recent.size()));
+                    static int frames_counted = 0;
+                    static float frames_time = 0, worst_frame = 0, fps_shown = 0, worst_shown = 0;
+                    ++frames_counted;
+                    worst_frame = std::max(worst_frame, raw_dt);
+                    if ((frames_time += raw_dt) >= 1.0f) {
+                        fps_shown = float(frames_counted) / frames_time;
+                        worst_shown = worst_frame * 1000.0f;
+                        frames_counted = 0, frames_time = 0, worst_frame = 0;
+                    }
                     const bool* keys = SDL_GetKeyboardState(nullptr);
                     if (flying) {
                         const float speed = (keys[SDL_SCANCODE_LSHIFT] ? 25.0f : 6.0f) * dt;
@@ -600,12 +618,12 @@ int main(int argc, char** argv) {
                         if (opt.log_player && (log_timer += dt) >= 1.0f) {
                             log_timer = 0;
                             std::printf("player (%.2f %.2f %.2f) yaw %.0f %s, input fwd %.0f right %.0f fire %d, zone %d, "
-                                        "health %.0f%s, shooting %s, ammo %d/%d, enemies %d, %.0f fps\n",
+                                        "health %.0f%s, shooting %s, ammo %d/%d, enemies %d, %.0f fps (worst %.1f ms)\n",
                                         player.center.x, player.center.y, player.center.z, player.yaw,
                                         player.on_ground ? "ground" : "air", in.forward, in.right, int(fire_held),
                                         scene.zones().current(), combat.player_health, combat.player_dead ? " (dead)" : "",
                                         combat.shoot_enabled ? "on" : "off", combat.ammo_in_clip(), combat.ammo_reserve(),
-                                        combat.enemies_alive(), dt > 0 ? 1.0f / dt : 0.0f);
+                                        combat.enemies_alive(), fps_shown, worst_shown);
                             std::fflush(stdout);
                         }
                     }

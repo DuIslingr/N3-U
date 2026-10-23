@@ -4,7 +4,8 @@
 // on its own coroutine (at most 100 at once; a function that is still running is not
 // started again). C functions suspend the coroutine by yielding:
 //   (2, ms)          Wait: resume after `ms` milliseconds
-//   (4, name, id)    WaitForEvent: resume when the event is sent
+//   (4, name, ids...) WaitForEvent: resume when the event is sent (for each listed id,
+//                    e.g. WaitForEnemiesDead's objects; none: any)
 //   (3, code, obj)   wait for an effect (teleport-in); resumed after a short delay
 // The global `this` holds the owning object's id while a coroutine runs.
 #pragma once
@@ -39,7 +40,8 @@ public:
 
     // Advance timers and resume coroutines that are ready.
     void update(float dt_ms);
-    // Resume coroutines waiting for `event` (and `id`, unless they waited for any).
+    // Resume coroutines waiting for `event`: those that waited for any id, and those
+    // whose last outstanding id this is.
     void send_event(const std::string& event, int id = -1);
 
     void stop_all();
@@ -59,7 +61,7 @@ private:
         int owner = 0;
         float sleep_ms = 0;
         std::string event;
-        int event_id = -1;
+        std::vector<int> event_ids;   // ids still to come; empty: any
         bool started = false;         // resumed at least once (arguments consumed)
     };
     void resume(Thread& t);

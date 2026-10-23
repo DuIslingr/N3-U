@@ -1,5 +1,7 @@
 #include "script/lua_runtime.h"
 
+#include <algorithm>
+
 extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
@@ -83,7 +85,7 @@ bool ScriptRuntime::start(const std::string& function, int owner) {
         t.state = Thread::State::Ready;
         t.started = false;
         t.event.clear();
-        t.event_id = -1;
+        t.event_ids.clear();
         return true;
     }
     log("too many script threads; not starting " + function);
@@ -110,7 +112,9 @@ void ScriptRuntime::resume(Thread& t) {
         } else if (code == 4) {
             t.state = Thread::State::WaitingEvent;
             t.event = n >= 2 && lua_isstring(t.L, 2) ? lua_tostring(t.L, 2) : "";
-            t.event_id = n >= 3 ? int(lua_tointeger(t.L, 3)) : -1;
+            t.event_ids.clear();
+            for (int k = 3; k <= n; ++k)
+                if (const int id = int(lua_tointeger(t.L, k)); id >= 0) t.event_ids.push_back(id);
         } else if (code == 3) {
             t.state = Thread::State::Sleeping;   // teleport-in effect
             t.sleep_ms = 500;
@@ -143,7 +147,12 @@ void ScriptRuntime::update(float dt_ms) {
 void ScriptRuntime::send_event(const std::string& event, int id) {
     for (Thread& t : threads_) {
         if (t.state != Thread::State::WaitingEvent || t.event != event) continue;
-        if (t.event_id >= 0 && id >= 0 && t.event_id != id) continue;
+        if (!t.event_ids.empty() && id >= 0) {
+            auto it = std::find(t.event_ids.begin(), t.event_ids.end(), id);
+            if (it == t.event_ids.end()) continue;
+            t.event_ids.erase(it);
+            if (!t.event_ids.empty()) continue;
+        }
         t.state = Thread::State::Ready;
     }
 }

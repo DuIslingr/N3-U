@@ -650,6 +650,7 @@ void Combat::die(Target& t) {
         if (d < 6.0f) damage_player(40.0f * (1 - d / 6.0f), c);
     }
     logic_.runtime_.send_event("TargetableDied", t.id);
+    logic_.runtime_.send_event("WaitForEnemiesDead", t.id);
     logic_.start_script("Obj" + std::to_string(t.id) + "_OnDead", t.id);
 }
 
@@ -987,6 +988,10 @@ void Combat::update_spawners(float dt) {
             m.spawned.assign(m.waves[size_t(m.wave)].entries.size(), 0);
         }
     }
+}
+
+bool Combat::spawner_pending(int id) const {
+    return std::any_of(spawners_.begin(), spawners_.end(), [&](const SpawnManager& m) { return m.id == id && !m.ended; });
 }
 
 std::vector<int> Combat::enemy_ids() const {

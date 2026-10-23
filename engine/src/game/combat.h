@@ -65,6 +65,8 @@ public:
     int enemies_alive() const { return count_teams(~kPlayerTeams); }
     int count_teams(uint32_t team_mask) const;   // CAIController::GetNoOpponentsByTeams
     std::vector<int> enemy_ids() const;
+    // A spawn manager with this id that has not ended (SpawnEnd_<id> is still to come).
+    bool spawner_pending(int id) const;
     bool damage(int id, float amount);   // false if no such target
     void kill_all_enemies();
     void set_invulnerable(int id, bool on);

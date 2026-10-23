@@ -44,11 +44,15 @@ int api_wait(lua_State* L) {
     return lua_yield(L, 2);
 }
 
-// WaitForEvent(name): yield (4, name, id). "AllEnemiesDead" returns at once when there are
-// no enemies, "SpawnEnd_<id>" when that spawn manager has finished (none run yet).
+// WaitForEvent(name): yield (4, name, id). "AllEnemiesDead" returns at once; "SpawnEnd_<id>"
+// waits only while that spawn manager is still running (one that never runs would hang).
 int api_wait_for_event(lua_State* L) {
     const std::string name = str_arg(L, 1);
-    if (name == "AllEnemiesDead" || name.rfind("SpawnEnd_", 0) == 0) return 0;
+    if (name == "AllEnemiesDead") return 0;
+    if (name.rfind("SpawnEnd_", 0) == 0) {
+        LevelLogic& c = ctx(L);
+        if (!c.combat || !c.combat->spawner_pending(std::atoi(name.c_str() + 9))) return 0;
+    }
     lua_pushinteger(L, 4);
     lua_pushstring(L, name.c_str());
     lua_pushinteger(L, -1);
@@ -56,6 +60,24 @@ int api_wait_for_event(lua_State* L) {
 }
 
 int api_return_now(lua_State*) { return 0; }   // waits on things that have already happened
+
+// WaitForEnemiesDead(id, ...): wait until each listed object that is still alive has died
+// (yield 4, "WaitForEnemiesDead", ids...; Combat sends the event per death).
+int api_wait_for_enemies_dead(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const int n = lua_gettop(L);
+    std::vector<int> alive;
+    for (int k = 1; k <= n; ++k) {
+        const int id = int(lua_tointeger(L, k));
+        const LevelLogic::Object* o = c.object(id);
+        if (o && !o->dead) alive.push_back(id);
+    }
+    if (alive.empty()) return 0;
+    lua_pushinteger(L, 4);
+    lua_pushstring(L, "WaitForEnemiesDead");
+    for (int id : alive) lua_pushinteger(L, id);
+    return lua_yield(L, int(alive.size()) + 2);
+}
 
 // SendEvent(id, name, ...): wake scripts waiting for it, and run Obj<id>_<name> if defined.
 int api_send_event(lua_State* L) {
@@ -337,7 +359,7 @@ struct Entry {
 const Entry kImplemented[] = {
     {"Wait", api_wait},
     {"WaitForEvent", api_wait_for_event},
-    {"WaitForEnemiesDead", api_return_now},
+    {"WaitForEnemiesDead", api_wait_for_enemies_dead},
     {"WaitNpcCmdFinished", api_return_now},
     {"WaitForServer", api_return_now},
     {"SendEvent", api_send_event},
