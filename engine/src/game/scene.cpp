@@ -293,6 +293,8 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         const ModelNode& node = m.cpu.nodes[ni];
         // Collision proxies for the physics engine ("r=0.75" etc. in their properties).
         if (node.name.rfind("PhysicsShape", 0) == 0) continue;
+        // Stand-ins that vehicles replace with objects of their own (CVehicleCar::Load).
+        if (node.name.rfind("HIDDEN_", 0) == 0) continue;
         const glm::mat4 world = v.parent * local_matrix(node.translation, node.rotation, node.scale);
         // CCustomColladaFactory::createNode: a node whose name contains "coronas" is a
         // CCoronasControllerNode; its <name>_PIVOT child's properties tune it (InitCoronas).

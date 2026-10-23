@@ -732,6 +732,46 @@ int api_play_animation(lua_State* L) {
 }
 int api_ignore(lua_State*) { return 0; }   // LoadTexture (preloading), SetDSPPreset (reverb)
 
+// Vehicles: Vehicle_MoveOnPath(vehicle, waypoint), Vehicle_Stop(vehicle),
+// Vehicle_SetMaxSpeed(vehicle, km/h), Vehicle_SetSteeringMax(vehicle, degrees),
+// Vehicle_SetSteeringSpeed(vehicle, degrees/s), Vehicle_SetYawLimits(vehicle, min, max, ms),
+// Vehicle_Activate() (the player gets into the vehicle whose script this is),
+// SwitchToMachineGun(gun), SwitchToPlayerOnFoot().
+int api_vehicle_move_on_path(lua_State* L) {
+    ctx(L).vehicle_move_on_path(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)));
+    return 0;
+}
+int api_vehicle_stop(lua_State* L) {
+    ctx(L).vehicle_stop(int(lua_tointeger(L, 1)));
+    return 0;
+}
+template <int Which>
+int api_vehicle_set(lua_State* L) {
+    const float v = float(lua_tonumber(L, 2));
+    ctx(L).vehicle_set(int(lua_tointeger(L, 1)), Which == 0 ? v : -1, Which == 1 ? v : -1, Which == 2 ? v : -1);
+    return 0;
+}
+int api_vehicle_yaw_limits(lua_State* L) {
+    ctx(L).vehicle_yaw_limits(int(lua_tointeger(L, 1)), float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4)));
+    return 0;
+}
+int api_vehicle_activate(lua_State* L) {
+    lua_getglobal(L, "this");
+    const int owner = int(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    LevelLogic& c = ctx(L);
+    if (const LevelLogic::Object* o = c.object(owner); o && o->type.find("_Player") != std::string::npos) c.enter_vehicle(owner);
+    return 0;
+}
+int api_switch_to_machine_gun(lua_State* L) {
+    ctx(L).man_gun(int(lua_tointeger(L, 1)));
+    return 0;
+}
+int api_switch_to_player_on_foot(lua_State* L) {
+    ctx(L).leave_vehicle();
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -855,6 +895,16 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"Vehicle_MoveOnPath", api_vehicle_move_on_path},
+    {"Vehicle_Stop", api_vehicle_stop},
+    {"Vehicle_SetMaxSpeed", api_vehicle_set<0>},
+    {"Vehicle_SetSteeringMax", api_vehicle_set<1>},
+    {"Vehicle_SetSteeringSpeed", api_vehicle_set<2>},
+    {"Vehicle_SetYawLimits", api_vehicle_yaw_limits},
+    {"Vehicle_Activate", api_vehicle_activate},
+    {"Vehicle_SetDebug", api_ignore},
+    {"SwitchToMachineGun", api_switch_to_machine_gun},
+    {"SwitchToPlayerOnFoot", api_switch_to_player_on_foot},
     {"GiveSplashDamage", api_give_splash_damage},
     {"PlayAnimation", api_play_animation},
     {"LoadTexture", api_ignore},

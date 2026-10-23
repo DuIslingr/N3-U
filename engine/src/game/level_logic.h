@@ -111,6 +111,23 @@ public:
     float game_fov() const { return fov_len_ > 0 && fov_t_ < fov_len_ ? fov_from_ + (fov_to_ - fov_from_) * fov_t_ / fov_len_ : fov_to_; }
     float zfar = 8000, move_sensitivity = 1;
     bool player_rush = true;
+    // Vehicles (CCarAIComponent, simplified): Vehicle_MoveOnPath drives one along a
+    // waypoint chain at its maximum speed (Vehicle_SetMaxSpeed, km/h), turning no faster
+    // than its steering allows, on the ground. Vehicle_Activate puts the player in the
+    // using vehicle (its "camera" node is the seat), with the view kept within yaw limits
+    // (Vehicle_SetYawLimits, relative to the vehicle, eased over a time);
+    // SwitchToMachineGun mans a mounted gun; SwitchToPlayerOnFoot leaves either.
+    bool vehicle_move_on_path(int id, int waypoint);
+    void vehicle_stop(int id);
+    void vehicle_set(int id, float max_speed_kmh, float steer_max, float steer_speed);   // < 0: keep
+    void vehicle_yaw_limits(int id, float min, float max, float ms);
+    bool enter_vehicle(int id);
+    bool man_gun(int id);
+    void leave_vehicle();
+    int player_vehicle() const { return player_vehicle_; }   // -1 on foot
+    int player_gun() const { return player_gun_; }
+    // Where the riding player's eyes are, and the yaw range the view may take (degrees).
+    bool seat(glm::vec3& eye, float& yaw_min, float& yaw_max);
     void set_primary_objective(const std::string& id);
     void add_secondary_objective(const std::string& id);
     void secondary_objective_complete(const std::string& id);
@@ -341,6 +358,32 @@ private:
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
     float time_factor_ = 1, time_factor_left_ = 0;
     float fov_from_ = 70, fov_to_ = 70, fov_len_ = 0, fov_t_ = 0;
+    struct Vehicle {
+        int id = 0;
+        size_t index = 0;
+        glm::vec3 position{0};
+        float yaw = 0, speed = 0, max_speed = 12.5f, steer_max = 40, steer_speed = 40;
+        std::vector<glm::vec3> route;
+        size_t next = 0;
+        bool moving = false;
+        float yaw_min = -180, yaw_max = 180, from_min = -180, from_max = 180, limits_t = 0, limits_len = 0;
+        // CVehicleCar's parts, objects of their own at the model's dummies (its HIDDEN_
+        // stand-ins are not drawn): wheels, the gun, the driver and the shooter.
+        struct Part {
+            size_t object = 0;
+            std::string node;
+            enum class Kind { Wheel, Gun, Rider } kind = Kind::Rider;
+        };
+        std::vector<Part> parts;
+        float wheel_angle = 0;
+    };
+    void spawn_vehicle_parts(Vehicle& v);
+    void place_vehicle_parts(Vehicle& v);
+    std::unordered_map<int, Vehicle> vehicles_;
+    Vehicle* vehicle(int id);   // created from the object on first use
+    void update_vehicles(float dt);
+    int player_vehicle_ = -1, player_gun_ = -1;
+    float gun_yaw_ = 0;   // the mounted gun's own heading
     struct Qte {
         std::string kind;                               // waiting for this button; "" none
         std::deque<std::pair<float, float>> ramps;      // (factor, game ms)

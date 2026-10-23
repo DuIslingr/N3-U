@@ -252,7 +252,7 @@ bool LevelLogic::set_post_var(const std::string& effect, const std::string& var,
 
 void LevelLogic::start(bool keep_player) {
     runtime_.stop_all();
-    movers_.clear(), waypoint_next_.clear(), path_first_.clear();
+    movers_.clear(), waypoint_next_.clear(), path_first_.clear(), vehicles_.clear();
     if (!keep_player) checkpoint_ = -1;
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
     tutorial_ = TutorialStep{};
@@ -283,8 +283,11 @@ void LevelLogic::start(bool keep_player) {
     level_fog_end_ = scene.fog_end;
     level_fog_density_ = scene.fog_density;
     load_objects();
+    for (auto& [id, o] : objects_)   // vehicles (CComponentVehicleCar) and their parts
+        if (object_component(o, 0x96)) vehicle(id);
     if (!keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
+        player_vehicle_ = player_gun_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
         zfar = 8000, move_sensitivity = 1, player_rush = true;
         grading_ = Grading{};
@@ -555,6 +558,10 @@ bool LevelLogic::exec(const std::string& code) {
 }
 
 bool LevelLogic::use() {
+    if (player_gun_ >= 0) {   // off the mounted gun: its interaction's exit
+        start_script("Obj" + std::to_string(player_gun_) + "_OnExit", player_gun_);
+        return true;
+    }
     const glm::vec3 eye = player.eye(), fwd = player.view_forward();
     Object* best = nullptr;
     float best_d = kUseRange;
@@ -687,6 +694,8 @@ int LevelLogic::cinematic_zone() const {
     Scene::CameraView v;
     for (auto it = cinematics_.rbegin(); it != cinematics_.rend(); ++it)
         if (scene.camera_view(it->index, v)) return scene.zones().object_zone(it->index);
+    // Manning a gun: the gun's zone (it turns, so its collision under the view does not count).
+    if (auto it = objects_.find(player_gun_); player_gun_ >= 0 && it != objects_.end()) return scene.zones().object_zone(it->second.index);
     return ZoneSystem::kNone;
 }
 
@@ -1064,6 +1073,7 @@ void LevelLogic::primary_objective_complete() {
 
 void LevelLogic::update(float dt) {
     update_grading(dt);
+    update_vehicles(dt);
     fov_t_ += dt;
     objectives.show = std::max(objectives.show - dt, 0.0f);
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms

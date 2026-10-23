@@ -137,6 +137,12 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
         owned_.push_back(0);
     }
     owned_[0] = 1;
+    // Not in the arsenal: the jeep's turret and the mounted machine guns.
+    for (const char* name : {"VehicleWeaponPlayer", "MG_Player"}) {
+        weapons_.push_back(load_weapon(name)), weapon_types_.push_back(name);
+        clip_.push_back(weapons_.back().clip), reserve_.push_back(-1), owned_.push_back(0);
+    }
+    vehicle_weapon_ = int(weapons_.size()) - 2, mounted_gun_ = int(weapons_.size()) - 1;
     // The player: CHealthComponent and CPlayerBaseComponent (regeneration per second, delay).
     for (const auto& [id, type] : gol_) {
         if (type.name != "Player") continue;
@@ -279,6 +285,17 @@ int Combat::find_weapon(const std::string& name) const {
     for (size_t i = 0; i < weapons_.size(); ++i)
         if (lower(weapons_[i].name) == want || lower(weapon_types_[i]) == want) return int(i);
     return -1;
+}
+
+void Combat::use_special_weapon(int index, bool on) {
+    if (index < 0) return;
+    if (on && current_ != index) {
+        if (!special_weapon()) before_special_ = current_;
+        current_ = index, reload_left_ = 0, fire_cooldown_ = 0.3f;
+        clip_[size_t(index)] = weapons_[size_t(index)].clip, reserve_[size_t(index)] = -1;
+    } else if (!on && current_ == index) {
+        current_ = before_special_, reload_left_ = 0;
+    }
 }
 
 int Combat::weapon_count() const {

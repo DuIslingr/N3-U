@@ -634,7 +634,11 @@ int main(int argc, char** argv) {
                         player.yaw += o.look.x;
                     }
                     if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
-                    if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), pin, kPhysicsStep);
+                    glm::vec3 seat_eye;
+                    float seat_min = 0, seat_max = 0;
+                    const bool seated = opt.scripts && logic.seat(seat_eye, seat_min, seat_max);
+                    if (seated) player.center = seat_eye - glm::vec3(0, 0, player.eye_height);
+                    else if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), pin, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     if (opt.scripts) {
                         CombatInput ci;
@@ -936,14 +940,26 @@ int main(int argc, char** argv) {
                             }
                         }
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
+                        // Riding a vehicle or manning a gun: no walking, the view within its limits.
+                        glm::vec3 seat_eye;
+                        float yaw_min = 0, yaw_max = 0;
+                        const bool seated = opt.scripts && logic.seat(seat_eye, yaw_min, yaw_max);
+                        if (seated) {
+                            in = PlayerInput{};
+                            const float rel = std::fmod(std::fmod(cam.yaw - yaw_min, 360.0f) + 360.0f, 360.0f);
+                            if (rel > yaw_max - yaw_min)   // outside: to the nearer limit
+                                cam.yaw = rel - (yaw_max - yaw_min) < 360.0f - rel ? yaw_max : yaw_min;
+                            cam.pitch = glm::clamp(cam.pitch, -30.0f, 35.0f);
+                        }
                         player.yaw = cam.yaw;
                         player.pitch = cam.pitch;
                         for (accumulator += dt; accumulator >= kPhysicsStep; accumulator -= kPhysicsStep) {
                             // During cinematics the player is out of play (the intro's spawn
                             // point may float in the void).
-                            if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), in, kPhysicsStep);
+                            if (!(opt.scripts && logic.cinematic_active()) && !seated) player.update(scene.collision(), in, kPhysicsStep);
                             step_logic(kPhysicsStep);
                         }
+                        if (seated && logic.seat(seat_eye, yaw_min, yaw_max)) player.center = seat_eye - glm::vec3(0, 0, player.eye_height);
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         if (opt.scripts) {
                             if (touch_mode) {
@@ -982,7 +998,7 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
-                        vm.visible = !flying && !combat.player_dead && !logic.player_locked();
+                        vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !combat.special_weapon();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
                         if (combat.take_power_used()) viewmodel.set_state("Repel");
