@@ -141,7 +141,13 @@ struct PostParams {
     // Flash (FlashFS.glsl): the image's grey brightness less `flash_threshold`, added
     // (<= -2: off).
     float sepia = -1, levels_white = 1, flash_threshold = -2;
-    bool active() const { return dof || height_fog || grading || heat_haze || sepia >= 0 || levels_white != 1 || flash_threshold > -2; }
+    // Gray (GrayFS.glsl, StartEndLevelEffect): the image mixed towards its grey tinted by
+    // gray_tint, `gray` of the way back to colour (< 0: off; 0 all grey).
+    float gray = -1;
+    glm::vec3 gray_tint{1};
+    bool active() const {
+        return dof || height_fog || grading || heat_haze || sepia >= 0 || levels_white != 1 || flash_threshold > -2 || gray >= 0;
+    }
 };
 
 struct FrameParams {

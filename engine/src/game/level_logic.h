@@ -376,8 +376,11 @@ public:
     // PostEffect_FlashbackStop(ms) drops it and, given a time, comes back from overexposed
     // (ColorLevels: white 0.1 -> 1 over ms); StartFlashEffect(ms) flashes white, the bright
     // parts fading last (Flash: threshold -1 -> 1).
-    enum class ScreenEffect { None, Flash, Sepia, Levels };
+    enum class ScreenEffect { None, Flash, Sepia, Levels, Gray };
     void screen_effect(ScreenEffect kind, float ms);
+    // StartEndLevelEffect(ms, r, g, b, back): CLevel's Gray, the picture drained to a tinted
+    // grey over ms (or, with `back`, its colour returning), held there.
+    void gray_effect(float ms, const glm::vec3& tint, bool back);
     // A post-effect variable ("DOF"/"HEIGHTFOG" and fFocus, fRange, fBlurStep, FogTop, ...),
     // reaching `to` in `seconds`; false if unknown.
     bool set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from = nullptr);
@@ -565,6 +568,7 @@ private:
     struct {
         ScreenEffect kind = ScreenEffect::None;
         float time = 0, length = 0;   // seconds
+        bool back = false;            // Gray: towards colour
     } screen_effect_;
     void update_screen_effect(float dt);
     struct HeatHaze {

@@ -261,10 +261,11 @@ int api_end_level(lua_State* L) {
     c.level_success = lua_gettop(L) < 1 || lua_toboolean(L, 1) != 0;
     return 0;
 }
-// StartEndLevelEffect(ms, r, g, b, ?): the screen fades out to a colour.
+// StartEndLevelEffect(ms, r, g, b, back): the picture drained to grey, tinted (r, g, b),
+// over ms (the Gray post effect); back: the colour returning instead.
 int api_start_end_level_effect(lua_State* L) {
-    ctx(L).start_fade(false, float(lua_tonumber(L, 1)),
-                      glm::vec3(float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4))));
+    ctx(L).gray_effect(float(lua_tonumber(L, 1)), glm::vec3(float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4))),
+                       lua_toboolean(L, 5) != 0);
     return 0;
 }
 int api_false(lua_State* L) {

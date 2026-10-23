@@ -33,6 +33,7 @@ layout(set = 3, binding = 0) uniform PostUniforms {
     vec4 grading;     // enabled
     vec4 heat;        // strength, overbright, blend, time (s; < 0: off)
     vec4 effects;     // sepia (< 0 off), levels white (1 off), flash threshold (<= -2 off)
+    vec4 gray;        // Gray: tint, and how much of the colour is left (< 0 off)
 };
 
 float smooth_edge(float e0, float e1, float x) {   // GLSL smoothstep, allowing e0 > e1
@@ -83,5 +84,7 @@ void main() {
         vec4 c = color - vec4(effects.z);
         color.rgb += vec3(max(0.0, (c.r + c.g + c.b) * 0.33));
     }
+    if (gray.w >= 0.0)
+        color.rgb = mix(vec3(dot(color.rgb, vec3(0.2125, 0.7154, 0.0721))) * gray.rgb, color.rgb, gray.w);
     out_color = vec4(color.rgb, 1.0);
 }

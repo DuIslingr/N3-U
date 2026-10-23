@@ -1413,8 +1413,16 @@ void LevelLogic::primary_objective_complete() {
 }
 
 void LevelLogic::screen_effect(ScreenEffect kind, float ms) {
-    post.sepia = -1, post.levels_white = 1, post.flash_threshold = -2;   // CLevel::StopPostEffect
+    post.sepia = -1, post.levels_white = 1, post.flash_threshold = -2, post.gray = -1;   // CLevel::StopPostEffect
     screen_effect_.kind = kind, screen_effect_.time = 0, screen_effect_.length = std::max(ms, 1.0f) / 1000.0f;
+    screen_effect_.back = false;
+    update_screen_effect(0);
+}
+
+void LevelLogic::gray_effect(float ms, const glm::vec3& tint, bool back) {
+    screen_effect(ScreenEffect::Gray, ms <= 0 ? 1000 : ms);
+    screen_effect_.back = back;
+    post.gray_tint = tint;
     update_screen_effect(0);
 }
 
@@ -1428,6 +1436,9 @@ void LevelLogic::update_screen_effect(float dt) {
         case ScreenEffect::Levels:
             post.levels_white = std::clamp(0.1f + k * 0.9f, 0.1f, 1.0f);
             if (k >= 1) e.kind = ScreenEffect::None, post.levels_white = 1;
+            break;
+        case ScreenEffect::Gray:   // CLevel::UpdatePostEffect_Gray: the colour left, held at the end
+            post.gray = std::clamp(e.back ? k : 1 - k, 0.0f, 1.0f);
             break;
         case ScreenEffect::Flash:
             post.flash_threshold = 2 * k - 1;
