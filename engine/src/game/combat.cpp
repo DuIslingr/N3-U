@@ -47,6 +47,15 @@ float num(const Value& v, size_t i, float fallback) {
     return x.type == Value::Float || x.type == Value::Int ? x.as_float() : fallback;
 }
 
+std::string str(const Value& v, size_t i) {
+    return i < v.size() && v[i].type == Value::String ? v[i].s : std::string();
+}
+
+// Effect names the targetable components use that the library spells differently.
+std::string effect_name(const std::string& name) {
+    return name == "bloody_blood" ? "impact_blood_red" : name;
+}
+
 float yaw_towards(const glm::vec3& from, const glm::vec3& to) {
     const glm::vec2 d(to - from);
     return glm::degrees(std::atan2(-d.x, d.y));   // yaw 0 faces +Y, positive turns left
@@ -229,6 +238,12 @@ void Combat::start() {
         t.pos = obj.position;
         t.yaw = obj.yaw;
         if (!obj.dead) obj.health = num(*health, 0, 10);   // CHealthComponent: max health
+        if (const Value* tg = component(o, kCompTargetable)) {
+            t.hit_effect = effect_name(str(*tg, 12).empty() ? str(*tg, 8) : str(*tg, 12));
+            t.hit_node = str(*tg, 13);
+            t.death_effect = effect_name(str(*tg, 14));
+            t.death_node = str(*tg, 15);
+        }
         t.explosive = lower(o.name).find("explosive") != std::string::npos;
         if (t.explosive) t.radius = 0.5f, t.height = 1.0f;
         const bool ai = component(o, kCompAi) || component(o, 0x55) || component(o, 0x21) || component(o, 0x57) ||
@@ -592,6 +607,15 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     }
 }
 
+bool Combat::effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal) {
+    if (name.empty()) return false;
+    const glm::vec3 z = glm::length(normal) > 1e-4f ? glm::normalize(normal) : glm::vec3(0, 0, 1);
+    glm::vec3 x = glm::cross(std::abs(z.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0), z);
+    x = glm::normalize(x);
+    const glm::mat4 m(glm::vec4(x, 0), glm::vec4(glm::cross(z, x), 0), glm::vec4(z, 0), glm::vec4(at, 1));
+    return scene_.particles().start(name, m) >= 0;
+}
+
 void Combat::die(Target& t) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
@@ -608,12 +632,15 @@ void Combat::die(Target& t) {
         t.state = Target::State::Dead;
         if (!t.actor) logic_.show(*o, false);
     }
+    const glm::vec3 death_at = glm::vec3(scene_.object_matrix(t.object, t.death_node)[3]);
+    effect(t.death_effect, t.death_node.empty() ? t.pos + glm::vec3(0, 0, t.height * 0.5f) : death_at);
     if (t.explosive) {
         // Plasma pods: splash damage around them.
         const glm::vec3 c = t.pos + glm::vec3(0, 0, 0.5f);
-        for (int k = 0; k < 24; ++k)
-            sparks_.push_back({c + glm::vec3(std::cos(k * 0.8f), std::sin(k * 0.8f), (k % 5) * 0.3f) * (0.4f + 0.1f * (k % 4)),
-                               0.6f, {0.4f, 0.8f, 1.0f, 1}});
+        if (t.death_effect.empty() || !scene_.particles().has(t.death_effect))
+            for (int k = 0; k < 24; ++k)
+                sparks_.push_back({c + glm::vec3(std::cos(k * 0.8f), std::sin(k * 0.8f), (k % 5) * 0.3f) * (0.4f + 0.1f * (k % 4)),
+                                   0.6f, {0.4f, 0.8f, 1.0f, 1}});
         for (Target& other : targets_) {
             if (&other == &t || !alive(other)) continue;
             const float d = glm::distance(other.pos, t.pos);
@@ -680,10 +707,11 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         if (t.headshots && point.z > t.pos.z + t.height * 0.84f) dmg *= 2;   // CTargetableComponent head multiplier
         ++stats_.hits;
         hit_marker_ = 0.15f;
-        sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
+        if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
         apply_damage(t, dmg, true);
     } else if (wall) {
-        sparks_.push_back({end, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
+        // The AR bullet's impact table picks by surface material; the ship is metal.
+        if (!effect("impact_metal_small", end - dir * 0.02f, -dir)) sparks_.push_back({end, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
     }
 }
 
@@ -748,7 +776,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             damage_player(b.damage, b.pos);
             b.life = 0;
         } else if (wall) {
-            sparks_.push_back({end, 0.15f, b.color});
+            if (!effect("impact_plasma", end, -b.vel)) sparks_.push_back({end, 0.15f, b.color});
             b.life = 0;
         }
         b.pos = end;

@@ -113,6 +113,8 @@ private:
         float melee_damage = 10, melee_range = 2.2f;
         bool invulnerable = false;
         bool spawned = false;          // created by a spawn manager (its body is removed later)
+        // CTargetableComponent: particle effects when hit and when killed, at a node.
+        std::string hit_effect, hit_node, death_effect, death_node;
 
         enum class State { Idle, Chase, Attack, Melee, Hurt, Dying, Dead } state = State::Idle;
         bool aware = false;
@@ -185,6 +187,8 @@ private:
     void notice(Target& t);
     void apply_damage(Target& t, float amount, bool by_player);
     void die(Target& t);
+    // Start a particle effect at `at` with its +Z along `normal`; false if there is no such effect.
+    bool effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal = {0, 0, 1});
     void fire_player(const glm::vec3& eye, const glm::vec3& aim);
     void fire_bolt(Target& t);
     // Ray against targets: index and distance, -1 if none within `max_t`.

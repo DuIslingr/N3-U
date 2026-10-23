@@ -99,6 +99,22 @@ struct Overlay {
     void clear() { world.clear(), screen.clear(); }
 };
 
+// Particles (game/particles.cpp): textured quads in world space, by texture and blend.
+struct ParticleVertex {
+    glm::vec3 position;
+    glm::vec2 uv;
+    uint32_t rgba;
+};
+struct ParticleBatch {
+    const struct GpuTexture* texture = nullptr;
+    bool additive = false;
+    uint32_t first = 0, count = 0;
+};
+struct ParticleList {
+    std::vector<ParticleVertex> vertices;
+    std::vector<ParticleBatch> batches;
+};
+
 // Post effects (the game's PostEffects, enabled and tuned by level scripts).
 struct PostParams {
     bool dof = false;                  // DOF: blur by distance from the focus depth
@@ -125,6 +141,7 @@ struct FrameParams {
     std::vector<PointLight> lights;
     const Overlay* overlay = nullptr;
     const PostParams* post = nullptr;
+    const ParticleList* particles = nullptr;
 };
 
 class Renderer {
@@ -154,6 +171,8 @@ private:
         SDL_GPUGraphicsPipeline* blend = nullptr;
         SDL_GPUGraphicsPipeline* opaque_skinned = nullptr;
         SDL_GPUGraphicsPipeline* blend_skinned = nullptr;
+        SDL_GPUGraphicsPipeline* particles_additive = nullptr;
+        SDL_GPUGraphicsPipeline* particles_alpha = nullptr;
         SDL_GPUGraphicsPipeline* effects = nullptr;    // overlay: world, additive
         SDL_GPUGraphicsPipeline* hud = nullptr;        // overlay: screen, alpha
     };
@@ -184,6 +203,12 @@ private:
     SDL_GPUShader* vs_ = nullptr;
     SDL_GPUShader* vs_skinned_ = nullptr;
     SDL_GPUShader* fs_ = nullptr;
+    SDL_GPUShader* vs_particle_ = nullptr;
+    SDL_GPUShader* fs_particle_ = nullptr;
+    SDL_GPUBuffer* particle_buffer_ = nullptr;
+    SDL_GPUTransferBuffer* particle_transfer_ = nullptr;
+    uint32_t particle_capacity_ = 0;
+    void upload_particles(SDL_GPUCommandBuffer* cmd, const ParticleList& p);
     SDL_GPUShader* vs_post_ = nullptr;
     SDL_GPUShader* fs_post_blur_ = nullptr;
     SDL_GPUShader* fs_post_final_ = nullptr;

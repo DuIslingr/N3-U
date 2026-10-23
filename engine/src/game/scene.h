@@ -12,6 +12,7 @@
 #include "assets/collision.h"
 #include "assets/irradiance.h"
 #include "assets/level.h"
+#include "game/particles.h"
 #include "game/physics.h"
 #include "game/zones.h"
 #include "core/vfs.h"
@@ -81,7 +82,15 @@ public:
     void set_node_visible(size_t object, const std::string& node, bool visible);
     // World position of one of the object's nodes (by name or id), e.g. Bip01_Head.
     bool node_position(size_t object, const std::string& node, glm::vec3& out) const;
+    // World transform of one of the object's nodes; the object's placement if `node` is
+    // empty or not found (or the object is not animated).
+    glm::mat4 object_matrix(size_t object, const std::string& node = {}) const;
     const SceneStats& stats() const { return stats_; }
+
+    // Particle effects (levels/effects.bin); updated with the scene, cleared on load.
+    ParticleSystem& particles() { return particles_; }
+    // The particle quads for a camera at `eye`.
+    void build_particles(const glm::vec3& eye, ParticleList& out);
 
     // Draw with the game's own shaders (default) or the built-in fallback shader.
     void set_game_shaders(bool on);
@@ -258,6 +267,8 @@ private:
     std::unordered_map<std::string, std::unique_ptr<AnimationLibrary>> animations_;   // by lowercase name
     std::unordered_map<std::string, LoadedModel> models_;            // by lowercase file name
     std::unordered_map<std::string, const GpuTexture*> textures_;    // by lowercase stem
+    std::unordered_map<std::string, ParticleEffect> effect_library_;
+    ParticleSystem particles_{&effect_library_};
     SceneStats stats_;
 };
 

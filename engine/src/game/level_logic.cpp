@@ -4,6 +4,8 @@
 #include <cmath>
 #include <functional>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "game/player.h"
 #include "game/scene.h"
 
@@ -15,6 +17,8 @@ constexpr int kCompTrigger = 0x06;        // CTriggerComponent
 constexpr int kCompRunScript = 0x1E;      // CRunScriptComponent (OnDead)
 constexpr int kCompInteractive = 0x44;    // CInteractiveComponent
 constexpr int kCompDoor = 0x61;           // CDoorAIComponent
+constexpr int kCompEffects = 0x92;        // CEffectsComponent: [[effect, node, autostart, ...], ...]
+constexpr int kCompEffectBuiltIn = 0xAE;  // CEffectBuiltInComponent: effect, ?, node, autostart, ?
 constexpr int kCompBuiltinBox = 0xA6;     // CComponentBuiltinBox: width, depth, height
 constexpr int kCompBuiltinCylinder = 0xA8;   // CComponentBuiltinCylinder: radius, height
 
@@ -135,6 +139,7 @@ void LevelLogic::load_objects() {
             doors_.push_back(door);
             ++stats_.doors;
         }
+        read_effects(obj, o);
         if (const Value* it = comp(kCompInteractive); it && it->size() >= 1) {
             obj.interactive = true;
             obj.interact_enabled = (*it)[0].i != 0;
@@ -143,6 +148,45 @@ void LevelLogic::load_objects() {
         objects_[obj.id] = obj;
     }
     stats_.objects = objects_.size();
+}
+
+void LevelLogic::read_effects(Object& obj, const LevelObject& o) {
+    obj.effects.clear();
+    auto g = gol.find(o.type);
+    if (g == gol.end()) return;
+    auto comp = [&](int c) -> const Value* {
+        if (auto it = o.components.find(c); it != o.components.end()) return &it->second;
+        return resolved_template(g->second, gol, c);
+    };
+    auto str = [](const Value& v) { return v.type == Value::String ? v.s : std::string(); };
+    if (const Value* b = comp(kCompEffectBuiltIn); b && b->size() >= 4) {
+        obj.effects.push_back({str((*b)[0]), str((*b)[2]), (*b)[3].i != 0});
+    } else if (const Value* l = comp(kCompEffects); l && l->size() >= 1) {
+        for (const Value& e : (*l)[0].list)
+            if (e.size() >= 3) obj.effects.push_back({str(e[0]), str(e[1]), e[2].i != 0});
+    }
+}
+
+bool LevelLogic::start_effect(Object& o, int index) {
+    if (o.effects.empty()) return false;
+    const bool builtin = o.effects.size() == 1 && o.effects[0].node.empty();
+    if (builtin) index = 0;
+    if (index < 0 || size_t(index) >= o.effects.size()) return false;
+    Object::EffectSlot& e = o.effects[size_t(index)];
+    if (e.handle >= 0) scene.particles().stop(e.handle);
+    glm::mat4 at = glm::translate(glm::mat4(1), o.position) * glm::rotate(glm::mat4(1), glm::radians(o.yaw), glm::vec3(0, 0, 1));
+    if (o.index != std::numeric_limits<size_t>::max()) at = scene.object_matrix(o.index, e.node);
+    e.handle = scene.particles().start(e.effect, at);
+    if (trace) log("effect " + e.effect + " on " + std::to_string(o.id) + (e.handle < 0 ? " (unknown)" : ""));
+    return e.handle >= 0;
+}
+
+void LevelLogic::stop_effect(Object& o, int index) {
+    if (o.effects.size() == 1) index = 0;
+    if (index < 0 || size_t(index) >= o.effects.size()) return;
+    Object::EffectSlot& e = o.effects[size_t(index)];
+    if (e.handle >= 0) scene.particles().stop(e.handle);
+    e.handle = -1;
 }
 
 bool LevelLogic::set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from) {
@@ -192,6 +236,9 @@ void LevelLogic::start(bool keep_player) {
             scene.set_object_collision(o.index, false);
         }
         if (o.door >= 0) scene.play_clip(o.index, "closed", true);
+        if (o.visible)
+            for (size_t k = 0; k < o.effects.size(); ++k)
+                if (o.effects[k].autostart) start_effect(o, int(k));
     }
     // The camera's zone is looked up by position on the first frame (CZonesManager::
     // UpdateVisibility); only teleports set it. A section reload (LoadLevelSections) puts
@@ -214,6 +261,7 @@ LevelLogic::Object& LevelLogic::add_object(int id, size_t index, const std::stri
     o.position = position;
     o.yaw = yaw;
     o.enabled = o.visible = false;
+    if (index < scene.level().objects.size()) read_effects(o, scene.level().objects[index]);
     ++stats_.objects;
     return o;
 }
@@ -223,6 +271,8 @@ void LevelLogic::enable(Object& o, bool on) {
     if (trace) log((on ? "enable " : "disable ") + std::to_string(o.id) + " " + o.type);
     o.enabled = on;
     show(o, on);
+    if (!on)
+        for (size_t k = 0; k < o.effects.size(); ++k) stop_effect(o, int(k));
     if (o.trigger >= 0 && !on) triggers_[size_t(o.trigger)].inside = false;
 }
 

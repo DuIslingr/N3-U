@@ -27,6 +27,17 @@ glm::mat4 placement_matrix(const Transform& t) {
 Scene::Scene(const Vfs& vfs, Renderer& renderer, const Gol& gol) : vfs_(vfs), renderer_(renderer), gol_(gol) {
     materials_ = std::make_unique<MaterialSystem>(
         vfs_, renderer_, [this](const std::string& image) { return texture(image); }, ShaderCompiler::default_cache_dir());
+    if (const auto& hits = vfs_.find("effects.bin"); !hits.empty()) {
+        try {
+            effect_library_ = load_effects(vfs_.read(hits.front()));
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "effects.bin: %s\n", ex.what());
+        }
+    }
+}
+
+void Scene::build_particles(const glm::vec3& eye, ParticleList& out) {
+    particles_.build(eye, [this](const std::string& image) { return texture(image); }, out);
 }
 
 void Scene::set_game_shaders(bool on) {
@@ -594,6 +605,7 @@ void Scene::pose(AnimatedInstance& a) {
 }
 
 void Scene::update(float dt, const glm::vec3& camera) {
+    particles_.update(dt);
     for (auto& a : animated_) {
         if (!a->library) continue;
         a->time += dt * a->speed;
@@ -691,6 +703,7 @@ void Scene::build_collision() {
 void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
+    particles_.clear();
     keep_section(level_, section_mask);
     level_name_ = lvc_name;
     section_ = section_mask;
@@ -967,6 +980,14 @@ void Scene::set_node_visible(size_t object, const std::string& node, bool visibl
     if (a.node_forced[size_t(n)] == want) return;
     a.node_forced[size_t(n)] = want;
     pose(a);
+}
+
+glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {
+    if (const AnimatedInstance* a = node.empty() ? nullptr : object_anim(object)) {
+        if (const int n = find_node(*a->model, node); n >= 0) return a->world[size_t(n)];
+    }
+    if (object < level_.objects.size() && level_.objects[object].base) return placement_matrix(*level_.objects[object].base);
+    return glm::mat4(1);
 }
 
 bool Scene::node_position(size_t object, const std::string& node, glm::vec3& out) const {

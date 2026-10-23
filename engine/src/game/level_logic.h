@@ -92,6 +92,14 @@ public:
         float health = 100;
         std::string state;
         int trigger = -1, door = -1;
+        // Particle effects: CEffectBuiltInComponent's one effect, or CEffectsComponent's
+        // list (effect, node it is attached to, started with the object).
+        struct EffectSlot {
+            std::string effect, node;
+            bool autostart = false;
+            int handle = -1;
+        };
+        std::vector<EffectSlot> effects;
     };
     Object* object(int id);
     // Register an object created at runtime (spawned enemies); it starts disabled.
@@ -99,6 +107,9 @@ public:
     void enable(Object& o, bool on);
     void show(Object& o, bool on);
     void set_door(Object& o, bool open_now);
+    // StartEffect / StopEffect: the object's effect `index` (its built-in effect: any index).
+    bool start_effect(Object& o, int index);
+    void stop_effect(Object& o, int index);
     void message(const std::string& text, float seconds);
     void teleport_player(const Object& spawn);
     void start_script(const std::string& function, int owner);
@@ -127,6 +138,7 @@ public:
 
 private:
     void load_objects();
+    void read_effects(Object& obj, const LevelObject& lo);
     void update_triggers();
     void update_doors(float dt);
     void update_fog(float dt);

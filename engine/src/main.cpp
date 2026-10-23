@@ -49,6 +49,7 @@ namespace {
 struct Options {
     std::string data = "work/data";
     std::string level = "Ship_01.lvc";
+    std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
     std::string screenshot;
     float walk_test = 0;
     bool log_player = false;    // print the player's state every second (interactive)
@@ -97,6 +98,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--run") o.run = std::stof(next());
         else if (a == "--spawn-at") o.spawn_at = next();
         else if (a == "--exec") o.exec.push_back(next());
+        else if (a == "--effect") o.effects.push_back(next());
         else if (a == "--hide-models") o.hide_models.push_back(next());
         else if (a == "--no-zones") o.zones = false;
         else if (a == "--section") o.section = std::stoi(next());
@@ -225,8 +227,11 @@ int main(int argc, char** argv) {
                         scene.shader_compiler().compiled, scene.shader_compiler().cache_hits);
             float clock = opt.time;
             const PostParams* post_params = nullptr;   // the level logic's, once it exists
+            ParticleList particle_list;
             auto frame = [&](const Camera& cam, int w, int h) {
                 FrameParams f = cam.frame(w, h);
+                scene.build_particles(f.camera, particle_list);
+                f.particles = &particle_list;
                 f.fog_color = scene.fog_color;
                 f.fog_start = scene.fog_start;
                 f.fog_end = scene.fog_end;
@@ -301,6 +306,11 @@ int main(int argc, char** argv) {
             cam.pitch = opt.pitch;
             if (!opt.focus.empty() && !focus_camera(scene, gol, opt.focus, cam.position, cam.yaw, cam.pitch))
                 throw std::runtime_error("no placement matching " + opt.focus);
+            for (const std::string& name : opt.effects) {
+                const glm::vec3 at = cam.position + cam.forward() * 6.0f;
+                if (scene.particles().start(name, glm::translate(glm::mat4(1), at)) < 0)
+                    std::fprintf(stderr, "no effect named %s\n", name.c_str());
+            }
 
             if (opt.audit > 0) {
                 // Walk random paths on the nav mesh like a player would (zone tracking follows
@@ -517,6 +527,7 @@ int main(int argc, char** argv) {
                     std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
                 }
                 std::printf("coronas: %zu of %zu shown\n", scene.stats().coronas_shown, scene.stats().corona_controllers);
+                std::printf("particles: %zu in %zu batches\n", scene.particles().particle_count(), particle_list.batches.size());
                 std::printf("wrote %s\n", opt.screenshot.c_str());
             } else {
                 bool flying = false;

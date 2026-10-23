@@ -222,6 +222,21 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
+// Particle effects: StartEffect(id[, index]) / StopEffect(id[, index]); id 0 is the player.
+int api_start_effect(lua_State* L) {
+    LevelLogic& g = ctx(L);
+    const int id = int(lua_tointeger(L, 1)), index = int(lua_tointeger(L, 2));
+    if (LevelLogic::Object* o = id ? g.object(id) : nullptr) g.start_effect(*o, index);
+    else if (g.warned_.insert("StartEffect " + std::to_string(id)).second) g.log("StartEffect: no effects on object " + std::to_string(id));
+    return 0;
+}
+
+int api_stop_effect(lua_State* L) {
+    LevelLogic& g = ctx(L);
+    if (LevelLogic::Object* o = g.object(int(lua_tointeger(L, 1)))) g.stop_effect(*o, int(lua_tointeger(L, 2)));
+    return 0;
+}
+
 // Post effects (PostEffect_Enable / SetVar / SetParam): DOF and HEIGHTFOG.
 int api_post_enable(lua_State* L) {
     const std::string name = str_arg(L, 1);
@@ -359,6 +374,8 @@ const Entry kImplemented[] = {
     {"IsServer", api_false},
     {"GetNoEnemies", api_get_no_enemies},
     {"PostEffect_Enable", api_post_enable},
+    {"StartEffect", api_start_effect},
+    {"StopEffect", api_stop_effect},
     {"PostEffect_SetVar", api_post_set_var},
     {"PostEffect_SetParam", api_post_set_param},
     {"GetEnemies", api_get_enemies},

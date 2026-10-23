@@ -229,6 +229,8 @@ Renderer::Renderer(SDL_Window* window, const std::string& shader_dir) : window_(
     vs_color_ = load_shader(shader_dir + "/color.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs_color_ = load_shader(shader_dir + "/color.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
     vs_post_ = load_shader(shader_dir + "/post.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    vs_particle_ = load_shader(shader_dir + "/particle.vert.spv", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    fs_particle_ = load_shader(shader_dir + "/particle.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     fs_post_blur_ = load_shader(shader_dir + "/post_blur.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     fs_post_final_ = load_shader(shader_dir + "/post_final.frag.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
 
@@ -303,6 +305,8 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.opaque_skinned);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blend_skinned);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.effects);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.particles_additive);
+        SDL_ReleaseGPUGraphicsPipeline(device_, p.particles_alpha);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.hud);
     }
     if (overlay_buffer_) SDL_ReleaseGPUBuffer(device_, overlay_buffer_);
@@ -319,6 +323,10 @@ Renderer::~Renderer() {
     for (SDL_GPUTexture* t : {scene_color_, blur_a_, blur_b_})
         if (t) SDL_ReleaseGPUTexture(device_, t);
     SDL_ReleaseGPUShader(device_, vs_post_);
+    SDL_ReleaseGPUShader(device_, vs_particle_);
+    SDL_ReleaseGPUShader(device_, fs_particle_);
+    if (particle_buffer_) SDL_ReleaseGPUBuffer(device_, particle_buffer_);
+    if (particle_transfer_) SDL_ReleaseGPUTransferBuffer(device_, particle_transfer_);
     SDL_ReleaseGPUShader(device_, fs_post_blur_);
     SDL_ReleaseGPUShader(device_, fs_post_final_);
     SDL_ReleaseGPUShader(device_, vs_);
@@ -507,8 +515,48 @@ const Renderer::Pipelines& Renderer::pipelines_for(SDL_GPUTextureFormat format) 
         if (!p) fail("SDL_CreateGPUGraphicsPipeline (overlay)");
         return p;
     };
+    SDL_GPUVertexBufferDescription pvb{};
+    pvb.slot = 0;
+    pvb.pitch = sizeof(ParticleVertex);
+    pvb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+    SDL_GPUVertexAttribute pattrs[3] = {
+        {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, uint32_t(offsetof(ParticleVertex, position))},
+        {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, uint32_t(offsetof(ParticleVertex, uv))},
+        {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, uint32_t(offsetof(ParticleVertex, rgba))},
+    };
+    auto make_particles = [&](bool additive) {   // blend(src_alpha, one) or (src_alpha, 1 - src_alpha)
+        SDL_GPUColorTargetDescription ct{};
+        ct.format = format;
+        ct.blend_state.enable_blend = true;
+        ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        ct.blend_state.dst_color_blendfactor = additive ? SDL_GPU_BLENDFACTOR_ONE : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        ct.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+        ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+        SDL_GPUGraphicsPipelineCreateInfo pi{};
+        pi.vertex_shader = vs_particle_;
+        pi.fragment_shader = fs_particle_;
+        pi.vertex_input_state.vertex_buffer_descriptions = &pvb;
+        pi.vertex_input_state.num_vertex_buffers = 1;
+        pi.vertex_input_state.vertex_attributes = pattrs;
+        pi.vertex_input_state.num_vertex_attributes = 3;
+        pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pi.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pi.depth_stencil_state.enable_depth_test = true;
+        pi.depth_stencil_state.enable_depth_write = false;
+        pi.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
+        pi.target_info.color_target_descriptions = &ct;
+        pi.target_info.num_color_targets = 1;
+        pi.target_info.depth_stencil_format = kDepthFormat;
+        pi.target_info.has_depth_stencil_target = true;
+        SDL_GPUGraphicsPipeline* p = SDL_CreateGPUGraphicsPipeline(device_, &pi);
+        if (!p) fail("SDL_CreateGPUGraphicsPipeline (particles)");
+        return p;
+    };
     return pipelines_[int(format)] = Pipelines{make(false, false), make(true, false), make(false, true), make(true, true),
-                                               make_color(true), make_color(false)};
+                                               make_particles(true), make_particles(false), make_color(true), make_color(false)};
 }
 
 void Renderer::ensure_depth(uint32_t w, uint32_t h) {
@@ -622,6 +670,8 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     const Pipelines& pipes = pipelines_for(format);
     const Overlay* overlay = frame.overlay && (!frame.overlay->world.empty() || !frame.overlay->screen.empty()) ? frame.overlay : nullptr;
     if (overlay) upload_overlay(cmd, *overlay);
+    const ParticleList* particles = frame.particles && !frame.particles->vertices.empty() ? frame.particles : nullptr;
+    if (particles) upload_particles(cmd, *particles);
 
     SDL_GPUColorTargetInfo color{};
     color.texture = target;
@@ -763,6 +813,17 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     }
     for (const DrawItem* it : opaque) draw(*it, pipes.opaque);
     for (const DrawItem* it : blended) draw(*it, pipes.blend);
+    if (particles) {
+        SDL_GPUBufferBinding vb{particle_buffer_, 0};
+        SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+        for (const ParticleBatch& b : particles->batches) {
+            SDL_BindGPUGraphicsPipeline(pass, b.additive ? pipes.particles_additive : pipes.particles_alpha);
+            SDL_PushGPUVertexUniformData(cmd, 0, &view_proj, sizeof view_proj);
+            SDL_GPUTextureSamplerBinding tex{b.texture->texture, sampler_};
+            SDL_BindGPUFragmentSamplers(pass, 0, &tex, 1);
+            SDL_DrawGPUPrimitives(pass, b.count, 1, b.first, 0);
+        }
+    }
     if (overlay) {
         SDL_GPUBufferBinding vb{overlay_buffer_, 0};
         SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
@@ -880,6 +941,32 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     u.fog = {post->fog_top, post->fog_bottom, post->fog_opacity, post->height_fog ? 1.0f : 0.0f};
     u.fog_color = glm::vec4(post->fog_color, 1);
     run(target, w, h, pp.final, {scene_color_, blur ? blur_b_ : scene_color_, depth_}, &u, sizeof u, true);
+}
+
+void Renderer::upload_particles(SDL_GPUCommandBuffer* cmd, const ParticleList& p) {
+    const uint32_t count = uint32_t(p.vertices.size());
+    if (count > particle_capacity_) {
+        if (particle_buffer_) SDL_ReleaseGPUBuffer(device_, particle_buffer_);
+        if (particle_transfer_) SDL_ReleaseGPUTransferBuffer(device_, particle_transfer_);
+        particle_capacity_ = std::max(count * 2, 8192u);
+        SDL_GPUBufferCreateInfo bi{};
+        bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+        bi.size = particle_capacity_ * uint32_t(sizeof(ParticleVertex));
+        particle_buffer_ = SDL_CreateGPUBuffer(device_, &bi);
+        SDL_GPUTransferBufferCreateInfo ti{};
+        ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        ti.size = bi.size;
+        particle_transfer_ = SDL_CreateGPUTransferBuffer(device_, &ti);
+        if (!particle_buffer_ || !particle_transfer_) fail("particle buffer");
+    }
+    auto* dst = static_cast<ParticleVertex*>(SDL_MapGPUTransferBuffer(device_, particle_transfer_, true));
+    std::copy(p.vertices.begin(), p.vertices.end(), dst);
+    SDL_UnmapGPUTransferBuffer(device_, particle_transfer_);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation src{particle_transfer_, 0};
+    SDL_GPUBufferRegion region{particle_buffer_, 0, count * uint32_t(sizeof(ParticleVertex))};
+    SDL_UploadToGPUBuffer(copy, &src, &region, true);
+    SDL_EndGPUCopyPass(copy);
 }
 
 void Renderer::upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o) {
