@@ -47,6 +47,7 @@ struct Options {
     std::string level = "Ship_01.lvc";
     std::string screenshot;
     float walk_test = 0;
+    bool log_player = false;    // print the player's state every second (interactive)
     float time = 0;           // advance animations by this many seconds before a screenshot
     bool have_eye = false;
     glm::vec4 eye{0};        // x, y, z, yaw (degrees)
@@ -92,6 +93,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--no-zones") o.zones = false;
         else if (a == "--section") o.section = std::stoi(next());
         else if (a == "--trace-zones") o.trace_zones = true;
+        else if (a == "--log-player") o.log_player = true;
         else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
@@ -426,6 +428,15 @@ int main(int argc, char** argv) {
                         }
                         if (player.center.z < -2000) player.spawn(scene.start_position, scene.start_yaw);   // fell out
                         cam.position = player.eye();
+                        static float log_timer = 0;
+                        if (opt.log_player && (log_timer += dt) >= 1.0f) {
+                            log_timer = 0;
+                            std::printf("player (%.2f %.2f %.2f) yaw %.0f %s, input fwd %.0f right %.0f, zone %d, %.0f fps\n",
+                                        player.center.x, player.center.y, player.center.z, player.yaw,
+                                        player.on_ground ? "ground" : "air", in.forward, in.right, scene.zones().current(),
+                                        dt > 0 ? 1.0f / dt : 0.0f);
+                            std::fflush(stdout);
+                        }
                     }
                     scene.update(dt, cam.position);
                     int w = 0, h = 0;
