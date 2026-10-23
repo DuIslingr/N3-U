@@ -21,6 +21,8 @@ struct Settings {
     enum class DisplayMode { Windowed, Fullscreen, Borderless } display = DisplayMode::Windowed;
     bool vsync = true;
     int fps_limit = 0;          // frames per second; 0: unlocked
+    // Campaign progress: how many chapters the player has reached (chapter select).
+    int chapters = 1;
 
     // The settings file; empty if there is no preferences folder.
     static std::string default_path();

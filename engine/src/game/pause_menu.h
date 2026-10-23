@@ -1,7 +1,7 @@
 // The in-game menu, after the original's GS_InGameMenu: Esc (or the HUD's pause button on
 // touch screens) pauses the game. Pages as the original has them, with its strings and its
 // Chatboard.bsprite art (buttons 187/188 and 29/30, toggles 123/124, sliders 127-129):
-//   PAUSE: Objectives, Restart Checkpoint, Restart Level, Options, Exit
+//   PAUSE: Objectives, Restart Checkpoint, Restart Level, Options, Back to Menu
 //   Options: Sound, Controls, Display (this port's), Advanced
 //   Sound: Game Sound, SFX Volume, Music Volume
 //   Controls: Sensitivity, Left-Handed (touch), Invert Y-Axis, Aim (mouse: hold or toggle)
@@ -27,7 +27,8 @@ class TextRenderer;
 class PauseMenu {
 public:
     bool open = false;
-    void show();    // open at the PAUSE page
+    void show();            // open at the PAUSE page
+    void show_options();    // open at the Options page alone (from the main menu); Back closes it
     // String lookup (the game's string tables: "FPS_PAUSE" ...); the id itself if missing.
     std::function<std::string(const std::string&)> text = [](const std::string& id) { return id; };
     bool touch = false;   // the touch scheme: Left-Handed shows, the mouse aim option does not

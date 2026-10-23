@@ -88,6 +88,8 @@ public:
                             const glm::vec4& color);
     // A sprite file by its exact name (no resolution variant chosen); null if missing.
     const Sprite* sprite_file(const std::string& file);
+    // Frames not drawn where other frames place them (menu layouts' position markers).
+    std::vector<int> skip_frames;
     // A frame's box relative to its anchor: min x, min y, max x, max y (sprite pixels).
     static glm::vec4 frame_bounds(const Sprite& s, int frame);
 

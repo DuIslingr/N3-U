@@ -30,6 +30,7 @@ struct CampaignLevel {
     std::string picture;              // "jungle4": LOADING_jungle4.bsprite
     std::string title, text;          // string ids: "FPS_SAN_FRANCISCO_1", "..._LOADING"
     std::string location, climate, alliance;
+    int image = -1;                   // its picture in menu_elements_nova3.bsprite (chapter select)
 };
 // In story order; empty if the game's data lacks them.
 std::vector<CampaignLevel> campaign_levels(const Vfs& vfs, const Gol& gol);

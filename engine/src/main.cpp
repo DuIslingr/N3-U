@@ -1,6 +1,6 @@
 // nova3: level viewer for the N.O.V.A. 3 reimplementation.
 //
-//   nova3 [--data DIR] [--level NAME.lvc]                       walk through a level
+//   nova3 [--data DIR] [--level NAME.lvc]                       the main menu, or straight into a level
 //   nova3 ... --screenshot OUT.bmp [--eye X,Y,Z,YAW[,PITCH]] [--size WxH]   render one frame, no window
 //   nova3 ... --walk-test SECONDS [--screenshot OUT.bmp]          simulate walking forward from the start
 //   nova3 ... --focus OBJECT[#N] [--time T]                        start looking at the Nth placement of a type
@@ -39,6 +39,7 @@
 #include "game/combat.h"
 #include "game/hud.h"
 #include "game/loading_screen.h"
+#include "game/main_menu.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -95,7 +96,9 @@ struct Options {
     int section = 1;
     bool trace_zones = false;
     int width = 1600, height = 900;
-    bool size_given = false;    // --size: the window as asked, not the saved display settings
+    bool size_given = false;
+    bool level_given = false;   // --level: straight into it, no main menu
+    std::string main_menu_keys; // headless: draw the main menu after pressing these (u d e=enter b=back .=none)    // --size: the window as asked, not the saved display settings
 };
 
 Options parse(int argc, char** argv) {
@@ -107,7 +110,8 @@ Options parse(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "--data") o.data = next();
-        else if (a == "--level") o.level = next();
+        else if (a == "--level") o.level = next(), o.level_given = true;
+        else if (a == "--main-menu") o.main_menu_keys = next();
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--walk-test") o.walk_test = std::stof(next());
         else if (a == "--time") o.time = std::stof(next());
@@ -349,7 +353,38 @@ int main(int argc, char** argv) {
                 SDL_GetWindowSizeInPixels(window, &w, &h);
                 renderer.render_to_window({}, draw_loading(w, h));
             };
-            if (!headless) show_loading(opt.level);
+            // The main menu first, unless a level was asked for.
+            MainMenu main_menu;
+            main_menu.campaign = &campaign;
+            main_menu.text = [&main_strings](const std::string& id) {
+                const std::string t = main_strings.find(id);
+                return t.empty() ? id : t;
+            };
+            auto draw_main_menu = [&](int w, int h) {
+                loading_hud.set_screen(w, h);
+                if (h != loading_fonts_for) {
+                    loading_fonts_for = h;
+                    loading_title.set_size(std::max(14.0f, float(h) * 0.03f));
+                    loading_text.set_size(std::max(12.0f, float(h) * 0.022f));
+                }
+                loading_overlay.clear();
+                loading_sprites.vertices.clear();
+                loading_sprites.batches.clear();
+                main_menu.draw(loading_overlay, loading_sprites, loading_hud, loading_title, loading_text, w, h);
+                FrameParams f;
+                f.overlay = &loading_overlay;
+                f.sprites = &loading_sprites;
+                return f;
+            };
+            if (!headless && !opt.level_given) {
+                main_menu.show();
+                int w = 0, h = 0;
+                SDL_GetWindowSizeInPixels(window, &w, &h);
+                SDL_PumpEvents();
+                renderer.render_to_window({}, draw_main_menu(w, h));
+            } else if (!headless) {
+                show_loading(opt.level);
+            }
             scene.load_level(opt.level, 1u << (std::max(opt.section, 1) - 1));
             loading.loaded = true;
             if (opt.builtin_shaders) scene.set_game_shaders(false);
@@ -617,6 +652,9 @@ int main(int argc, char** argv) {
                         return;
                     }
                     std::printf("[script] level over (%s): loading %s\n", logic.level_success ? "complete" : "failed", next.c_str());
+                    for (size_t c = 0; c < campaign.size(); ++c)   // the next chapter is reached
+                        if (next.find("/" + campaign[c].file + ".lvc") != std::string::npos && int(c) + 1 > settings.chapters)
+                            settings.chapters = int(c) + 1, settings.save(settings_path);
                     load_level(next);
                 }
             };
@@ -927,6 +965,17 @@ int main(int argc, char** argv) {
                                     zz.min.x, zz.min.y, zz.min.z, zz.max.x, zz.max.y, zz.max.z, zz.portals.size(), zz.children.size());
                     }
                 }
+                if (!opt.main_menu_keys.empty()) {   // the main menu instead of the view
+                    main_menu.unlocked = std::max(1, int(campaign.size()) / 2);
+                    main_menu.show();
+                    for (char c : opt.main_menu_keys) {
+                        using K = MainMenu::Key;
+                        if (c == '.') continue;
+                        main_menu.key(c == 'u' ? K::Up : c == 'd' ? K::Down : c == 'b' ? K::Back : K::Activate);
+                    }
+                    shot = draw_main_menu(opt.width, opt.height);
+                    scene_hidden = true;
+                }
                 if (opt.loading_screen >= 0) {   // the level's loading screen instead of the view
                     loading.begin(campaign_level(opt.level));
                     for (int k = 0; k < 10; ++k) loading.update(0.1f);
@@ -1018,7 +1067,7 @@ int main(int argc, char** argv) {
                 auto set_menu = [&](bool on) {
                     if (on) menu.show();
                     else menu.open = false;
-                    SDL_SetWindowRelativeMouseMode(window, !on && !touch_mode);
+                    SDL_SetWindowRelativeMouseMode(window, !on && !touch_mode && !main_menu.open);
                     fire_held = aim_held = false;
                     touch.release_all();
                     if (logic.audio) logic.audio->set_paused(on);
@@ -1027,7 +1076,11 @@ int main(int argc, char** argv) {
                     using A = PauseMenu::Action;
                     switch (a) {
                         case A::Resume: set_menu(false); break;
-                        case A::Exit: running = false; break;
+                        case A::Exit:   // back to the main menu
+                            set_menu(false), main_menu.show();
+                            SDL_SetWindowRelativeMouseMode(window, false);
+                            if (logic.audio) logic.audio->set_paused(true);
+                            break;
                         case A::Changed:
                             settings.save(settings_path), aim_toggled = false, apply_sound();
                             touch.mirror = settings.left_handed, touch.relayout();
@@ -1038,6 +1091,20 @@ int main(int argc, char** argv) {
                         case A::None: break;
                     }
                 };
+                auto main_action = [&](MainMenu::Action a) {
+                    using A = MainMenu::Action;
+                    switch (a) {
+                        case A::Play:
+                            main_menu.open = false;
+                            load_level("levels/" + campaign[size_t(main_menu.chosen)].file + ".lvc");
+                            SDL_SetWindowRelativeMouseMode(window, !touch_mode);
+                            break;
+                        case A::Options: menu.show_options(); break;
+                        case A::Quit: running = false; break;
+                        case A::None: break;
+                    }
+                };
+                if (main_menu.open) SDL_SetWindowRelativeMouseMode(window, false);
                 auto last = std::chrono::steady_clock::now();
                 while (running) {
                     if (touch_mode) {
@@ -1052,6 +1119,31 @@ int main(int argc, char** argv) {
                             const bool pressed = (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                                                  e.type == SDL_EVENT_FINGER_DOWN;
                             if (pressed && loading.press() && logic.audio) logic.audio->set_paused(menu.open);
+                            continue;
+                        }
+                        if (main_menu.open && !menu.open) {   // the main menu takes every input
+                            using K = MainMenu::Key;
+                            using P = MainMenu::Pointer;
+                            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                                switch (e.key.key) {
+                                    case SDLK_ESCAPE: case SDLK_BACKSPACE: main_action(main_menu.key(K::Back)); break;
+                                    case SDLK_UP: case SDLK_W: main_action(main_menu.key(K::Up)); break;
+                                    case SDLK_DOWN: case SDLK_S: main_action(main_menu.key(K::Down)); break;
+                                    case SDLK_LEFT: case SDLK_A: main_action(main_menu.key(K::Left)); break;
+                                    case SDLK_RIGHT: case SDLK_D: main_action(main_menu.key(K::Right)); break;
+                                    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: main_action(main_menu.key(K::Activate)); break;
+                                    default: break;
+                                }
+                            } else if (e.type == SDL_EVENT_MOUSE_MOTION && e.motion.which != SDL_TOUCH_MOUSEID) {
+                                main_action(main_menu.pointer(to_pixels(e.motion.x, e.motion.y, false), P::Move));
+                            } else if ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                                       e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT) {
+                                main_action(main_menu.pointer(to_pixels(e.button.x, e.button.y, false),
+                                                              e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? P::Press : P::Release));
+                            } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP) {
+                                main_action(main_menu.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
+                                                              e.type == SDL_EVENT_FINGER_DOWN ? P::Press : P::Release));
+                            }
                             continue;
                         }
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE && !e.key.repeat) {
@@ -1165,6 +1257,16 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
+                    main_menu.unlocked = settings.chapters;
+                    if (main_menu.open) {   // the main menu (with Options over it), the game paused behind
+                        if (logic.audio) logic.audio->set_paused(true);
+                        int mw = 0, mh = 0;
+                        SDL_GetWindowSizeInPixels(window, &mw, &mh);
+                        FrameParams mf = draw_main_menu(mw, mh);
+                        if (menu.open) menu.draw(loading_overlay, loading_sprites, hud, subtitles, objective_text, {}, settings, mw, mh);
+                        renderer.render_to_window({}, mf);
+                        continue;
+                    }
                     if (loading.active) {   // the level waits behind the loading screen
                         loading.update(raw_dt);
                         if (logic.audio) logic.audio->set_paused(true);

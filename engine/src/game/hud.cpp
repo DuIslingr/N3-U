@@ -136,7 +136,7 @@ void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at
         const Sprite::FModule& fm = s.fmodules[size_t(k)];
         const glm::vec2 pos = at + glm::vec2(float(fm.x), float(fm.y)) * scale;
         if (fm.flags & 16) {   // a "hyper" piece: another frame, placed (and flipped) here
-            if (fm.module != frame)
+            if (fm.module != frame && std::find(skip_frames.begin(), skip_frames.end(), fm.module) == skip_frames.end())
                 draw_frame(out, s, fm.module, pos, scale * glm::vec2(fm.flags & 1 ? -1 : 1, fm.flags & 2 ? -1 : 1), color, clip);
             continue;
         }

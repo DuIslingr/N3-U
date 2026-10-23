@@ -48,6 +48,12 @@ void PauseMenu::show() {
     selected_ = -1, dragging_ = -1;
 }
 
+void PauseMenu::show_options() {
+    open = true;
+    stack_ = {Page::Options};
+    selected_ = -1, dragging_ = -1;
+}
+
 PauseMenu::Action PauseMenu::back() {
     dragging_ = -1;
     if (stack_.size() <= 1) return Action::Resume;
@@ -115,7 +121,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) {
             button(text("FPS_RESTART_CHECKPOINT"), confirm(text("FPS_CONFIRM_RESTART_CHECKPOINT"), Action::RestartCheckpoint));
             button(text("FPS_RESTART_LEVEL"), confirm(text("FPS_CONFIRM_RESTART_LEVEL"), Action::RestartLevel));
             button(text("FPS_OPTIONS"), go(Page::Options));
-            button(text("FPS_EXIT"), confirm(text("FPS_CONFIRM_EXIT_GAME"), Action::Exit));
+            button(text("FPS_MAIN_MENU"), confirm(text("FPS_CONFIRM_MAINMENU"), Action::Exit));
             break;
         case Page::Objectives:
             break;   // drawn from the objectives; only Back
@@ -183,7 +189,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) {
     }
     // The original's pair at the bottom: Back and Resume (the pause page has only Resume).
     if (page() != Page::Pause) button(text("FPS_BACK"), [this](Settings&, int d) { return d == 0 ? back() : Action::None; }, 1);
-    button(text("FPS_RESUME"), [](Settings&, int d) { return d == 0 ? Action::Resume : Action::None; }, 2);
+    if (stack_.front() == Page::Pause)   // (from the main menu there is nothing to resume)
+        button(text("FPS_RESUME"), [](Settings&, int d) { return d == 0 ? Action::Resume : Action::None; }, 2);
     return out;
 }
 

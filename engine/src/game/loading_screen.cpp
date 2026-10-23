@@ -43,7 +43,7 @@ std::vector<CampaignLevel> campaign_levels(const Vfs& vfs, const Gol& gol) {
         //  climate, alliance, image frames x3, locked, ?, ?}
         for (const Value& e : (*v)[0].list) {
             if (e.size() < 9 || e[1].i < 0 || size_t(e[1].i) >= files.size()) continue;
-            out.push_back({files[size_t(e[1].i)], e[3].s, e[4].s, e[5].s, e[6].s, e[7].s, e[8].s});
+            out.push_back({files[size_t(e[1].i)], e[3].s, e[4].s, e[5].s, e[6].s, e[7].s, e[8].s, e.size() > 9 ? e[9].i : -1});
         }
         break;
     }
