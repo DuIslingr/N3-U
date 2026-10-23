@@ -513,6 +513,7 @@ int main(int argc, char** argv) {
                     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                     std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
                 }
+                std::printf("coronas: %zu of %zu shown\n", scene.stats().coronas_shown, scene.stats().corona_controllers);
                 std::printf("wrote %s\n", opt.screenshot.c_str());
             } else {
                 bool flying = false;

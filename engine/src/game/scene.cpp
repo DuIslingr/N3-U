@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <regex>
 
@@ -262,6 +263,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         int node;
         glm::mat4 parent;
         std::vector<int> lod_nodes;
+        int controller = -1;   // index into corona_controllers_ of the enclosing controller
     };
     std::vector<Visit> stack;
     for (int r : m.cpu.roots) stack.push_back({r, placement, {}});
@@ -273,6 +275,24 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         // Collision proxies for the physics engine ("r=0.75" etc. in their properties).
         if (node.name.rfind("PhysicsShape", 0) == 0) continue;
         const glm::mat4 world = v.parent * local_matrix(node.translation, node.rotation, node.scale);
+        // CCustomColladaFactory::createNode: a node whose name contains "coronas" is a
+        // CCoronasControllerNode; its <name>_PIVOT child's properties tune it (InitCoronas).
+        if (!sky && !anim && v.controller < 0 && node.name.find("coronas") != std::string::npos) {
+            CoronaController c;
+            c.world = world;
+            c.inverse = glm::inverse(world);
+            for (int ch : node.children) {
+                const std::string& props = m.cpu.nodes[size_t(ch)].properties;
+                auto num = [&](const char* key, float& out) {
+                    if (auto at = props.find(key); at != std::string::npos) out = std::strtof(props.c_str() + at + std::strlen(key), nullptr);
+                };
+                num("coronasMinScale=", c.min_scale);
+                num("coronasMin=", c.min_dist);
+                num("coronasMax=", c.max_dist);
+            }
+            v.controller = int(corona_controllers_.size());
+            corona_controllers_.push_back(std::move(c));
+        }
         // Point and spot lights (CCustomColladaLightSceneNode); a black light is switched off.
         for (int li : node.lights) {
             const ModelLight& ml = m.cpu.lights[size_t(li)];
@@ -355,10 +375,12 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                 draw_materials_.push_back(gm);
                 if (anim) anim->draws.push_back({draws_.size(), ni, skin});
                 if (!v.lod_nodes.empty()) lods.draws.push_back({draws_.size(), v.lod_nodes});
+                if (v.controller >= 0)
+                    corona_controllers_[size_t(v.controller)].draws.push_back({draws_.size(), corona_controllers_[size_t(v.controller)].inverse * world});
                 draws_.push_back(d);
             }
         }
-        for (int c : node.children) stack.push_back({c, world, v.lod_nodes});
+        for (int c : node.children) stack.push_back({c, world, v.lod_nodes, v.controller});
     }
     if (anim) {
         // A fade may have added overrides to a material drawn earlier.
@@ -591,6 +613,32 @@ void Scene::update(float dt, const glm::vec3& camera) {
         c.fade = std::clamp(c.fade + (seen ? 1.0f : -4.0f) * dt * 1000.0f, 0.0f, 200.0f);
         d.occluded = c.fade <= 0;
     }
+    // CCoronasControllerNode::onAnimate: the controller's scale follows the fade and the
+    // camera distance: fade/200 * max(min scale, min(distance, max) / min).
+    stats_.corona_controllers = corona_controllers_.size();
+    stats_.coronas_shown = 0;
+    for (CoronaController& c : corona_controllers_) {
+        bool seen = false;
+        for (const auto& [di, local] : c.draws) {
+            const DrawItem& d = draws_[di];
+            seen = seen || (d.visible && !d.hidden && !d.anim_hidden && !d.zone_hidden);
+        }
+        const glm::vec3 pos(c.world[3]);
+        const float dist = glm::distance(camera, pos);
+        if (seen) {
+            float t = 1;
+            seen = dist < 0.3f || !collision_.raycast(camera, pos + (camera - pos) / std::max(dist, 1e-3f) * 0.3f, t);
+        }
+        c.fade = std::clamp(c.fade + (seen ? 1.0f : -4.0f) * dt * 1000.0f, 0.0f, 200.0f);
+        const float scale = c.fade * 0.005f * std::max(c.min_scale, std::min(dist, c.max_dist) / c.min_dist);
+        stats_.coronas_shown += scale > 0;
+        const glm::mat4 scaled = glm::scale(c.world, glm::vec3(scale));
+        for (const auto& [di, local] : c.draws) {
+            DrawItem& d = draws_[di];
+            d.world = scaled * local;
+            d.occluded = scale <= 0;
+        }
+    }
     for (DistanceFade& f : fades_) {
         if (f.anim) {
             const glm::mat4& w = f.anim->world[size_t(f.node)];
@@ -675,6 +723,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     stats_.irradiance_volumes = irradiance_.size();
     animated_.clear();
     lod_instances_.clear();
+    corona_controllers_.clear();
     fades_.clear();
     fade_values_.clear();
     instances_.clear();
@@ -720,8 +769,11 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     compute_object_lighting();
     // Coronas: additive sprites drawn without depth testing (CCoronasControllerNode).
     coronas_.clear();
+    std::vector<uint8_t> controlled(draws_.size(), 0);
+    for (const CoronaController& c : corona_controllers_)
+        for (const auto& d : c.draws) controlled[d.first] = 1;
     for (size_t i = 0; i < draws_.size(); ++i)
-        if (draws_[i].material && !draws_[i].material->state.depth_test && !draws_[i].sky) coronas_.push_back({i, 0.0f});
+        if (draws_[i].material && !draws_[i].material->state.depth_test && !draws_[i].sky && !controlled[i]) coronas_.push_back({i, 0.0f});
     stats_.lights = lights_.size();
     stats_.draws = draws_.size();
     stats_.lod_hidden = 0;

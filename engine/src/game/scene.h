@@ -26,6 +26,7 @@ struct SceneStats {
     size_t animated = 0, missing_animations = 0;
     size_t lod_hidden = 0;    // draws hidden because another level of detail shows
     size_t irradiance_volumes = 0, lights = 0, skyboxes = 0;
+    size_t corona_controllers = 0, coronas_shown = 0;   // shown: last update
     double load_seconds = 0;
 };
 
@@ -246,6 +247,13 @@ private:
         float fade;                                 // ms, 0..200
     };
     std::vector<Corona> coronas_;
+    struct CoronaController {
+        glm::mat4 world{1}, inverse{1};
+        float min_dist = 25, max_dist = 50, min_scale = 0.5f;   // coronasMin/Max/MinScale
+        float fade = 200;                                       // ms, starts visible
+        std::vector<std::pair<size_t, glm::mat4>> draws;        // draw, transform relative to the controller
+    };
+    std::vector<CoronaController> corona_controllers_;
     std::deque<std::vector<ParamOverride>> fade_values_;   // overrides of fading draws on static instances
     std::unordered_map<std::string, std::unique_ptr<AnimationLibrary>> animations_;   // by lowercase name
     std::unordered_map<std::string, LoadedModel> models_;            // by lowercase file name
