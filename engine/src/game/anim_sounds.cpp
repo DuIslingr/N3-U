@@ -4,6 +4,7 @@
 #include <cctype>
 #include <functional>
 #include <iterator>
+#include <unordered_set>
 
 #include "audio/audio.h"
 #include "game/scene.h"
@@ -24,14 +25,26 @@ std::string lower(std::string s) {
 const AnimSounds::TypeInfo& AnimSounds::info(int type) {
     if (auto it = by_type_.find(type); it != by_type_.end()) return it->second;
     TypeInfo& out = by_type_[type];
-    auto g = gol_.find(type);
-    const Value* v = g == gol_.end() ? nullptr : resolved_template(g->second, gol_, kCompStatesSet);
-    if (!v || v->size() < 2) return out;
+    // The type's states and those of the state sets it derives from (marines keep theirs in
+    // a StateSet* parent; the type's own come first).
+    std::vector<const Value*> states;
+    std::unordered_set<std::string> named;
+    std::unordered_set<int> seen;
+    std::function<void(int)> gather = [&](int id) {
+        auto g = gol_.find(id);
+        if (g == gol_.end() || !seen.insert(id).second) return;
+        if (auto t = g->second.templates.find(kCompStatesSet); t != g->second.templates.end() && t->second.size() > 1)
+            for (const Value& st : t->second[1].list)
+                if (st.size() >= 12 && st[0].type == Value::String && named.insert(lower(st[0].s)).second) states.push_back(&st);
+        for (int p : g->second.parents) gather(p);
+    };
+    gather(type);
+    if (states.empty()) return out;
     // States: [name, ..., [clips]] (clips at [11]); a clip: [name, speed, track groups...];
     // a group: [name, kind, [events]]; a sound event: [name, start ms, end ms, ..., [[sound]...] at 12].
     std::unordered_map<std::string, bool> ambiguous;     // clips whose states disagree on events
-    for (const Value& st : (*v)[1].list) {
-        if (st.size() < 12 || st[0].type != Value::String) continue;
+    for (const Value* sp : states) {
+        const Value& st = *sp;
         State& state = out.states[lower(st[0].s)];
         for (const Value& clip : st[11].list) {
             if (clip.size() < 3 || clip[0].type != Value::String) continue;
@@ -65,8 +78,8 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
         }
     }
     // Effect tracks (a clip's [5]): [start ms, end ms, effect, node, scale x, y, z, ...].
-    for (const Value& st : (*v)[1].list) {
-        if (st.size() < 12) continue;
+    for (const Value* sp : states) {
+        const Value& st = *sp;
         for (const Value& clip : st[11].list) {
             if (clip.size() < 6 || clip[0].type != Value::String) continue;
             std::vector<EffectEvent>& list = out.effects[lower(clip[0].s)];

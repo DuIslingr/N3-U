@@ -1,6 +1,7 @@
 #include "assets/bdae.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -163,7 +164,8 @@ private:
     }
 
     // Skin struct (CColladaDatabase skin controller): +0/+4 inverse bind floats,
-    // +0x4c/+0x50 joint names, +0x54/+0x58 per-vertex influences (4 x u8 joint, 4 x f32 weight).
+    // +0x4c/+0x50 joint names, +0x54/+0x58 per-vertex influences (4 x u8 joint, then up to
+    // 4 x f32 weight: the buffer's length in words over the vertex count says how many).
     int skin_for(uint32_t skin) {
         auto cached = skin_index.find(skin);
         if (cached != skin_index.end()) return cached->second;
@@ -190,8 +192,12 @@ private:
             if (mesh.skin >= 0) influences = b.ptr(skin_off + 0x58);
             if (influences) influences += 4;   // skip the buffer's u32 prefix
         }
+        const size_t joint_count = mesh.skin >= 0 ? model.skins[size_t(mesh.skin)].joints.size() : 0;
         const bool interleaved = b.u32(o) != 0;
         const uint32_t vcount = b.u32(o + 4);
+        // Influence records: 20 bytes (4 weights) mostly, 16 (3) in some meshes (Boreas_Thug_A's LOD0).
+        const int influence_weights = influences && vcount ? std::clamp(int(b.u32(skin_off + 0x54) / vcount) - 1, 1, 4) : 4;
+        const size_t influence_size = 4 + 4 * size_t(influence_weights);
         std::vector<uint32_t> strides, offsets, types, comps;
         for (uint32_t x : b.array(o, {0x08, 0x0C, 4})) strides.push_back(b.u32(x));
         for (uint32_t x : b.array(o, {0x10, 0x14, 4})) offsets.push_back(b.u32(x));
@@ -260,13 +266,14 @@ private:
                     out.binormal = {comp(ba, v, 0), comp(ba, v, 1), comp(ba, v, 2)};
                 }
                 if (influences) {
-                    const size_t rec = influences + size_t(v) * 20;
-                    check_range(b.data.size(), rec, 20);
+                    const size_t rec = influences + size_t(v) * influence_size;
+                    check_range(b.data.size(), rec, influence_size);
                     float w[4], sum = 0;
                     uint8_t j[4];
                     for (int k = 0; k < 4; ++k) {
                         j[k] = b.data[rec + k];
-                        w[k] = std::max(load_le<float>(&b.data[rec + 4 + 4 * k]), 0.0f);
+                        w[k] = k < influence_weights ? std::max(load_le<float>(&b.data[rec + 4 + 4 * k]), 0.0f) : 0.0f;
+                        if (j[k] >= joint_count || !std::isnormal(w[k])) w[k] = 0;   // no such joint: nothing
                         if (w[k] == 0) j[k] = 0;
                         sum += w[k];
                     }

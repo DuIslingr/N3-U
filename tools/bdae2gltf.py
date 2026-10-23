@@ -164,13 +164,17 @@ class Exporter:
         start = mesh.vertices_off + a.offset + first * a.stride
         return np.ndarray((count, a.comps), dtype, self.b.data, start, (a.stride, size)).copy()
 
-    def _skin_arrays(self, skin, first, count):
+    def _skin_arrays(self, skin, first, count, vertex_count):
         b = self.b
         wp = b.ptr(skin + 0x58) + 4   # skip the buffer's u32 prefix
-        rec = 20                      # 4 x u8 joint index + 4 x f32 weight
+        # 4 x u8 joint index + up to 4 x f32 weight: the buffer's length in words (+0x54)
+        # over the vertex count says how many (3 in Boreas_Thug_A's LOD0, else 4).
+        nweights = min(max(b.u32(skin + 0x54) // max(vertex_count, 1) - 1, 1), 4)
+        rec = 4 + 4 * nweights
         raw = np.frombuffer(b.data, np.uint8, (first + count) * rec, wp)[first * rec:].reshape(count, rec)
         joints = raw[:, :4].copy()
-        weights = raw[:, 4:].copy().view("<f4").reshape(count, 4)
+        weights = np.zeros((count, 4), np.float32)
+        weights[:, :nweights] = raw[:, 4:].copy().view("<f4").reshape(count, nweights)
         weights = np.where(weights > 0, weights, 0).astype(np.float32)
         joints[weights == 0] = 0
         sums = weights.sum(1, keepdims=True)
@@ -271,7 +275,7 @@ class Exporter:
                 uv = self._attr_array(mesh, slot, first, count).astype(np.float32)
                 attrs[f"TEXCOORD_{t}"] = self.g.accessor(uv, "VEC2", GL_FLOAT, target=GL_ARRAY_BUFFER)
             if skin is not None:
-                joints, weights = self._skin_arrays(skin, first, count)
+                joints, weights = self._skin_arrays(skin, first, count, mesh.vertex_count)
                 attrs["JOINTS_0"] = self.g.accessor(joints, "VEC4", GL_UNSIGNED_BYTE, target=GL_ARRAY_BUFFER)
                 attrs["WEIGHTS_0"] = self.g.accessor(weights, "VEC4", GL_FLOAT, target=GL_ARRAY_BUFFER)
             idx = np.array(self.m.read_indices(sub), dtype=np.uint32)

@@ -260,6 +260,7 @@ void LevelLogic::start(bool keep_player) {
     movers_.clear(), waypoint_next_.clear(), path_first_.clear(), vehicles_.clear();
     if (!keep_player) checkpoint_ = -1;
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
+    camera_held_ = restore_view_ = false;
     tutorial_ = TutorialStep{};
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
@@ -296,7 +297,7 @@ void LevelLogic::start(bool keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
         player_vehicle_ = player_gun_ = player_mech_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
-        zfar = 8000, move_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
+        zfar = 8000, move_sensitivity = 1, look_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
         player.jetpack = false;
         player.push = glm::vec3(0);
         grading_ = Grading{};
@@ -745,12 +746,36 @@ void LevelLogic::player_look_to(const glm::vec3& at, float seconds) {
     look_from_yaw_ = player.yaw, look_from_pitch_ = player.pitch;
 }
 
-bool LevelLogic::look_target(float& yaw, float& pitch) const {
-    if (look_left_ <= 0) return false;
+void LevelLogic::camera_look_to(const glm::vec3& at, float seconds) {
+    if (!camera_held_) held_yaw_ = player.yaw, held_pitch_ = player.pitch;
+    camera_held_ = true, restore_view_ = false;
+    player_look_to(at, seconds);
+}
+
+void LevelLogic::camera_to_player(bool keep_view) {
+    if (!camera_held_) return;
+    camera_held_ = false, look_left_ = 0;
+    restore_view_ = !keep_view;
+}
+
+std::string LevelLogic::state_clip(int type, const std::string& state) {
+    std::string name = state;
+    for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+    const AnimSounds::State* st = anim_sounds_->state(type, name);
+    return st ? st->clip : "";
+}
+
+bool LevelLogic::look_target(float& yaw, float& pitch) {
+    if (restore_view_) {
+        restore_view_ = false;
+        yaw = held_yaw_, pitch = held_pitch_;
+        return true;
+    }
+    if (look_left_ <= 0 && !camera_held_) return false;
     const glm::vec3 d = look_at_ - player.eye();
     const float ty = glm::degrees(std::atan2(-d.x, d.y));
     const float tp = glm::degrees(std::atan2(d.z, glm::length(glm::vec2(d))));
-    const float k = 1 - look_left_ / look_total_;
+    const float k = look_left_ > 0 ? 1 - look_left_ / look_total_ : 1;
     float dy = std::fmod(ty - look_from_yaw_ + 540.0f, 360.0f) - 180.0f;
     yaw = look_from_yaw_ + dy * k;
     pitch = look_from_pitch_ + (tp - look_from_pitch_) * k;
@@ -969,7 +994,7 @@ void LevelLogic::update_dialog(float dt) {
     // Without a voice the line stays up for a few seconds; after one, a short pause.
     dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : 3.0f;
     // Lines with text show it while the voice plays; voice-only barks (VFX_...) show nothing.
-    if (!strings.find(line).empty() || dialog_voice_ < 0) message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
+    if (!strings.find(line).empty()) message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
 }
 
 void LevelLogic::update_music(float dt) {

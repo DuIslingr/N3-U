@@ -658,6 +658,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         const std::string any = pick_clip(clips, {"die", "death"});
         if (!any.empty()) t.clip_deaths.push_back(any);
     }
+    t.clip_idle_default = t.clip_idle;
     if (t.clip_alert.empty()) t.clip_alert = t.clip_idle;
     if (t.clip_fire.empty()) t.clip_fire = t.clip_alert;
     if (t.mobile) {
@@ -771,6 +772,16 @@ bool Combat::lock_target(int npc, int target, bool on) {
     t->locked = on ? target : -1;
     t->choose_timer = 0;
     if (on) t->aware = true;
+    return true;
+}
+
+bool Combat::set_idle_state(int npc, const std::string& state) {
+    Target* t = find_target(npc);
+    if (!t || !t->actor) return false;
+    std::string clip = state.empty() ? "" : logic_.state_clip(scene_.level().objects[t->object].type, state);
+    if (clip.empty() && !state.empty()) clip = pick_clip(scene_.clip_names(t->object), {lower(state).c_str()});
+    t->clip_idle = clip.empty() ? t->clip_idle_default : clip;
+    if (t->state == Target::State::Idle && t->goals.empty() && !t->aware) play(*t, t->clip_idle, true);
     return true;
 }
 
@@ -947,7 +958,8 @@ void Combat::run_goal(Target& t, float dt) {
             if (first) {
                 // The state's clip, by name, else something that looks like using a console.
                 const auto clips = scene_.clip_names(t.object);
-                std::string clip = pick_clip(clips, {lower(g.state).c_str()});
+                std::string clip = logic_.state_clip(scene_.level().objects[t.object].type, g.state);
+                if (clip.empty()) clip = pick_clip(clips, {lower(g.state).c_str()});
                 if (clip.empty()) clip = pick_clip(clips, {"console", "button", "interact", "_use"});
                 if (!clip.empty()) play(t, clip, false), g.length = scene_.clip_length(t.object, clip);
                 if (g.length <= 0) g.length = 1.5f, play(t, t.clip_idle, true);
@@ -1775,6 +1787,7 @@ std::vector<std::string> Combat::describe() const {
                       t.ranged ? "ranged " : "", o && o->enabled ? "enabled" : "disabled", t.team, o ? o->health : 0.0f, t.tri,
                       t.run_speed, t.clip_run.c_str(), kStates[int(t.state)], t.aware ? " aware" : "", t.path_next, t.path.size());
         std::string l = line;
+        if (!t.playing.empty()) l += " clip " + t.playing;
         for (const glm::vec3& p : t.path) {
             char pt[64];
             std::snprintf(pt, sizeof pt, " (%.1f %.1f %.1f)", p.x, p.y, p.z);

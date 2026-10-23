@@ -130,6 +130,9 @@ public:
     // use_machinegun (gun). False if `npc` is no actor or the event is not an order.
     bool npc_order(int npc, const std::string& order, int arg, bool flag);
     bool ignore_target(int npc, int target, bool on);
+    // Npc_SetCustomIdleState (CNPCComponent::SetCustomIdleState): a state of the NPC's
+    // state set to idle in ("ConsoleWork", "Talk"); "" for its usual idle.
+    bool set_idle_state(int npc, const std::string& state);
     bool player_invulnerable = false;  // debugging (--god)
     float player_health = 150, player_max_health = 150;
     bool player_dead = false;
@@ -252,6 +255,7 @@ private:
         float leap_t = 0;
         glm::vec3 leap_from{0}, leap_to{0};
         int leap_tri = -1;
+        std::string clip_idle_default;
         std::string clip_idle, clip_alert, clip_run, clip_fire, clip_melee, clip_hurt, clip_jump, playing;
         std::vector<std::string> clip_deaths;
     };

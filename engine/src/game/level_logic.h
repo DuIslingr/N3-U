@@ -117,7 +117,9 @@ public:
     // by default). SetZFar, SetMoveSensitivity, PlayerEnableRush.
     void set_fov(float fov, float ms) { fov_from_ = game_fov(), fov_to_ = fov, fov_len_ = ms / 1000.0f, fov_t_ = 0; }
     float game_fov() const { return fov_len_ > 0 && fov_t_ < fov_len_ ? fov_from_ + (fov_to_ - fov_from_) * fov_t_ / fov_len_ : fov_to_; }
+    static constexpr int kPlayerId = 123456;   // the scripts' id for the player
     float zfar = 8000, move_sensitivity = 1;
+    float look_sensitivity = 1;   // SetControlSensitivity: the view turns this much slower
     bool player_rush = true;
     bool fall_damage = true;   // Player_EnableFallDamage
     bool jetpack_unlocked = false;   // Unlock/LockSpecialPower("jetpack"); UseSpecialPower turns it on
@@ -133,6 +135,9 @@ public:
     // SwitchToMachineGun mans a mounted gun; SwitchToPlayerOnFoot leaves either.
     bool vehicle_move_on_path(int id, int waypoint);
     void vehicle_stop(int id);
+    // Vehicle_FollowObject(vehicle, target, metres): drive after an object (123456: the
+    // player), keeping that far behind it.
+    bool vehicle_follow(int id, int target, float metres);
     void vehicle_set(int id, float max_speed_kmh, float steer_max, float steer_speed);   // < 0: keep
     void vehicle_yaw_limits(int id, float min, float max, float ms);
     bool enter_vehicle(int id);
@@ -280,7 +285,14 @@ public:
     }
     // GetPlayerPositionFromCameraPosition: the next teleport keeps the camera's view.
     void handover_view(const glm::vec3& forward) { handover_ = forward, have_handover_ = true; }
-    bool look_target(float& yaw, float& pitch) const;   // the view while turning (degrees)
+    bool look_target(float& yaw, float& pitch);   // the view while turning or held (degrees)
+    // CameraLookToWaypoint(wp, ms): the camera alone turns to a point and stays on it
+    // (CGameCamera state 1) until CameraSwitchToPlayer gives back the player's own view
+    // (state 0), or ResetPlayerCamera hands the player the view as it is.
+    void camera_look_to(const glm::vec3& at, float seconds);
+    void camera_to_player(bool keep_view);
+    // The first clip of a state in gol type `type`'s state set ("" if it has none).
+    std::string state_clip(int type, const std::string& state);
     // Tutorial steps (CLevelTutorial*): Start<Kind>Tutorial(ms) waits for the player to do
     // it (turn, reload, jump, move, shoot, switch weapons, sprint...) or for `ms` to pass,
     // then sends "TutorialStepEnded".
@@ -404,6 +416,8 @@ private:
     bool have_handover_ = false;
     float look_left_ = 0, look_total_ = 0;
     float look_from_yaw_ = 0, look_from_pitch_ = 0;
+    bool camera_held_ = false, restore_view_ = false;
+    float held_yaw_ = 0, held_pitch_ = 0;
     void update_movers(float dt);
     void mover_state(Mover& m, const std::string& state);
     bool fading_ = false, fade_in_ = true;
@@ -433,6 +447,8 @@ private:
         std::vector<glm::vec3> route;
         size_t next = 0;
         bool moving = false;
+        int follow = -1;              // object id (kPlayerId: the player), -1 none
+        float follow_distance = 10;
         float yaw_min = -180, yaw_max = 180, from_min = -180, from_max = 180, limits_t = 0, limits_len = 0;
         // CVehicleCar's parts, objects of their own at the model's dummies (its HIDDEN_
         // stand-ins are not drawn): wheels, the gun, the driver and the shooter.

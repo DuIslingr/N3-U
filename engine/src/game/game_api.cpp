@@ -425,6 +425,40 @@ int api_heat_haze_stop(lua_State* L) {   // PostEffect_HeatHazeStop(ms)
     ctx(L).heat_haze(false, float(lua_tointeger(L, 1)));
     return 0;
 }
+// CameraLookToWaypoint(wp, ms, nowait): the camera alone turns to a waypoint, the script
+// waiting meanwhile unless `nowait`; CameraSwitchToPlayer() gives back the player's own
+// view, ResetPlayerCamera() hands them the view as it is.
+int api_camera_look_to_waypoint(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1)));
+    const int ms = int(lua_tointeger(L, 2));
+    if (!wp) return 0;
+    c.camera_look_to(wp->position, float(ms) / 1000.0f);
+    if (lua_toboolean(L, 3)) return 0;
+    lua_pushinteger(L, 2);
+    lua_pushinteger(L, ms);
+    return lua_yield(L, 2);
+}
+template <bool KeepView>
+int api_camera_to_player(lua_State* L) {
+    ctx(L).camera_to_player(KeepView);
+    return 0;
+}
+// SetControlSensitivity(k): the view turns k times as fast (until the level ends).
+int api_set_control_sensitivity(lua_State* L) {
+    ctx(L).look_sensitivity = std::max(float(lua_tonumber(L, 1)), 0.0f);
+    return 0;
+}
+// Npc_SetCustomIdleState(npc, state): the state the NPC idles in (nil: its usual one).
+int api_npc_custom_idle(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.combat) c.combat->set_idle_state(int(lua_tointeger(L, 1)), str_arg(L, 2));
+    return 0;
+}
+int api_vehicle_follow(lua_State* L) {   // Vehicle_FollowObject(vehicle, target, metres)
+    ctx(L).vehicle_follow(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), float(lua_tonumber(L, 3)));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1165,6 +1199,12 @@ const Entry kImplemented[] = {
     {"PlayCameraAnim", api_play_camera_anim},
     {"PlayerLookTo", api_player_look_to},
     {"PlayerLookToDirection", api_player_look_to_direction},
+    {"CameraLookToWaypoint", api_camera_look_to_waypoint},
+    {"CameraSwitchToPlayer", api_camera_to_player<false>},
+    {"ResetPlayerCamera", api_camera_to_player<true>},
+    {"SetControlSensitivity", api_set_control_sensitivity},
+    {"Npc_SetCustomIdleState", api_npc_custom_idle},
+    {"Vehicle_FollowObject", api_vehicle_follow},
     {"AddObjective", api_add_objective},
     {"GameObject_Material_SetTechnique", api_material_technique},
     {"GameObject_Material_SetParameterFloat", api_material_float},

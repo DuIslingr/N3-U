@@ -94,7 +94,16 @@ bool LevelLogic::vehicle_move_on_path(int id, int waypoint) {
 }
 
 void LevelLogic::vehicle_stop(int id) {
-    if (Vehicle* v = vehicle(id)) v->moving = false, v->speed = 0;
+    if (Vehicle* v = vehicle(id)) v->moving = false, v->speed = 0, v->follow = -1;
+}
+
+bool LevelLogic::vehicle_follow(int id, int target, float metres) {
+    Vehicle* v = vehicle(id);
+    if (!v || (target != kPlayerId && !object(target))) return false;
+    v->follow = target, v->follow_distance = metres;
+    v->route.clear(), v->next = 0;
+    v->moving = true;
+    return true;
 }
 
 void LevelLogic::vehicle_set(int id, float max_speed_kmh, float steer_max, float steer_speed) {
@@ -197,10 +206,19 @@ void LevelLogic::update_vehicles(float dt) {
     for (auto& [id, v] : vehicles_) {
         if (v.limits_len > 0) v.limits_t += dt;
         if (!v.moving) continue;
+        // Following: the leader is the route (the player when they are in it), stopping
+        // short of it by the distance.
+        if (v.follow != -1) {
+            const bool player_leads = v.follow == kPlayerId || v.follow == player_mech_ || v.follow == player_vehicle_;
+            const Object* lead = player_leads ? nullptr : object(v.follow);
+            v.route.assign(1, player_leads ? player.center : lead ? lead->position : v.position);
+            v.next = 0;
+        }
         // Brake for the end of the route, else up to the maximum speed.
         float left = 0;
         glm::vec3 at = v.position;
         for (size_t k = v.next; k < v.route.size(); ++k) left += glm::distance(glm::vec2(at), glm::vec2(v.route[k])), at = v.route[k];
+        if (v.follow != -1) left -= v.follow_distance;
         const float accel = 6.0f, brake = 8.0f;
         if (v.speed * v.speed * 0.5f / brake >= left) v.speed = std::max(v.speed - brake * dt, 0.0f);
         else v.speed = std::min(v.speed + accel * dt, v.max_speed);
@@ -217,7 +235,8 @@ void LevelLogic::update_vehicles(float dt) {
         v.position += glm::vec3(-std::sin(y), std::cos(y), 0) * v.speed * dt;
         // Waypoint reached (or passed alongside): on to the next.
         const float d = glm::length(glm::vec2(target - v.position));
-        if (d < 4.0f || (d < 12.0f && glm::dot(glm::vec2(target - v.position), glm::vec2(target - old)) < 0)) {
+        if (v.follow != -1) {
+        } else if (d < 4.0f || (d < 12.0f && glm::dot(glm::vec2(target - v.position), glm::vec2(target - old)) < 0)) {
             if (++v.next >= v.route.size()) v.moving = false, v.speed = 0, v.next = v.route.size() - 1;
         }
         // On the ground.

@@ -903,6 +903,7 @@ int main(int argc, char** argv) {
                         player.yaw += o.look.x;
                     }
                     if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
+                    if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) player.yaw = ly, player.pitch = lp;   // PlayerLookTo
                     if (opt.scripts) player.eye_height = logic.in_mech() ? 7.4f : 0.75f;
                     glm::vec3 seat_eye;
                     float seat_min = 0, seat_max = 0;
@@ -965,7 +966,7 @@ int main(int argc, char** argv) {
                         logic.audio->render(rendered.data() + at, frames);
                     }
                     Camera eye = cam;
-                    if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw;
+                    if (!opt.have_eye && opt.focus.empty()) eye.position = player.eye(), eye.yaw = player.yaw, eye.pitch = player.pitch;
                     const FrameParams rf = frame(eye, opt.width, opt.height);
                     scene.cull(rf.camera, rf.proj * rf.view, opt.scripts ? logic.cinematic_zone() : ZoneSystem::kNone);
                 }
@@ -1388,7 +1389,7 @@ int main(int argc, char** argv) {
                             combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
                         if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || !logic.controls.rotate))) {
                             // Slower while aiming (zoomed in); the Sensitivity and Invert Y-Axis settings.
-                            const float k = 0.12f * cam.fov / kFov * settings.sensitivity;
+                            const float k = 0.12f * cam.fov / kFov * settings.sensitivity * logic.look_sensitivity;
                             cam.yaw -= e.motion.xrel * k;
                             cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k * (settings.invert_y ? -1.0f : 1.0f), -89.0f, 89.0f);
                         }
@@ -1497,7 +1498,7 @@ int main(int argc, char** argv) {
                             if (touch_mode && settings.auto_leveling && touch_in.look == glm::vec2(0) && (in.forward != 0 || in.right != 0))
                                 cam.pitch -= std::clamp(cam.pitch, -40.0f * dt, 40.0f * dt);
                             if (lc.rotate) {
-                                const float k = cam.fov / kFov * settings.sensitivity;
+                                const float k = cam.fov / kFov * settings.sensitivity * logic.look_sensitivity;
                                 cam.yaw += touch_in.look.x * k;
                                 cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k * (settings.invert_y ? -1.0f : 1.0f), -89.0f, 89.0f);
                             }
