@@ -699,6 +699,16 @@ int main(int argc, char** argv) {
                     hud.start();
                     flares.start();
                 }
+                if (logic.respawn_pending) {   // the player died: the level again, at the checkpoint
+                    std::printf("[script] respawning at checkpoint %d\n", logic.checkpoint());
+                    show_loading(opt.level, true);
+                    scene.load_level(opt.level, logic.checkpoint_section());
+                    loading.active = false;
+                    logic.respawn_at_checkpoint();
+                    viewmodel.start();
+                    hud.start();
+                    flares.start();
+                }
                 // EndLevel: a moment on the faded screen, then the next campaign level (the
                 // same one again after a failure). The arsenal carries over.
                 static float ended_for = 0;

@@ -99,13 +99,30 @@ public:
     bool push_goal(int actor, const NpcGoal& g);
     bool goal_pending(int actor, int goal_id) const;
     void cancel_goals(int actor);
+    // Checkpoints: what the game saves of combat (PlayerComponent's CWeaponManager and
+    // CPowerManager, the actors' CActorComponent/CNPCComponent): the weapons the player has,
+    // their ammunition and the one in hand, grenades and powers; which actors are dead, and
+    // where the others stand (they come back at full health).
+    struct Saved {
+        std::vector<uint8_t> owned;
+        std::vector<int> clip, reserve;
+        int current = 0, grenades = 0, power_index = 0;
+        std::vector<std::string> powers;
+        struct Actor {
+            int id = 0;
+            bool dead = false;
+            glm::vec3 pos{0};
+            float yaw = 0;
+        };
+        std::vector<Actor> actors;
+    };
+    Saved save() const;
+    void restore(const Saved& s);   // after start() on the freshly loaded level
+    bool is_actor(int id) const;
     // A death screen offers Retry (respawn()); without one the player is back after 3 s.
     bool death_screen = false;
     void respawn();
     float dead_time() const { return dead_timer_; }
-    void ammo_refill_on_respawn() {   // the checkpoint's ammunition is not saved here: refill clips
-        for (size_t i = 0; i < weapons_.size(); ++i) clip_[i] = weapons_[i].clip, reserve_[i] = std::max(reserve_[i], weapons_[i].clip * 2);
-    }
     // Put an actor at a position (TeleportToWaypoint); false if `id` is not an actor.
     bool place_actor(int id, const glm::vec3& position);
     // A spawn manager with this id that has not ended (SpawnEnd_<id> is still to come).
@@ -317,6 +334,7 @@ private:
     bool fights(const Target& t, int enemy) const;   // a valid enemy for t
     int choose_enemy(const Target& t) const;
     Target* find_target(int id);
+    const Target* find_target(int id) const { return const_cast<Combat*>(this)->find_target(id); }
     bool line_clear(const glm::vec3& a, const glm::vec3& b) const;
     void notice(Target& t);
     void apply_damage(Target& t, float amount, bool by_player);

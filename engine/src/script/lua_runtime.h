@@ -45,6 +45,9 @@ public:
     void send_event(const std::string& event, int id = -1);
 
     void stop_all();
+    // A fresh state (CLuaScriptManager::ClearGlobals): no threads, no globals; functions
+    // must be registered and chunks loaded again.
+    void reset();
     size_t thread_count() const;
 
     lua_State* state() const { return L_; }
@@ -66,6 +69,7 @@ private:
     };
     void resume(Thread& t);
     void finish(Thread& t);
+    void open();
 
     lua_State* L_ = nullptr;
     std::vector<Thread> threads_;

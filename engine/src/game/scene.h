@@ -74,7 +74,7 @@ public:
         std::string name;
         float ms = 0, length = 0;
         uint32_t serial = 0;
-        bool reverse = false;
+        bool reverse = false, loop = false;
     };
     bool clip_state(size_t object, ClipState& out) const;
     // Pose the object's current clip at a time (seconds) and hold it there (speed 0).

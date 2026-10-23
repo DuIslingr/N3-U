@@ -255,10 +255,16 @@ bool LevelLogic::set_post_var(const std::string& effect, const std::string& var,
     return true;
 }
 
-void LevelLogic::start(bool keep_player) {
+void LevelLogic::start(StartMode mode) {
+    const bool keep_player = mode == StartMode::Section;
+    respawn_pending = false;
     runtime_.stop_all();
+    if (mode != StartMode::Section) {   // the level's scripts start afresh (CLuaScriptManager::ClearGlobals)
+        runtime_.reset();
+        register_game_api(*this);
+    }
     movers_.clear(), waypoint_next_.clear(), path_first_.clear(), vehicles_.clear();
-    if (!keep_player) checkpoint_ = -1;
+    if (mode == StartMode::New) checkpoint_ = -1, saved_.reset();
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
     camera_held_ = restore_view_ = false;
     tutorial_ = TutorialStep{};
@@ -321,10 +327,187 @@ void LevelLogic::start(bool keep_player) {
     scene.zones().force_zone(ZoneSystem::kNone);
     // The player starts at the level's start spawn point, whose script plays the intro and
     // then moves them on (Scene's start position skips ahead for runs without scripts).
-    if (!keep_player && start_spawn_id_ >= 0)
+    if (mode == StartMode::New && start_spawn_id_ >= 0)
         if (const Object* sp = object(start_spawn_id_)) teleport_player(*sp);
     if (properties_id_ >= 0) start_script("Obj" + std::to_string(properties_id_) + "_OnEnter", properties_id_);
-    if (start_spawn_id_ >= 0 && !keep_player) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
+    if (start_spawn_id_ >= 0 && mode == StartMode::New) start_script("Obj" + std::to_string(start_spawn_id_) + "_Default", start_spawn_id_);
+}
+
+// --- checkpoints ----------------------------------------------------------------------
+
+struct LevelLogic::Checkpoint {
+    int spawn = -1;
+    uint32_t section = 1;   // CLevel's loaded sections
+    struct SavedObject {
+        bool enabled = true, visible = true, dead = false, interact_enabled = true;
+        float health = 0;
+        std::string state;
+        glm::vec3 position{0};
+        float yaw = 0;
+        std::vector<uint8_t> effects;   // running (CEffectsComponent::SaveSave)
+        bool has_clip = false;          // CAnimationComponent::SaveSave: the clip it plays
+        Scene::ClipState clip;
+    };
+    std::unordered_map<int, SavedObject> objects;
+    std::vector<int> trigger_runs;      // CTriggerComponent::SaveSave
+    struct SavedDoor {
+        Door::State state = Door::State::Closed;
+        bool locked = false, keep_unlocked = false, forced_open = false;   // CDoorAIComponent::SaveSave
+    };
+    std::vector<SavedDoor> doors;
+    std::vector<std::pair<int, glm::vec3>> movers;   // where moving objects stand
+    struct SavedVehicle {
+        int id = 0;
+        glm::vec3 position{0};
+        float yaw = 0;
+    };
+    std::vector<SavedVehicle> vehicles;
+    Objectives objectives;              // CPlayerBaseComponent, CHud
+    std::vector<ObjectiveMarker> markers;
+    PathMarker path_marker;
+    glm::vec4 fog_color{0};             // CLevelFog::Save
+    float fog_start = 0, fog_end = 0, fog_density = 0;
+    bool fog_locked = false;
+    PostParams post;                    // PostEffects::Save
+    HeatHaze heat;
+    std::string grading;                // the colour grading
+    bool grading_on = false;
+    int mech = -1, vehicle = -1, gun = -1;   // PlayerComponent::SaveSave: what the player is in
+    Combat::Saved combat;
+};
+
+void LevelLogic::save_checkpoint(int spawn_id) {
+    if (restoring_) return;
+    if (spawn_id <= 0) {   // SaveGame(): the first enabled spawn point in the player's zone
+        const int zone = scene.zones().current();
+        size_t best = std::numeric_limits<size_t>::max();
+        for (const auto& [id, o] : objects_)
+            if (o.type == "spawn_point" && o.enabled && o.index < best && scene.zones().object_zone(o.index) == zone)
+                best = o.index, spawn_id = id;
+    }
+    if (spawn_id <= 0 || !object(spawn_id)) {
+        log("SaveGame: no spawn point " + std::to_string(spawn_id));
+        return;
+    }
+    auto cp = std::make_shared<Checkpoint>();
+    cp->spawn = spawn_id;
+    cp->section = scene.section();
+    for (const auto& [id, o] : objects_) {
+        Checkpoint::SavedObject so;
+        so.enabled = o.enabled, so.visible = o.visible, so.dead = o.dead, so.interact_enabled = o.interact_enabled;
+        so.health = o.health, so.state = o.state, so.position = o.position, so.yaw = o.yaw;
+        for (const Object::EffectSlot& e : o.effects) so.effects.push_back(e.handle >= 0);
+        const bool actor = combat && combat->is_actor(id);
+        if (o.index != std::numeric_limits<size_t>::max() && o.door < 0 && !actor && !mover(id) && !vehicles_.count(id))
+            so.has_clip = scene.clip_state(o.index, so.clip);
+        cp->objects[id] = std::move(so);
+    }
+    for (const Trigger& t : triggers_) cp->trigger_runs.push_back(t.runs_left);
+    for (const Door& d : doors_) cp->doors.push_back({d.state, d.locked, d.keep_unlocked, d.forced_open});
+    for (const Mover& m : movers_) cp->movers.emplace_back(m.id, m.position);
+    for (const auto& [id, v] : vehicles_) cp->vehicles.push_back({id, v.position, v.yaw});
+    cp->objectives = objectives, cp->markers = objective_markers, cp->path_marker = path_marker;
+    cp->fog_color = scene.fog_color, cp->fog_start = scene.fog_start, cp->fog_end = scene.fog_end, cp->fog_density = scene.fog_density;
+    cp->fog_locked = fog_locked;
+    cp->post = post, cp->heat = heat_;
+    cp->grading = grading_.current, cp->grading_on = grading_.on;
+    cp->mech = player_mech_, cp->vehicle = player_vehicle_, cp->gun = player_gun_;
+    if (combat) cp->combat = combat->save();
+    saved_ = std::move(cp);
+    checkpoint_ = spawn_id;
+    log("checkpoint " + std::to_string(spawn_id));
+    if (audio) audio->play("sfx_save_progress");
+    message("FPS_GAME_SAVED", 2.5f);
+}
+
+uint32_t LevelLogic::checkpoint_section() const { return saved_ ? saved_->section : 1; }
+
+void LevelLogic::respawn_at_checkpoint() {
+    respawn_pending = false;
+    const std::shared_ptr<const Checkpoint> cp = saved_;
+    if (!cp) {
+        start(StartMode::New);
+        if (combat) combat->start(true);
+        return;
+    }
+    // CLevel::RestartLevel: the scripts afresh and the level properties' OnEnter started;
+    // then (CLevel::RespawnInit) the objects as loaded, with the checkpoint put back.
+    start(StartMode::Respawn);
+    if (combat) combat->start(true);
+    restoring_ = true;
+    runtime_.update(0);
+    restoring_ = false;
+    restore_checkpoint(*cp);
+}
+
+void LevelLogic::restore_checkpoint(const Checkpoint& cp) {
+    for (const auto& [id, so] : cp.objects) {
+        Object* o = object(id);
+        if (!o) continue;
+        o->health = so.health, o->dead = so.dead, o->state = so.state, o->interact_enabled = so.interact_enabled;
+        const bool moved = glm::distance(o->position, so.position) > 1e-3f || std::abs(o->yaw - so.yaw) > 1e-3f;
+        o->position = so.position, o->yaw = so.yaw;
+        if (moved && o->index != std::numeric_limits<size_t>::max() && o->door < 0 && !mover(id) && !vehicles_.count(id) &&
+            !(combat && combat->is_actor(id)))
+            scene.set_object_pose(o->index, o->position, o->yaw);
+        enable(*o, so.enabled && !so.dead);   // CHealthComponent::SaveLoad: the dead are disabled
+        if (so.enabled && o->visible != so.visible) show(*o, so.visible);
+        for (size_t k = 0; k < o->effects.size() && k < so.effects.size(); ++k) {
+            if (so.effects[k] && o->effects[k].handle < 0 && o->enabled) start_effect(*o, int(k));
+            if (!so.effects[k] && o->effects[k].handle >= 0) stop_effect(*o, int(k));
+        }
+        // CAnimationComponent::SaveLoad plays the clip again; one that had run its course
+        // is held at its end rather than played over.
+        if (so.has_clip && o->index != std::numeric_limits<size_t>::max()) {
+            Scene::ClipState now;
+            if (!scene.clip_state(o->index, now) || now.name != so.clip.name || now.reverse != so.clip.reverse) {
+                scene.play_clip(o->index, so.clip.name, so.clip.loop, so.clip.reverse);
+                if (!so.clip.loop && so.clip.ms >= so.clip.length - 1.0f) scene.set_clip_time(o->index, so.clip.length / 1000.0f);
+            }
+        }
+    }
+    for (size_t i = 0; i < triggers_.size() && i < cp.trigger_runs.size(); ++i) triggers_[i].runs_left = cp.trigger_runs[i], triggers_[i].inside = false;
+    for (size_t i = 0; i < doors_.size() && i < cp.doors.size(); ++i) {
+        const Checkpoint::SavedDoor& sd = cp.doors[i];
+        doors_[i].locked = sd.locked, doors_[i].keep_unlocked = sd.keep_unlocked, doors_[i].forced_open = sd.forced_open;
+        if (sd.forced_open && (sd.state == Door::State::Open || sd.state == Door::State::Opening))
+            for (auto& [id, o] : objects_)
+                if (o.door == int(i)) set_door(o, true);
+    }
+    for (const auto& [id, at] : cp.movers)
+        if (Mover* m = mover(id); m && glm::distance(m->position, at) > 1e-3f) m->position = at, scene.move_object(m->index, at);
+    for (const Checkpoint::SavedVehicle& sv : cp.vehicles)
+        if (Vehicle* v = vehicle(sv.id)) {
+            v->position = sv.position, v->yaw = sv.yaw;
+            scene.set_object_pose(v->index, v->position, v->yaw);
+            if (Object* o = object(sv.id)) o->position = sv.position, o->yaw = sv.yaw;
+            place_vehicle_parts(*v);
+        }
+    objectives = cp.objectives, objectives.show = 0, objectives.alpha = 0;
+    objective_markers = cp.markers, path_marker = cp.path_marker;
+    scene.fog_color = cp.fog_color, scene.fog_start = cp.fog_start, scene.fog_end = cp.fog_end, scene.fog_density = cp.fog_density;
+    for (FogFade& f : fog_) f.active = false;
+    fog_locked = cp.fog_locked;
+    const uint32_t version = post.grading_version;
+    post = cp.post, post.grading_version = version + 1, post_fades_.clear();
+    heat_ = cp.heat;
+    grading_ = Grading{}, grading_.current = cp.grading, grading_.on = cp.grading_on, grading_.dirty = true;
+    if (combat) combat->restore(cp.combat);
+    // PlayerComponent::SpawnPlayer at the checkpoint, in what it was in; then the spawn
+    // point's script (CSpawnPointObject::SpawnedHere).
+    if (Object* sp = object(cp.spawn)) teleport_player(*sp);
+    if (Object* m = cp.mech >= 0 ? object(cp.mech) : nullptr) {
+        m->position = player.center - glm::vec3(0, 0, player.radius.z), m->yaw = player.yaw;
+        enter_mech(cp.mech);
+    } else if (cp.vehicle >= 0) {
+        enter_vehicle(cp.vehicle);
+    } else if (cp.gun >= 0) {
+        man_gun(cp.gun);
+    }
+    checkpoint_ = cp.spawn;
+    start_script("Obj" + std::to_string(cp.spawn) + "_Default", cp.spawn);
+    start_fade(true, 1000, glm::vec3(0));
+    log("respawned at checkpoint " + std::to_string(cp.spawn));
 }
 
 void LevelLogic::start_script(const std::string& function, int owner) {
@@ -828,26 +1011,6 @@ void LevelLogic::update_tutorial(float dt) {
 void LevelLogic::hide_message(const std::string& id) {   // "" hides them all (HideMessage)
     for (Message& m : messages_)
         if (id.empty() || m.id == id) m.seconds_left = 0;
-}
-
-void LevelLogic::save_checkpoint(int spawn_id) {
-    if (spawn_id <= 0 || !object(spawn_id)) {
-        log("SaveGame: no spawn point " + std::to_string(spawn_id));
-        return;
-    }
-    checkpoint_ = spawn_id;
-    log("checkpoint " + std::to_string(spawn_id));
-    if (audio) audio->play("sfx_save_progress");
-    message("FPS_GAME_SAVED", 2.5f);
-}
-
-void LevelLogic::respawn_player() {
-    const int id = checkpoint_ >= 0 ? checkpoint_ : start_spawn_id_;
-    if (Object* sp = object(id)) {
-        teleport_player(*sp);
-        start_script("Obj" + std::to_string(id) + "_Default", id);
-    }
-    start_fade(true, 1000, glm::vec3(0));
 }
 
 void LevelLogic::teleport_object(Object& o, const glm::vec3& position) {

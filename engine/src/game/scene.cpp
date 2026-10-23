@@ -957,6 +957,7 @@ bool Scene::clip_state(size_t object, ClipState& out) const {
     else out.ms = std::min(out.ms, out.length);
     out.serial = a->clip_serial;
     out.reverse = a->reverse;
+    out.loop = a->loop;
     return true;
 }
 

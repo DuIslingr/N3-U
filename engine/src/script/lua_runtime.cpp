@@ -29,20 +29,30 @@ int lua_print(lua_State* L) {
 }  // namespace
 
 ScriptRuntime::ScriptRuntime() {
+    threads_.resize(kMaxThreads);
+    open();
+}
+
+ScriptRuntime::~ScriptRuntime() { lua_close(L_); }
+
+void ScriptRuntime::open() {
     L_ = luaL_newstate();
     luaL_openlibs(L_);
-    threads_.resize(kMaxThreads);
     lua_pushlightuserdata(L_, this);
     lua_pushcclosure(L_, lua_print, 1);
     lua_setglobal(L_, "print");
 }
 
-ScriptRuntime::~ScriptRuntime() { lua_close(L_); }
-
 void ScriptRuntime::register_function(const std::string& name, Function fn, void* context) {
     lua_pushlightuserdata(L_, context);
     lua_pushcclosure(L_, fn, 1);
     lua_setglobal(L_, name.c_str());
+}
+
+void ScriptRuntime::reset() {
+    stop_all();
+    lua_close(L_);
+    open();
 }
 
 bool ScriptRuntime::load(const std::string& source, const std::string& chunk_name) {

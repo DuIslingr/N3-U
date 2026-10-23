@@ -44,7 +44,7 @@ public:
     // Load the scripts and objects of the scene's current level and run its start
     // scripts. Call after Scene::load_level and spawning the player. `keep_player`:
     // a section reload, where the player stays put and the start spawn's script does not run.
-    void start(bool keep_player = false);
+    void start(bool keep_player = false) { start(keep_player ? StartMode::Section : StartMode::New); }
     // Advance scripts, triggers and doors by `dt` seconds.
     void update(float dt);
     // The player pressed "use": interact with the nearest usable object, if any.
@@ -298,11 +298,23 @@ public:
     // then sends "TutorialStepEnded".
     void start_tutorial_step(const std::string& kind, float ms);
     void hide_message(const std::string& id);
-    // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame): the game saves and
-    // reloads there when the player dies. Here the world stays as it is: the player comes
-    // back at the checkpoint's spawn point, whose Obj<id>_Default script runs again.
+    // Checkpoints (SaveGame(spawn point) -> PlayerComponent::SaveGame -> Application::
+    // SaveCheckPoint): the level's state is saved (CLevel::Save: each object's
+    // CGameObject::SaveSave — enabled, dead, where it stands if it moves, its trigger's runs,
+    // door, effects and animation — the player's weapons and objectives, fog, post effects,
+    // the loaded sections). When the player dies the level is reset and that state put back
+    // (CLevel::RestartLevel, GS_Respawn -> CLevel::RespawnInit): the scripts start afresh
+    // (globals cleared, the level properties' OnEnter runs again), objects return to their
+    // checkpoint state, and the player spawns at the checkpoint, whose Obj<id>_Default runs.
+    // Without a checkpoint the level starts over.
     void save_checkpoint(int spawn_id);
-    void respawn_player();
+    // The player died and goes back: sets respawn_pending for the caller, who reloads the
+    // scene with checkpoint_section() and calls respawn_at_checkpoint() (no checkpoint:
+    // reloads the level).
+    void respawn_player() { respawn_pending = true; }
+    bool respawn_pending = false;
+    uint32_t checkpoint_section() const;
+    void respawn_at_checkpoint();
     int checkpoint() const { return checkpoint_; }
     // TeleportToWaypoint: move an object (actors through combat) to a position.
     void teleport_object(Object& o, const glm::vec3& position);
@@ -328,6 +340,12 @@ public:
     std::unordered_set<std::string> warned_;   // unimplemented API functions already reported
 
 private:
+    enum class StartMode { New, Section, Respawn };
+    void start(StartMode mode);
+    struct Checkpoint;
+    std::shared_ptr<const Checkpoint> saved_;
+    bool restoring_ = false;   // between the scripts' restart and the checkpoint put back
+    void restore_checkpoint(const Checkpoint& cp);
     void load_objects();
     void read_effects(Object& obj, const LevelObject& lo);
     void update_triggers();

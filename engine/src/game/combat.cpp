@@ -435,9 +435,49 @@ void Combat::respawn() {
     player_dead = false;
     player_health = player_max_health;
     protect_ = 3.0f;
-    ammo_refill_on_respawn();
+    dead_timer_ = 0;
     logic_.respawn_player();
-    log("player respawned at " + (logic_.checkpoint() >= 0 ? "checkpoint " + std::to_string(logic_.checkpoint()) : std::string("the start")));
+    log("player respawns at " + (logic_.checkpoint() >= 0 ? "checkpoint " + std::to_string(logic_.checkpoint()) : std::string("the start")));
+}
+
+Combat::Saved Combat::save() const {
+    Saved s;
+    s.owned = owned_, s.clip = clip_, s.reserve = reserve_;
+    // In a vehicle, at a gun or in the mech: the player's own weapon is the one kept.
+    s.current = special_weapon() ? before_special_ : current_;
+    s.grenades = grenades;
+    s.powers = powers_, s.power_index = power_index_;
+    for (const Target& t : targets_) {
+        if (!t.actor || t.spawned) continue;
+        const LevelLogic::Object* o = logic_.object(t.id);
+        s.actors.push_back({t.id, o && o->dead, t.pos, t.yaw});
+    }
+    return s;
+}
+
+void Combat::restore(const Saved& s) {
+    if (s.owned.size() == owned_.size()) owned_ = s.owned, clip_ = s.clip, reserve_ = s.reserve;
+    if (s.current >= 0 && size_t(s.current) < owned_.size()) current_ = s.current;
+    reload_left_ = 0, fire_cooldown_ = 0, spread_ = 0;
+    grenades = s.grenades;
+    if (!s.powers.empty()) powers_ = s.powers, power_index_ = std::clamp(s.power_index, 0, int(powers_.size()) - 1);
+    power_cooldown_ = 0;
+    for (const Saved::Actor& a : s.actors) {
+        Target* t = find_target(a.id);
+        if (!t || !t->actor) continue;
+        if (a.dead) {   // CNPCComponent::SaveLoad: gone, not a corpse
+            t->state = Target::State::Dead;
+            if (LevelLogic::Object* o = logic_.object(a.id)) o->dead = true, o->health = 0, logic_.show(*o, false);
+            continue;
+        }
+        t->yaw = a.yaw;
+        place_actor(a.id, a.pos);
+    }
+}
+
+bool Combat::is_actor(int id) const {
+    const Target* t = find_target(id);
+    return t && t->actor;
 }
 
 void Combat::campaign_loadout(const std::string& level) {
