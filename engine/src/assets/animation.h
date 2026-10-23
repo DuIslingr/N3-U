@@ -30,11 +30,13 @@ struct AnimTrack {
 // Animated values other than node transforms: material parameters (channel 114:
 // target material id, parameter name, mask of the components written), light
 // colours (channel 19: target light id, RGB bytes) and node visibility (channel 24:
-// target node id, 0/1 held until the next key).
+// target node id, 0/1 held until the next key), camera fields of view (14) and morph
+// target weights (18: target controller id, the low byte at +8 = the target's index).
 struct ValueTrack {
     bool light = false;
     bool visibility = false;
     bool camera_fov = false;          // a camera's field of view (radians); target "<camera>-camera"
+    bool morph = false;               // a morph target's weight (channel 18): target "<mesh>-morpher", first = target
     std::string target, param;
     int first = 0;                    // first component written (lowest bit of the channel's mask)
     int stride = 0;                   // components per key

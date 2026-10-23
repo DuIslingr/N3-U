@@ -230,6 +230,24 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
             }
             for (const ValueTrack& vt : lib->values) {
                 if (vt.light) continue;   // bound when the light is placed below
+                if (vt.morph) {
+                    for (size_t mi = 0; mi < m.cpu.meshes.size(); ++mi) {
+                        const Mesh& mesh = m.cpu.meshes[mi];
+                        if (mesh.morph_id != vt.target || size_t(vt.first) >= mesh.morph_targets.size()) continue;
+                        auto it = std::find_if(anim->morphs.begin(), anim->morphs.end(), [&](const auto& mo) { return mo.mesh == int(mi); });
+                        if (it == anim->morphs.end()) {
+                            AnimatedInstance::Morph mo;
+                            mo.mesh = int(mi);
+                            mo.weights.assign(mesh.morph_targets.size(), 0.0f);
+                            anim->morphs.push_back(std::move(mo));
+                            it = anim->morphs.end() - 1;
+                        }
+                        AnimatedInstance::ValueBinding vb{&vt, -1, vt.first, -1, 1};
+                        vb.morph = int(it - anim->morphs.begin());
+                        anim->values.push_back(vb);
+                    }
+                    continue;
+                }
                 if (vt.camera_fov) {      // "Camera003-camera" -> the node Camera003 holding it
                     const std::string node = vt.target.size() > 7 && vt.target.compare(vt.target.size() - 7, 7, "-camera") == 0
                                                  ? vt.target.substr(0, vt.target.size() - 7) : vt.target;
@@ -249,6 +267,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
                     anim->values.push_back({&vt, int(mi), int(anim->overrides[mi].size()) - 1, -1, 1});
                 }
             }
+            if (!anim->morphs.empty()) anim->own_gpu = renderer_.instance_model(m.cpu, *m.gpu);
             // Offset each object into its loop so identical enemies don't move in lockstep.
             anim->time = float((p->transform.id * 2654435761u) % 10007u) / 1000.0f;
         }
@@ -342,7 +361,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
             for (size_t pi = 0; pi < m.gpu->meshes[mesh].size(); ++pi) {
                 const GpuModel::Range& range = m.gpu->meshes[mesh][pi];
                 DrawItem d;
-                d.model = m.gpu;
+                d.model = anim && anim->own_gpu ? anim->own_gpu : m.gpu;
                 d.range = range;
                 d.world = world;
                 if (range.material >= 0) {
@@ -559,6 +578,35 @@ void Scene::select_lods(LodInstance& li, const glm::vec3& camera) {
     }
 }
 
+// CMorphingMesh::morph: the base weighted 1 - sum of the weights (normalized; 1 for
+// relative morphs), plus each target by its weight; normals the same way.
+void Scene::blend_morph(AnimatedInstance& a, const AnimatedInstance::Morph& mo) {
+    const Mesh& mesh = a.model->cpu.meshes[size_t(mo.mesh)];
+    float base = 1;
+    if (!mesh.morph_relative)
+        for (float w : mo.weights) base -= w;
+    std::vector<Vertex> out;
+    for (size_t p = 0; p < mesh.primitives.size(); ++p) {
+        const auto& src = mesh.primitives[p].vertices;
+        out = src;
+        for (size_t v = 0; v < out.size(); ++v) out[v].position *= base, out[v].normal *= base;
+        for (size_t t = 0; t < mesh.morph_targets.size(); ++t) {
+            const float w = mo.weights[t];
+            if (w == 0) continue;
+            const MorphTarget& mt = mesh.morph_targets[t];
+            const size_t first = mesh.primitives[p].first_vertex;
+            const bool own = first + src.size() <= mt.positions.size();
+            for (size_t v = 0; v < out.size(); ++v) {   // a target that did not load stays at the base
+                out[v].position += w * (own ? mt.positions[first + v] : src[v].position);
+                out[v].normal += w * (own ? mt.normals[first + v] : src[v].normal);
+            }
+        }
+        for (Vertex& v : out)
+            if (glm::dot(v.normal, v.normal) > 1e-12f) v.normal = glm::normalize(v.normal);
+        renderer_.update_vertices(a.own_gpu, a.model->gpu->meshes[size_t(mo.mesh)][p].vertex_offset, out.data(), out.size());
+    }
+}
+
 void Scene::pose(AnimatedInstance& a) {
     const LoadedModel& m = *a.model;
     float t = 0;
@@ -583,7 +631,9 @@ void Scene::pose(AnimatedInstance& a) {
     for (const auto& vb : a.values) {
         if (vb.track->stride > 16) continue;
         sample_value(*vb.track, t, v);
-        if (vb.camera >= 0) {
+        if (vb.morph >= 0) {
+            a.morphs[size_t(vb.morph)].weights[size_t(vb.slot)] = v[0];
+        } else if (vb.camera >= 0) {
             a.camera_fov[vb.camera] = v[0];
         } else if (vb.node >= 0) {
             a.node_hidden[size_t(vb.node)] = v[0] < 0.5f;
@@ -596,6 +646,11 @@ void Scene::pose(AnimatedInstance& a) {
             const glm::vec3 rgb(v[0], vb.track->stride > 1 ? v[1] : v[0], vb.track->stride > 2 ? v[2] : v[0]);
             lights_[size_t(vb.light)].diffuse = glm::vec4(rgb, 1) * vb.intensity;
         }
+    }
+    for (auto& mo : a.morphs) {
+        if (mo.weights == mo.applied || !a.own_gpu) continue;
+        mo.applied = mo.weights;
+        blend_morph(a, mo);
     }
     for (size_t s = 0; s < m.cpu.skins.size(); ++s) {
         const Skin& sk = m.cpu.skins[s];

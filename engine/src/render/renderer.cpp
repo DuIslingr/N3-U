@@ -292,7 +292,7 @@ Renderer::~Renderer() {
     SDL_WaitForGPUIdle(device_);
     for (auto& m : models_) {
         SDL_ReleaseGPUBuffer(device_, m->vertices);
-        SDL_ReleaseGPUBuffer(device_, m->indices);
+        if (m->owns_indices) SDL_ReleaseGPUBuffer(device_, m->indices);
     }
     for (auto& t : textures_) SDL_ReleaseGPUTexture(device_, t->texture);
     SDL_ReleaseGPUTexture(device_, white_cube_.texture);
@@ -634,6 +634,52 @@ GpuModel* Renderer::upload_model(const Model& model) {
     return models_.back().get();
 }
 
+GpuModel* Renderer::instance_model(const Model& model, const GpuModel& shared) {
+    std::vector<Vertex> vertices;
+    for (const Mesh& mesh : model.meshes)
+        for (const Primitive& p : mesh.primitives) vertices.insert(vertices.end(), p.vertices.begin(), p.vertices.end());
+    auto gm = std::make_unique<GpuModel>(shared);
+    gm->owns_indices = false;
+    gm->vertices = upload_buffer(SDL_GPU_BUFFERUSAGE_VERTEX, vertices.data(), uint32_t(vertices.size() * sizeof(Vertex)));
+    models_.push_back(std::move(gm));
+    return models_.back().get();
+}
+
+void Renderer::update_vertices(GpuModel* model, int32_t first, const Vertex* vertices, size_t count) {
+    if (!model || !count) return;
+    vertex_updates_.push_back({model->vertices, uint32_t(first) * uint32_t(sizeof(Vertex)), std::vector<Vertex>(vertices, vertices + count)});
+}
+
+void Renderer::flush_vertex_updates(SDL_GPUCommandBuffer* cmd) {
+    if (vertex_updates_.empty()) return;
+    size_t total = 0;
+    for (const auto& u : vertex_updates_) total += u.vertices.size() * sizeof(Vertex);
+    SDL_GPUTransferBufferCreateInfo ti{};
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    ti.size = uint32_t(total);
+    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(device_, &ti);
+    if (!tb) fail("vertex update");
+    auto* dst = static_cast<uint8_t*>(SDL_MapGPUTransferBuffer(device_, tb, false));
+    size_t at = 0;
+    for (const auto& u : vertex_updates_) {
+        std::memcpy(dst + at, u.vertices.data(), u.vertices.size() * sizeof(Vertex));
+        at += u.vertices.size() * sizeof(Vertex);
+    }
+    SDL_UnmapGPUTransferBuffer(device_, tb);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    at = 0;
+    for (const auto& u : vertex_updates_) {
+        const uint32_t size = uint32_t(u.vertices.size() * sizeof(Vertex));
+        SDL_GPUTransferBufferLocation src{tb, uint32_t(at)};
+        SDL_GPUBufferRegion region{u.buffer, u.offset, size};
+        SDL_UploadToGPUBuffer(copy, &src, &region, false);
+        at += size;
+    }
+    SDL_EndGPUCopyPass(copy);
+    SDL_ReleaseGPUTransferBuffer(device_, tb);   // freed once the copy has run
+    vertex_updates_.clear();
+}
+
 void Renderer::set_vsync(bool on) {
     if (!window_) return;
     SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
@@ -688,6 +734,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     ensure_depth(w, h);
     const Pipelines& pipes = pipelines_for(format);
     const Overlay* overlay = frame.overlay && (!frame.overlay->world.empty() || !frame.overlay->screen.empty()) ? frame.overlay : nullptr;
+    flush_vertex_updates(cmd);
     if (overlay) upload_overlay(cmd, *overlay);
     const ParticleList* particles = frame.particles && !frame.particles->vertices.empty() ? frame.particles : nullptr;
     if (particles) upload_vertices(cmd, *particles, particle_buffer_);

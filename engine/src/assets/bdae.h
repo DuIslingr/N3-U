@@ -39,14 +39,25 @@ struct Skin {
 
 struct Primitive {
     int material = -1;               // index into Model::materials
+    uint32_t first_vertex = 0;       // where `vertices` start in the geometry's vertex stream
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;   // triangle list
+};
+
+// Morph targets (glitch CMorphingMesh): whole copies of the mesh's vertices; drawn as the
+// base weighted 1 - sum(weights) (normalized) or 1 (relative) plus each target by its
+// weight, positions and normals alike. The weights come from animation (channel 18).
+struct MorphTarget {
+    std::vector<glm::vec3> positions, normals;   // the geometry's whole vertex stream (empty: did not load)
 };
 
 struct Mesh {
     std::string id;
     int skin = -1;                   // index into Model::skins, or -1 for static
     std::vector<Primitive> primitives;
+    std::string morph_id;            // the morph controller ("<mesh>-morpher") when it has targets
+    bool morph_relative = false;
+    std::vector<MorphTarget> morph_targets;
 };
 
 // A material's value for one effect parameter.

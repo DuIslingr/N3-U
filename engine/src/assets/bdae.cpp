@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "assets/bdae.h"
 
 #include <algorithm>
@@ -137,10 +138,47 @@ private:
     }
 
     void index_controllers() {
-        // Type 0 controllers are skins; type 1 are morph targets (not supported yet).
+        // Type 0 controllers are skins, type 1 morphs.
         for (uint32_t o : b.array(b.root, kControllers)) {
             if (b.u32(o) == 0) controllers[b.cstr(o + 4)] = b.ptr(o + 8);
+            else if (b.u32(o) == 1) morphs[b.cstr(o + 4)] = b.ptr(o + 8);
         }
+    }
+
+    // A morph controller's mesh: its source geometry plus the targets (SMorph: +0 source
+    // url, +4 method (0 normalized, 1 relative), +8/+0xC target geometry ids).
+    int morph_for(const std::string& id, uint32_t morph) {
+        const std::string key = id + "#morph";
+        if (auto cached = mesh_index.find(key); cached != mesh_index.end()) return cached->second;
+        int result = -1;
+        std::string source = b.cstr(morph);
+        if (!source.empty() && source[0] == '#') source.erase(0, 1);
+        auto geometry = [&](const std::string& gid) -> uint32_t {
+            for (const auto& [g, off] : geometry_offsets)
+                if (g == gid) return off;
+            return 0;
+        };
+        if (const uint32_t off = geometry(source)) {
+            Mesh mesh = load_mesh(source, off, 0);
+            mesh.morph_id = id;
+            mesh.morph_relative = b.u32(morph + 4) == 1;
+            const uint32_t stream = b.u32(off + 4);
+            for (uint32_t t : b.array(morph, {0x08, 0x0C, 4})) {
+                MorphTarget mt;
+                const uint32_t toff = geometry(b.cstr(t));
+                if (toff && b.u32(toff + 4) == stream) {   // the same vertices, moved
+                    const Mesh target = load_mesh(b.cstr(t), toff, 0, true);
+                    if (!target.primitives.empty())
+                        for (const Vertex& v : target.primitives[0].vertices) mt.positions.push_back(v.position), mt.normals.push_back(v.normal);
+                }
+                mesh.morph_targets.push_back(std::move(mt));   // one that did not load keeps its weight's slot
+            }
+            if (!mesh.primitives.empty()) {
+                result = int(model.meshes.size());
+                model.meshes.push_back(std::move(mesh));
+            }
+        }
+        return mesh_index[key] = result;
     }
 
     // Mesh for a geometry, optionally skinned by the skin struct at `skin` (0 = static).
@@ -183,7 +221,9 @@ private:
         return skin_index[skin] = index;
     }
 
-    Mesh load_mesh(const std::string& id, uint32_t o, uint32_t skin_off) {
+    // `whole_stream`: one primitive holding every vertex of the geometry's stream, in order
+    // (a morph target's positions and normals).
+    Mesh load_mesh(const std::string& id, uint32_t o, uint32_t skin_off, bool whole_stream = false) {
         Mesh mesh;
         mesh.id = id;
         uint32_t influences = 0;
@@ -222,10 +262,12 @@ private:
         for (uint32_t s : b.array(o, kSubmeshes)) {
             if (b.u32(s) != 0) continue;   // triangle lists only
             const uint8_t* slots = &b.data[s + 0x0C];
-            const uint32_t min_index = b.u32(s + 0x20), max_index = b.u32(s + 0x24), count = b.u32(s + 0x28);
-            const uint32_t ibuf = b.ptr(s + 0x2C);
+            uint32_t min_index = b.u32(s + 0x20), max_index = b.u32(s + 0x24);
+            const uint32_t count = b.u32(s + 0x28), ibuf = b.ptr(s + 0x2C);
             if (!ibuf || !count || max_index < min_index || max_index >= vcount || slots[kSlotPosition] == kNoSlot) continue;
+            if (whole_stream) min_index = 0, max_index = vcount - 1;
             Primitive prim;
+            prim.first_vertex = min_index;
             const std::string mat = b.cstr(s + 4);
             auto mi = material_index.find(mat);
             prim.material = mi == material_index.end() ? -1 : mi->second;
@@ -331,7 +373,9 @@ private:
                 m = mesh_for(url);
             } else if (type == kInstanceController) {
                 auto it = controllers.find(url);
-                if (it != controllers.end() && it->second) {
+                if (auto mo = morphs.find(url); mo != morphs.end() && mo->second) {
+                    m = morph_for(url, mo->second);
+                } else if (it != controllers.end() && it->second) {
                     std::string source = b.cstr(it->second + 0x48);
                     if (!source.empty() && source[0] == '#') source.erase(0, 1);
                     m = mesh_for(source, it->second);
@@ -353,7 +397,7 @@ private:
     std::vector<std::string> images;
     std::unordered_map<std::string, int> material_index;
     std::vector<std::pair<std::string, uint32_t>> geometry_offsets;
-    std::unordered_map<std::string, uint32_t> controllers;
+    std::unordered_map<std::string, uint32_t> controllers, morphs;
     std::unordered_map<std::string, int> mesh_index;
     std::unordered_map<uint32_t, int> skin_index;
 };

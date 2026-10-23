@@ -236,10 +236,19 @@ private:
             float intensity = 1;
             int node = -1;                   // visibility: node index
             int camera = -1;                 // field of view: the camera's node index
+            int morph = -1;                  // a morph weight: index into morphs, slot = its target
         };
         std::unordered_map<int, float> camera_fov;   // animated fields of view, by node
         std::vector<ValueBinding> values;
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
+        // Morphing meshes: their weights (animated) and those last blended into own_gpu,
+        // this object's copy of the model's vertices.
+        struct Morph {
+            int mesh = -1;
+            std::vector<float> weights, applied;
+        };
+        std::vector<Morph> morphs;
+        GpuModel* own_gpu = nullptr;
         std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)
         std::unordered_map<int, glm::vec3> node_translation;   // per node: translation set by game logic
         int root_lock = -1;                  // node whose horizontal translation is held (actors)
@@ -281,6 +290,7 @@ private:
     void compute_object_lighting();
     const AnimationLibrary* animation(const std::string& name);
     void pose(AnimatedInstance& a);
+    void blend_morph(AnimatedInstance& a, const AnimatedInstance::Morph& mo);
     void select_lods(LodInstance& li, const glm::vec3& camera);
     void build_collision();
 

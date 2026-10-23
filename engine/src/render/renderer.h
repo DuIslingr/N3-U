@@ -35,6 +35,7 @@ struct GpuModel {
         int material = -1;
     };
     std::vector<std::vector<Range>> meshes;   // per Model::meshes entry
+    bool owns_indices = true;                 // false: an object's copy sharing its model's indices
 };
 
 struct DrawItem {
@@ -185,6 +186,11 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     GpuModel* upload_model(const Model& model);
+    // An object's own copy of a model's vertices, for vertices that change (morph targets);
+    // it shares the model's indices and ranges.
+    GpuModel* instance_model(const Model& model, const GpuModel& shared);
+    // Replace vertices [first, first + count) of such a copy, before the next frame is drawn.
+    void update_vertices(GpuModel* model, int32_t first, const Vertex* vertices, size_t count);
     const GpuTexture* upload_texture(const Image& image);
     // V-Sync on: presents wait for the display; off: the lowest-latency mode there is
     // (mailbox, else immediate), the frame rate as high as it goes.
@@ -214,6 +220,13 @@ private:
         SDL_GPUGraphicsPipeline* sprites_additive = nullptr;   // screen, textured, additive (lens flares)
     };
     void upload_overlay(SDL_GPUCommandBuffer* cmd, const Overlay& o);
+    struct VertexUpdate {
+        SDL_GPUBuffer* buffer;
+        uint32_t offset;                 // bytes
+        std::vector<Vertex> vertices;
+    };
+    std::vector<VertexUpdate> vertex_updates_;
+    void flush_vertex_updates(SDL_GPUCommandBuffer* cmd);
     // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).
     bool hud_pass_ = false;   // encode_scene draws the HUD items over the target (kept), not the world
     void encode_hud(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
