@@ -746,6 +746,16 @@ int api_start_music(lua_State* L) {
     return 0;
 }
 
+// SetInteractiveMusicState(sound, state): an interactive (.vxn) sound to a state, e.g.
+// Volteron 3's reactor alarm to its "outro".
+int api_set_interactive_music_state(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    std::string name = str_arg(L, 1);
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    if (c.audio) c.audio->set_state(name, str_arg(L, 2));
+    return 0;
+}
+
 // Particle effects: StartEffect(id[, index]) / StopEffect(id[, index]); id 0 is the player.
 int api_start_effect(lua_State* L) {
     LevelLogic& g = ctx(L);
@@ -1384,6 +1394,7 @@ const Entry kImplemented[] = {
     {"LoadLevelSections", api_load_level_sections},
     {"DisablePortal", api_portal<false>},
     {"SetInvulnerable", api_set_invulnerable},
+    {"SetInteractiveMusicState", api_set_interactive_music_state},
 };
 
 }  // namespace

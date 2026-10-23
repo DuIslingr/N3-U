@@ -1,6 +1,6 @@
 // Sound playback: the game's sound table (assets/sound_bank.h) mixed through an SDL
-// audio stream. Sounds are decoded on first use (ADPCM/PCM WAV; the few .vxn streams are
-// not supported yet) and cached. Voices follow the table: banks limit how many play at
+// audio stream. Sounds are decoded on first use (ADPCM/PCM WAV, and the few .vxn
+// interactive streams with their states) and cached. Voices follow the table: banks limit how many play at
 // once, 3D groups attenuate with distance (inverse distance from refdistance, clamped at
 // maxdistance) and pan by the listener's orientation, and play/stop can fade.
 #pragma once
@@ -54,9 +54,17 @@ public:
     void stop(const std::string& name, float fade_ms = 0);
     void stop(int handle, float fade_ms = 0);
     void stop_all();
-    void set_paused(bool paused);   // the pause menu: the device stops pulling sound
+    // The pause menu, the main menu, the loading screen: voices hold where they are, but
+    // those of the sound `except` (the title music) play on.
+    void set_paused(bool paused, const std::string& except = {});
     void set_position(int handle, const glm::vec3& position);
     bool playing(int handle) const;
+    bool playing(const std::string& name) const;   // any voice of this sound label
+    // Interactive (.vxn) sounds (VoxSoundManager::SetInteractiveMusicState): move a voice,
+    // or every voice of a sound label, to a named state ("mmenu", "loading", "ride"...),
+    // as the file's transitions allow, crossfading by its rule.
+    void set_state(int handle, const std::string& state);
+    void set_state(const std::string& name, const std::string& state);
     // Any voice started from an event whose label starts with `prefix`.
     bool event_playing(const std::string& prefix) const;
     // A random sound out of a list of labels (gol sound lists).
@@ -69,13 +77,25 @@ public:
 
     const SoundTable& table() const { return table_; }
     size_t voice_count() const;
-    // Decode every sound in the table; returns the labels that failed (vxn streams aside).
+    // Decode every sound in the table; returns the labels that failed.
     std::vector<std::string> check_all();
 
 private:
     struct Clip {
         std::vector<float> samples;   // stereo, interleaved, at the device rate
         size_t loop_start = 0, loop_end = 0;   // frames; looping voices repeat this part
+        // .vxn: segments (frame ranges), and per state a playlist of them, each played once
+        // or looped; transitions[from][to]: allowed; the crossfade (frames out, in).
+        struct Element {
+            int segment = 0;
+            bool loop = false;
+        };
+        std::vector<std::pair<size_t, size_t>> segments;
+        std::vector<std::vector<Element>> playlists;
+        std::vector<std::string> states;
+        std::vector<std::vector<bool>> transitions;
+        size_t fade_out = 0, fade_in = 0;
+        bool interactive() const { return !playlists.empty(); }
     };
     // Decode a WAV image to device-format samples (appended to `out`); false on failure.
     bool decode_wav(const Bytes& wav, std::vector<float>& out) const;
@@ -96,7 +116,17 @@ private:
         float fade = 1, fade_target = 1, fade_step = 0;   // per frame
         bool stopping = false;
         uint64_t started = 0;
+        // Interactive clips: the state's playlist and where in it; the segment left behind
+        // at a state change fades out alongside.
+        int state = 0, element = 0;
+        bool done = false;
+        size_t tail_frame = 0, tail_end = 0;
+        float tail_gain = 0, tail_step = 0;
     };
+    // Interactive voices: the current element's segment, and moving on at its end.
+    const Clip::Element* element(const Voice& v) const;
+    void next_element(Voice& v) const;
+    void set_state(Voice& v, int state) const;
     std::shared_ptr<const Clip> clip(const SoundDef& def);
     int start(const SoundDef& def, const Params& p, const std::string& tag);
     void spatialize(Voice& v) const;
@@ -112,6 +142,8 @@ private:
     std::unordered_map<std::string, std::shared_ptr<const Clip>> clips_;
     std::unordered_set<std::string> warned_;
     std::vector<Voice> voices_;
+    bool paused_ = false;
+    std::string unpaused_;
     std::vector<float> scratch_;
     int next_handle_ = 1;
     uint64_t counter_ = 0;

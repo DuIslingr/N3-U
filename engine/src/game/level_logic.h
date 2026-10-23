@@ -435,6 +435,18 @@ private:
     float play_time_limits_[2] = {0, 0};
     int music_ = -1;
     void update_music(float dt);
+    // The jetpack's sound (PlayerComponent::EnableJetpackSound: sfx_jetpack.vxn), "ride"
+    // while it fires, "idle" while it does not, "stop" when it is put away.
+    int jetpack_sound_ = -1;
+    void update_jetpack_sound();
+    // Kal's breathing in the suit (PlayerComponent::SetBreathingState, kal_breathing_system
+    // .vxn) while the player is in control: battle for 5 s after a shot or a hit, dying
+    // under 20% of the shield, running while sprinting, then recovery for 4 s; else normal.
+    int breath_sound_ = -1;
+    std::string breath_state_;
+    float breath_timer_ = 0, breath_recovery_ = 0, breath_damage_ = 0;
+    bool breath_rushing_ = false;
+    void update_breathing(float dt);
     std::deque<std::string> dialog_;
     bool dialog_active_ = false;
     int dialog_voice_ = -1;

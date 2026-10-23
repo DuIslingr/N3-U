@@ -269,7 +269,7 @@ void LevelLogic::start(StartMode mode) {
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
     camera_held_ = restore_view_ = false;
     tutorial_ = TutorialStep{};
-    if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
+    if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1, jetpack_sound_ = -1, breath_sound_ = -1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
     if (!keep_player) fading_ = false, shake_left_ = 0, time_factor_left_ = 0;
@@ -1216,6 +1216,50 @@ void LevelLogic::update_dialog(float dt) {
     if (!strings.find(line).empty()) message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
 }
 
+void LevelLogic::update_jetpack_sound() {
+    if (!audio) return;
+    if (player.jetpack) {
+        if (jetpack_sound_ < 0 || !audio->playing(jetpack_sound_)) jetpack_sound_ = audio->play("sfx_jetpack");   // "initial"
+        else audio->set_state(jetpack_sound_, player.thrusting ? "ride" : "idle");
+    } else if (jetpack_sound_ >= 0) {
+        audio->set_state(jetpack_sound_, "stop");   // plays its tail out
+        jetpack_sound_ = -1;
+    }
+}
+
+void LevelLogic::update_breathing(float dt) {
+    if (!audio || !combat) return;
+    if (player_locked() || combat->player_dead || player_vehicle_ >= 0 || player_mech_ >= 0) {   // PlayerComponent::Enable(false)
+        if (breath_sound_ >= 0) audio->stop(breath_sound_, 500), breath_sound_ = -1;
+        return;
+    }
+    if (breath_sound_ < 0 || !audio->playing(breath_sound_)) {
+        breath_sound_ = audio->play("kal_breathing_system");   // its first state: breath_normal
+        breath_state_ = "breath_normal", breath_timer_ = breath_recovery_ = 0;
+        breath_damage_ = combat->stats().damage_taken, breath_rushing_ = player.rushing;
+    }
+    auto set = [&](const char* state) {
+        if (breath_state_ == state) return;
+        breath_state_ = state;
+        audio->set_state(breath_sound_, state);
+        if (breath_state_ == "breath_battle") breath_timer_ = 5;
+    };
+    // CWeaponComponent::DoFire, PlayerComponent::ReceiveDamage, Start/EndRush.
+    if (combat->since_shot() < dt || combat->stats().damage_taken > breath_damage_) set("breath_battle");
+    breath_damage_ = combat->stats().damage_taken;
+    if (player.rushing && !breath_rushing_) set("breath_running");
+    if (!player.rushing && breath_rushing_) set("breath_recovery"), breath_recovery_ = 4;
+    breath_rushing_ = player.rushing;
+    if (breath_recovery_ > 0 && (breath_recovery_ -= dt) <= 0 && breath_state_ == "breath_recovery") set("breath_normal");
+    // PlayerComponent::Update.
+    if (combat->player_health < combat->player_max_health * 0.2f) set("breath_dying");
+    else if (breath_timer_ <= 0) {
+        if (breath_state_ == "breath_dying") set("breath_normal");
+    } else if ((breath_timer_ -= dt) <= 0) {
+        set("breath_normal");
+    }
+}
+
 void LevelLogic::update_music(float dt) {
     if (!audio || music_event_.empty()) return;
     if (audio->event_playing("env_m_action")) {   // scripted action music has the floor
@@ -1434,6 +1478,8 @@ void LevelLogic::update(float dt) {
     objectives.show = std::max(objectives.show - dt, 0.0f);
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);
+    update_jetpack_sound();
+    update_breathing(dt);
     update_dialog(dt);
     update_movers(dt);
     update_elevators(dt);

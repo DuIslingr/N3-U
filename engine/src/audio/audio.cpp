@@ -108,6 +108,10 @@ std::shared_ptr<Audio::Clip> Audio::decode_vxn(const Bytes& d) const {
     uint32_t rate = 0;
     Bytes msae;
     std::vector<std::array<uint32_t, 3>> segments;
+    std::vector<std::string> states;
+    uint32_t playlist_count = 0;
+    std::vector<std::array<int32_t, 3>> elements, transitions;   // {playlist, segment, plays}, {from, to, rule}
+    float rule_out = 0, rule_in = 0;
     size_t data = 0, data_size = 0;
     for (size_t p = 0x18; p + 8 <= d.size();) {
         const uint32_t n = rd32(d, p + 4);
@@ -120,6 +124,37 @@ std::shared_ptr<Audio::Clip> Audio::decode_vxn(const Bytes& d) const {
         } else if (std::memcmp(id, "Segm", 4) == 0) {
             for (uint32_t i = 0; i < rd32(d, p + 8); ++i)
                 segments.push_back({rd32(d, p + 12 + 24 * i), rd32(d, p + 16 + 24 * i), rd32(d, p + 20 + 24 * i)});
+        } else if (std::memcmp(id, "Stat", 4) == 0 && rd32(d, p + 8)) {
+            // {i32 index, char name[...]}, as many as fit.
+            const uint32_t count = rd32(d, p + 8), each = (n - 4) / count;
+            for (uint32_t i = 0; i < count; ++i) {
+                const size_t at = p + 12 + size_t(i) * each + 4;
+                std::string name;
+                for (size_t k = at; k < std::min<size_t>(at + each - 4, d.size()) && d[k]; ++k) name += char(d[k]);
+                states.push_back(name);
+            }
+        } else if (std::memcmp(id, "Plst", 4) == 0) {
+            playlist_count = rd32(d, p + 8);
+        } else if (std::memcmp(id, "Grpe", 4) == 0 && rd32(d, p + 8)) {
+            // {playlist, group, element, segment, ?, ?, plays (-1: loops), ?}
+            const uint32_t count = rd32(d, p + 8), each = (n - 4) / count;
+            for (uint32_t i = 0; i < count && each >= 28; ++i) {
+                const size_t at = p + 12 + size_t(i) * each;
+                elements.push_back({int32_t(rd32(d, at)), int32_t(rd32(d, at + 12)), int32_t(rd32(d, at + 24))});
+            }
+        } else if (std::memcmp(id, "Trsn", 4) == 0 && rd32(d, p + 8)) {
+            // {from state, to state, rule (-1: none), ?}
+            const uint32_t count = rd32(d, p + 8), each = (n - 4) / count;
+            for (uint32_t i = 0; i < count && each >= 12; ++i) {
+                const size_t at = p + 12 + size_t(i) * each;
+                transitions.push_back({int32_t(rd32(d, at)), int32_t(rd32(d, at + 4)), int32_t(rd32(d, at + 8))});
+            }
+        } else if (std::memcmp(id, "Rule", 4) == 0 && rd32(d, p + 8) && n >= 4 + 28) {
+            // The first rule: {?, ?, ?, ?, float fade out, float fade in, float ?, ...} (s).
+            float out = 0, in = 0;
+            const uint32_t a = rd32(d, p + 28), b = rd32(d, p + 32);
+            std::memcpy(&out, &a, 4), std::memcpy(&in, &b, 4);
+            rule_out = std::clamp(out, 0.0f, 5.0f), rule_in = std::clamp(in, 0.0f, 5.0f);
         } else if (std::memcmp(id, "Data", 4) == 0) {
             data = p + 8, data_size = std::min<size_t>(n, d.size() - data);
             break;
@@ -153,16 +188,33 @@ std::shared_ptr<Audio::Clip> Audio::decode_vxn(const Bytes& d) const {
     auto c = std::make_shared<Clip>();
     for (size_t i = 0; i < segments.size(); ++i) {
         const auto& [off, size, samples] = segments[i];
-        if (off >= data_size) continue;
         const size_t at = c->samples.size() / 2;
+        if (off >= data_size) {
+            c->segments.emplace_back(at, at);
+            continue;
+        }
         std::vector<float> seg;
         if (!decode_wav(wav(off, std::min<size_t>(size, data_size - off)), seg)) return nullptr;
         // Trim (or pad) to the segment's stated length, at the device rate.
         if (samples) seg.resize(size_t(double(samples) * rate_ / rate) * 2, 0.0f);
         c->samples.insert(c->samples.end(), seg.begin(), seg.end());
+        c->segments.emplace_back(at, c->samples.size() / 2);
         if (i == 1) c->loop_start = at, c->loop_end = c->samples.size() / 2;
     }
     if (c->loop_end <= c->loop_start) c->loop_start = 0, c->loop_end = c->samples.size() / 2;
+    // The states' playlists (state i plays playlist i), and which changes are allowed.
+    if (playlist_count && !elements.empty()) {
+        c->playlists.resize(playlist_count);
+        for (const auto& [pl, seg, plays] : elements)
+            if (pl >= 0 && pl < int(playlist_count) && seg >= 0 && seg < int(c->segments.size()))
+                c->playlists[size_t(pl)].push_back({seg, plays < 0});
+        c->states = states;
+        c->states.resize(playlist_count);
+        c->transitions.assign(playlist_count, std::vector<bool>(playlist_count, true));
+        for (const auto& [from, to, rule] : transitions)
+            if (from >= 0 && to >= 0 && from < int(playlist_count) && to < int(playlist_count)) c->transitions[size_t(from)][size_t(to)] = rule >= 0;
+        c->fade_out = size_t(rule_out * float(rate_)), c->fade_in = size_t(rule_in * float(rate_));
+    }
     return c;
 }
 
@@ -218,6 +270,11 @@ int Audio::start(const SoundDef& def, const Params& p, const std::string& tag) {
     v.tag = tag;
     v.loop = p.loop < 0 ? def.loop : p.loop != 0;
     v.gain = p.gain;
+    if (c->interactive()) {   // its first state's playlist, which says what loops
+        v.loop = false;
+        set_state(v, 0);
+        if (v.done) return -1;
+    }
     const auto g = table_.groups.find(def.group);
     const std::string slider = g != table_.groups.end() ? g->second.slider : "SFX";
     v.bus = slider == "MUSIC" ? music : slider == "VFX" ? voices : sfx;
@@ -311,10 +368,9 @@ void Audio::stop(int handle, float fade_ms) {
     }
 }
 
-void Audio::set_paused(bool paused) {
-    if (!stream_) return;
-    if (paused) SDL_PauseAudioStreamDevice(stream_);
-    else SDL_ResumeAudioStreamDevice(stream_);
+void Audio::set_paused(bool paused, const std::string& except) {
+    Lock lock(mutex_);
+    paused_ = paused, unpaused_ = paused ? except : std::string();
 }
 
 void Audio::stop_all() {
@@ -331,6 +387,75 @@ void Audio::set_position(int handle, const glm::vec3& position) {
 bool Audio::playing(int handle) const {
     Lock lock(mutex_);
     return std::any_of(voices_.begin(), voices_.end(), [&](const Voice& v) { return v.handle == handle; });
+}
+
+bool Audio::playing(const std::string& name) const {
+    Lock lock(mutex_);
+    return std::any_of(voices_.begin(), voices_.end(), [&](const Voice& v) { return !v.stopping && v.def && (v.def->label == name || v.def->filename == name); });
+}
+
+const Audio::Clip::Element* Audio::element(const Voice& v) const {
+    const auto& list = v.clip->playlists[size_t(v.state)];
+    return v.element < int(list.size()) ? &list[size_t(v.element)] : nullptr;
+}
+
+void Audio::next_element(Voice& v) const {
+    const Clip::Element* e = element(v);
+    if (e && e->loop) {
+        v.frame = v.clip->segments[size_t(e->segment)].first;
+        return;
+    }
+    ++v.element;
+    e = element(v);
+    if (!e) {
+        v.done = true;
+        return;
+    }
+    v.frame = v.clip->segments[size_t(e->segment)].first;
+}
+
+void Audio::set_state(Voice& v, int state) const {
+    const Clip& c = *v.clip;
+    if (state < 0 || state >= int(c.playlists.size())) return;
+    if (!v.done && v.started) {
+        // What plays now fades out by the rule while the new state's playlist starts.
+        if (const Clip::Element* e = element(v); e && c.fade_out > 0) {
+            v.tail_frame = v.frame, v.tail_end = c.segments[size_t(e->segment)].second;
+            v.tail_gain = 1, v.tail_step = 1.0f / float(c.fade_out);
+        }
+        if (c.fade_in > 0) v.fade = 0, v.fade_target = 1, v.fade_step = 1.0f / float(c.fade_in);
+    }
+    v.state = state, v.element = 0, v.done = false;
+    const Clip::Element* e = element(v);
+    if (!e) {
+        v.done = true;
+        return;
+    }
+    v.frame = c.segments[size_t(e->segment)].first;
+}
+
+void Audio::set_state(int handle, const std::string& state) {
+    Lock lock(mutex_);
+    for (Voice& v : voices_) {
+        if (v.handle != handle || !v.clip->interactive() || v.stopping) continue;
+        const auto& names = v.clip->states;
+        const auto it = std::find(names.begin(), names.end(), state);
+        if (it == names.end()) continue;
+        const int to = int(it - names.begin());
+        if (to == v.state || !v.clip->transitions[size_t(v.state)][size_t(to)]) continue;   // not a change the file allows
+        if (trace) std::printf("[sound] %s: %s -> %s\n", v.def ? v.def->label.c_str() : "?", names[size_t(v.state)].c_str(), state.c_str());
+        set_state(v, to);
+    }
+}
+
+void Audio::set_state(const std::string& name, const std::string& state) {
+    std::vector<int> handles;
+    {
+        Lock lock(mutex_);
+        for (const Voice& v : voices_)
+            if (v.def && (v.def->label == name || v.def->filename == name)) handles.push_back(v.handle);
+    }
+    for (int h : handles) set_state(h, state);
 }
 
 bool Audio::event_playing(const std::string& prefix) const {
@@ -368,11 +493,26 @@ void Audio::render(float* out, int frames) {
 void Audio::mix(float* out, int frames) {
     const float smooth = 1.0f / 256.0f;   // 3D gain changes glide over ~5 ms
     for (Voice& v : voices_) {
+        if (paused_ && !(v.def && !unpaused_.empty() && v.def->label == unpaused_)) continue;   // held
         const std::vector<float>& s = v.clip->samples;
-        const size_t length = v.loop ? v.clip->loop_end : s.size() / 2;
+        const bool interactive = v.clip->interactive();
+        size_t length = v.loop ? v.clip->loop_end : s.size() / 2;
+        if (interactive) length = v.done ? 0 : v.clip->segments[size_t(element(v)->segment)].second;
         const float g = v.gain * v.bus * master;
         for (int f = 0; f < frames; ++f) {
-            if (v.frame >= length) {
+            if (interactive && v.tail_gain > 0 && v.tail_frame < v.tail_end) {   // the old state's segment fading out
+                const float k = g * (v.stopping ? v.fade : 1.0f) * v.tail_gain;   // not the new state's fade-in
+                out[2 * f] += s[2 * v.tail_frame] * k * v.cur_left;
+                out[2 * f + 1] += s[2 * v.tail_frame + 1] * k * v.cur_right;
+                ++v.tail_frame, v.tail_gain -= v.tail_step;
+            }
+            if (interactive) {
+                while (!v.done && v.frame >= length) {
+                    next_element(v);
+                    if (!v.done) length = v.clip->segments[size_t(element(v)->segment)].second;
+                }
+                if (v.done) break;
+            } else if (v.frame >= length) {
                 if (!v.loop) break;
                 v.frame = v.clip->loop_start;
             }
@@ -390,7 +530,9 @@ void Audio::mix(float* out, int frames) {
     }
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
                                  [](const Voice& v) {
-                                     return (v.stopping && v.fade <= 0) || (!v.loop && v.frame >= v.clip->samples.size() / 2);
+                                     if (v.stopping && v.fade <= 0) return true;
+                                     if (v.clip->interactive()) return v.done;
+                                     return !v.loop && v.frame >= v.clip->samples.size() / 2;
                                  }),
                   voices_.end());
     for (int i = 0; i < frames * 2; ++i) out[i] = std::clamp(out[i], -1.0f, 1.0f);

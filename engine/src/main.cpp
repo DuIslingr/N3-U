@@ -1273,7 +1273,17 @@ int main(int argc, char** argv) {
                     SDL_SetWindowRelativeMouseMode(window, !on && !touch_mode && !main_menu.open);
                     fire_held = aim_held = false;
                     touch.release_all();
-                    if (logic.audio) logic.audio->set_paused(on);
+                    // GS_InGameMenu::PlayMusic / StopMusic: its own music (m_about), faded
+                    // in and out over 500 ms, while the game's sounds hold.
+                    if (logic.audio) {
+                        logic.audio->set_paused(on, "m_about");
+                        if (on && !logic.audio->playing("m_about")) {
+                            Audio::Params p;
+                            p.fade_in_ms = 500;
+                            logic.audio->play("m_about", p);
+                        }
+                        if (!on) logic.audio->stop("m_about", 500);
+                    }
                 };
                 auto menu_action = [&](PauseMenu::Action a) {
                     using A = PauseMenu::Action;
@@ -1546,8 +1556,17 @@ int main(int argc, char** argv) {
                     dt /= float(std::min(recent_n, recent.size()));
                     main_menu.unlocked = settings.chapters, main_menu.hard_unlocked = settings.hard_unlocked;
                     if (!main_menu.open) main_menu.difficulty = settings.difficulty;
+                    // The title music (Application::PlayTitleMusic, m_title.vxn): its "mmenu"
+                    // state in the menus, "loading" on the loading screen (GS_Loading); the
+                    // game's own sounds hold meanwhile. It fades once the level is under way.
+                    auto title_music = [&](const char* state) {
+                        if (!logic.audio) return;
+                        logic.audio->set_paused(true, "m_title");
+                        if (!logic.audio->playing("m_title")) logic.audio->play("m_title");
+                        logic.audio->set_state("m_title", state);
+                    };
                     if (main_menu.open) {   // the main menu (with Options over it), the game paused behind
-                        if (logic.audio) logic.audio->set_paused(true);
+                        title_music("mmenu");
                         int mw = 0, mh = 0;
                         SDL_GetWindowSizeInPixels(window, &mw, &mh);
                         FrameParams mf = draw_main_menu(mw, mh);
@@ -1557,12 +1576,13 @@ int main(int argc, char** argv) {
                     }
                     if (loading.active) {   // the level waits behind the loading screen
                         loading.update(raw_dt);
-                        if (logic.audio) logic.audio->set_paused(true);
+                        title_music("loading");
                         int lw = 0, lh = 0;
                         SDL_GetWindowSizeInPixels(window, &lw, &lh);
                         renderer.render_to_window({}, draw_loading(lw, lh));
                         continue;
                     }
+                    if (logic.audio && logic.audio->playing("m_title")) logic.audio->stop("m_title", 1500);
                     // Dead: after a moment, the death screen (the game goes on behind it).
                     if (combat.player_dead && !death.open && combat.dead_time() > 1.0f) {
                         death.show();
