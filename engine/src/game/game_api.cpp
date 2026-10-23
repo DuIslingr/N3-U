@@ -694,6 +694,25 @@ int api_player_enable_rush(lua_State* L) {
     return 0;
 }
 
+// QTEAddSlowTime(factor, ms), QTEStart(kind), QTEStop(); QTE_Fire() spends a round of
+// the current weapon (the cinematic shows the shot).
+int api_qte_add_slow_time(lua_State* L) {
+    ctx(L).qte_add_slow_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+int api_qte_start(lua_State* L) {
+    ctx(L).qte_start(str_arg(L, 1));
+    return 0;
+}
+int api_qte_stop(lua_State* L) {
+    ctx(L).qte_stop();
+    return 0;
+}
+int api_qte_fire(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->spend_round();
+    return 0;
+}
+
 int api_start_bullet_time(lua_State* L) {   // StartBulletTime(ms, factor)
     ctx(L).bullet_time(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)));
     return 0;
@@ -817,6 +836,10 @@ const Entry kImplemented[] = {
     {"SetPrimaryObjective", api_set_primary_objective},
     {"StartBulletTime", api_start_bullet_time},
     {"EnablePath", api_enable_path},
+    {"QTEAddSlowTime", api_qte_add_slow_time},
+    {"QTEStart", api_qte_start},
+    {"QTEStop", api_qte_stop},
+    {"QTE_Fire", api_qte_fire},
     {"SetFOV", api_set_fov},
     {"ResetFOV", api_reset_fov},
     {"SetZFar", api_set_zfar},

@@ -84,7 +84,18 @@ public:
     // time (Application's time factor and its duration). Advance with real time.
     void bullet_time(float ms, float factor) { time_factor_ = factor, time_factor_left_ = ms / 1000.0f; }
     float time_scale() const { return time_factor_left_ > 0 ? time_factor_ : 1.0f; }
-    void advance_real_time(float dt) { time_factor_left_ = std::max(time_factor_left_ - dt, 0.0f); }
+    void advance_real_time(float dt);
+    // Quick-time events (CQTEManager): QTEAddSlowTime(factor, ms) queues ramps of the time
+    // factor (over game time; the last usually freezes the game), QTEStart(kind) waits for
+    // the player's button ("fire", "repel", "move"); pressing it ends the QTE and the game
+    // speeds back up. `auto_qte` presses it after a moment (headless runs).
+    void qte_add_slow_time(float factor, float ms) { qte_.ramps.push_back({factor, ms}); }
+    void qte_start(const std::string& kind);
+    void qte_stop();
+    bool qte_press(const std::string& kind);   // true if that ended the QTE
+    const std::string& qte_kind() const { return qte_.kind; }
+    float qte_time() const { return qte_.time; }   // seconds (real) since it started
+    bool auto_qte = false;
     // EnablePath(waypoint): the guide marker the HUD shows over a waypoint (-1: none).
     struct PathMarker {
         bool on = false;
@@ -330,6 +341,12 @@ private:
     float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
     float time_factor_ = 1, time_factor_left_ = 0;
     float fov_from_ = 70, fov_to_ = 70, fov_len_ = 0, fov_t_ = 0;
+    struct Qte {
+        std::string kind;                               // waiting for this button; "" none
+        std::deque<std::pair<float, float>> ramps;      // (factor, game ms)
+        float target = 1, left = 0;                     // the current ramp
+        float time = 0;
+    } qte_;
     struct Grading {
         std::string current, previous;
         float left = 0, total = 0;   // blend from previous to current (seconds)

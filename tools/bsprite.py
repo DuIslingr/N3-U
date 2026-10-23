@@ -2,11 +2,11 @@
 """Gameloft sprite sheets (.bsprite, CSprite::LoadSpriteData).
 
 Little-endian. u16 magic 0xA9D2, u16 flags, u16 images, u16 modules, u16 frame modules,
-u16 frames, u16 anim frames, u16 anims, u16 extra; the images' name lengths (u8 each), then their names; then
-columns per module (u8 image, u8 flags, u32 ?, s16 x, s16 y, u16 w, u16 h), per frame
-module (u16 module, u8 flags, s16 x, s16 y), per frame (u8 count, u16 first, u8 ?),
-per anim frame (u16 frame, u16 time, s16 x, s16 y), per anim (u16, u8, u8, u16, u16),
-extra (u8, u16).
+u16 frames, u16 frame rects (layout unknown; usually 0), u16 anim frames, u16 anims; the
+images' name lengths (u8 each), then their names; then columns per module (u8 image, u8
+flags, u32 ?, s16 x, s16 y, u16 w, u16 h), per frame module (u16 module, u8 flags, s16 x,
+s16 y), per frame (u8 count, u16 first, u8 ?), per anim frame (u16 frame, u8 time, s16 x,
+s16 y, u8 flags), per anim (u8 count, u16 first). Every table is stored column by column.
 """
 import struct
 import sys

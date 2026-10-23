@@ -73,6 +73,22 @@ void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at
     }
 }
 
+void Hud::draw_anim(ParticleList& out, const Sprite& s, int anim, glm::vec2 at, float scale, float seconds, const glm::vec4& color) {
+    if (anim < 0 || size_t(anim) >= s.anims.size()) return;
+    const Sprite::Anim& a = s.anims[size_t(anim)];
+    int total = 0;
+    for (int k = a.first; k < a.first + a.count && size_t(k) < s.aframes.size(); ++k) total += std::max(s.aframes[size_t(k)].time, 1);
+    if (total <= 0) return;
+    int tick = int(seconds * 30.0f) % total;
+    for (int k = a.first; k < a.first + a.count && size_t(k) < s.aframes.size(); ++k) {
+        const Sprite::AFrame& f = s.aframes[size_t(k)];
+        if ((tick -= std::max(f.time, 1)) < 0) {
+            draw_frame(out, s, f.frame, at + glm::vec2(float(f.x), float(f.y)) * scale, scale, color);
+            return;
+        }
+    }
+}
+
 glm::vec4 Hud::frame_bounds(const Sprite& s, int frame) {
     glm::vec4 b(1e9f, 1e9f, -1e9f, -1e9f);
     if (frame < 0 || size_t(frame) >= s.frames.size()) return glm::vec4(0);

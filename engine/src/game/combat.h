@@ -12,6 +12,7 @@
 // root motion is held in place and the actor moves at the clip's root speed instead.
 #pragma once
 
+#include <algorithm>
 #include <deque>
 #include <functional>
 #include <random>
@@ -144,6 +145,7 @@ public:
     bool give_ammo(const std::string& name, int amount);
     // The weapons earlier campaign levels unlocked, when a later level is started directly.
     void campaign_loadout(const std::string& level);
+    void spend_round() { int& c = clip_[size_t(current_)]; c = std::max(c - 1, 0); }   // QTE_Fire
     int grenades = 0;
     bool grenades_enabled = true;
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.

@@ -17,7 +17,7 @@ Sprite load_sprite(const Bytes& d) {
     if (u16() != 0xA9D2) throw FormatError("bsprite: bad magic");
     u16();   // flags
     const int ni = u16(), nm = u16(), nf = u16(), nfr = u16();
-    u16(), u16(), u16();   // anim frames, anims, extra (not needed for still frames)
+    const int nrects = u16(), naf = u16(), nan = u16();   // (frame rects: their layout is unknown), anim frames, anims
     Sprite s;
     std::vector<int> lengths;
     for (int i = 0; i < ni; ++i) lengths.push_back(u8());   // all name lengths, then the names
@@ -45,6 +45,18 @@ Sprite load_sprite(const Bytes& d) {
     s.frames.resize(size_t(nfr));
     for (auto& f : s.frames) f.count = u8();
     for (auto& f : s.frames) f.first = u16();
+    if (nrects != 0) return s;
+    need(size_t(nfr)), p += size_t(nfr);   // a byte per frame
+    // Animation frames: frame, time, x, y, flags; animations: count, first.
+    s.aframes.resize(size_t(naf));
+    for (auto& a : s.aframes) a.frame = u16();
+    for (auto& a : s.aframes) a.time = u8();
+    for (auto& a : s.aframes) a.x = s16();
+    for (auto& a : s.aframes) a.y = s16();
+    for (auto& a : s.aframes) a.flags = u8();
+    s.anims.resize(size_t(nan));
+    for (auto& a : s.anims) a.count = u8();
+    for (auto& a : s.anims) a.first = u16();
     return s;
 }
 

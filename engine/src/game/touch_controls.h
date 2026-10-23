@@ -35,7 +35,7 @@ public:
         float forward = 0, right = 0;   // the walk pad, -1..1
         glm::vec2 look{0};              // degrees to turn: yaw (left +), pitch (up +)
         bool fire = false, jump = false, run = false, aim = false;
-        bool reload = false, grenade = false;
+        bool reload = false, grenade = false, power = false;
         int weapon_step = 0;            // +1 next weapon, -1 previous
     };
     // This frame's input; turning and taps are consumed.
@@ -47,6 +47,7 @@ public:
         bool pad = true, sprint = true, fire = true, aim = true, jump = true, power = true;
     } shown;
     glm::vec2 pad_anchor() const { return pad_; }
+    glm::vec2 fire_anchor() const { return cluster_; }   // the fire, power, aim and jump buttons
 
 private:
     enum class Part { None, Pad, Look, Fire, Aim, Jump, Power, Sprint, Weapons, Grenades };

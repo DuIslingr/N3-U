@@ -24,10 +24,19 @@ struct Sprite {
     struct Frame {
         int first = 0, count = 0;         // into fmodules
     };
+    // Animations: a run of animation frames, each a frame shown for `time` ticks at an offset.
+    struct AFrame {
+        int frame = 0, time = 1, x = 0, y = 0, flags = 0;
+    };
+    struct Anim {
+        int first = 0, count = 0;         // into aframes
+    };
     std::vector<std::string> images;
     std::vector<Module> modules;
     std::vector<FModule> fmodules;
     std::vector<Frame> frames;
+    std::vector<AFrame> aframes;
+    std::vector<Anim> anims;
 };
 
 // Throws FormatError on a malformed file.

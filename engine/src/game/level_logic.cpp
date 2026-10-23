@@ -285,6 +285,7 @@ void LevelLogic::start(bool keep_player) {
     load_objects();
     if (!keep_player) {
         fov_from_ = fov_to_ = 70, fov_len_ = fov_t_ = 0;
+        qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
         zfar = 8000, move_sensitivity = 1, player_rush = true;
         grading_ = Grading{};
         if (!default_lut_.empty()) grading_.on = true, grading_.current = default_lut_;
@@ -983,6 +984,51 @@ void LevelLogic::update_grading(float dt) {
     for (size_t i = 0; i < 1024; ++i)
         post.grading_curve[i] = old ? uint8_t(std::lround(float((*now)[i]) + (float((*old)[i]) - float((*now)[i])) * f)) : (*now)[i];
     ++post.grading_version;
+}
+
+void LevelLogic::advance_real_time(float dt) {
+    // CQTEManager::Update: each ramp moves the factor towards its target over its game
+    // time; while one runs the factor holds.
+    float step = dt * 1000.0f * time_scale();
+    if (qte_.left <= 0 && !qte_.ramps.empty()) {
+        qte_.target = qte_.ramps.front().first, qte_.left = qte_.ramps.front().second;
+        qte_.ramps.pop_front();
+    }
+    if (qte_.left > 0) {
+        if (step <= 0 && qte_.target == 1) step = 1;   // frozen: the way back still runs
+        time_factor_ += std::clamp(step / qte_.left, 0.0f, 1.0f) * (qte_.target - time_factor_);
+        time_factor_left_ = 1e8f;
+        qte_.left -= step;
+    } else {
+        time_factor_left_ = std::max(time_factor_left_ - dt, 0.0f);
+    }
+    if (!qte_.kind.empty()) {
+        qte_.time += dt;
+        if (auto_qte && qte_.time > 0.5f) qte_press(qte_.kind);
+    }
+}
+
+void LevelLogic::qte_start(const std::string& kind) {
+    std::string k = kind;
+    for (char& c : k) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (k != "fire" && k != "repel" && k != "move") return;
+    qte_.kind = k, qte_.time = 0;
+}
+
+void LevelLogic::qte_stop() {
+    qte_.kind.clear();
+    qte_.ramps.clear();
+    qte_.left = 0;
+}
+
+bool LevelLogic::qte_press(const std::string& kind) {
+    if (qte_.kind.empty() || kind != qte_.kind) return false;
+    // Done: the ramps give way to one back to normal speed.
+    qte_.kind.clear();
+    qte_.ramps.clear();
+    qte_.ramps.push_back({1.0f, 1.0f});
+    qte_.left = 0;
+    return true;
 }
 
 void LevelLogic::set_primary_objective(const std::string& id) {

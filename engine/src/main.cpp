@@ -336,6 +336,7 @@ int main(int argc, char** argv) {
             }
             std::vector<float> rendered;   // --sound-render
             if (opt.scripts) post_params = &logic.post, zfar = &logic.zfar;
+            logic.auto_qte = headless;   // nobody to press the QTE buttons
             logic.trace = opt.trace_scripts;
             logic.log = [&opt](const std::string& line) {
                 if (line.rfind("print: ", 0) == 0 && !opt.trace_scripts) return;   // scripts print a lot
@@ -367,13 +368,28 @@ int main(int argc, char** argv) {
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
                     hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);
-                    if (logic.input == InputScheme::Touch && hs.visible) {
+                    const std::string& qte = logic.qte_kind();
+                    if (logic.input == InputScheme::Touch && (hs.visible || !qte.empty())) {
                         const LevelLogic::Controls& lc = logic.controls;
                         touch.shown = {lc.move, lc.move && lc.rush, lc.shoot && combat.shoot_enabled, lc.aim, lc.jump, lc.powers};
+                        if (!hs.visible) touch.shown = {false, false, qte == "fire", false, false, qte == "repel"};   // a QTE in a cinematic
                         touch.layout(w, h);
                         touch.draw(hud_sprites);
                     } else {
                         touch.release_all();
+                    }
+                }
+                if (opt.scripts && !logic.qte_kind().empty()) {
+                    // CQTEFire: tutorial.bsprite's animation 1 over the button to press.
+                    if (const Sprite* ts = hud.sprite("tutorial.bsprite")) {
+                        const float scale = float(std::min(w, h)) / 640.0f;
+                        const bool touch_qte = logic.input == InputScheme::Touch;
+                        const glm::vec2 at = touch_qte ? touch.fire_anchor() : glm::vec2(float(w) * 0.5f, float(h) * 0.72f);
+                        hud.draw_anim(hud_sprites, *ts, 1, at, scale, logic.qte_time(), glm::vec4(1));
+                        if (!touch_qte) {
+                            const std::string key = logic.qte_kind() == "fire" ? "[Left mouse]" : logic.qte_kind() == "repel" ? "[Q]" : "[W][A][S][D]";
+                            objective_text.draw(hud_sprites, key, at + glm::vec2(0, 70 * scale), w, glm::vec4(1));
+                        }
                     }
                 }
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
@@ -614,6 +630,7 @@ int main(int argc, char** argv) {
                         pin.forward = o.forward, pin.right = o.right;
                         player.yaw += o.look.x;
                     }
+                    if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
                     if (!(opt.scripts && logic.cinematic_active())) player.update(scene.collision(), pin, kPhysicsStep);
                     step_logic(kPhysicsStep);
                     if (opt.scripts) {
@@ -821,7 +838,8 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
-                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true;
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true, logic.qte_press("fire");
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_Q && !e.key.repeat) logic.qte_press("repel");
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) aim_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) aim_held = false;
@@ -875,6 +893,9 @@ int main(int argc, char** argv) {
                         const float target = aiming ? base * kAimZoom : base;
                         cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
                     }
+                    if (opt.scripts && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_D] ||
+                                        touch_in.forward != 0 || touch_in.right != 0))
+                        logic.qte_press("move");
                     if (flying) {
                         const float speed = (keys[SDL_SCANCODE_LSHIFT] ? 25.0f : 6.0f) * dt;
                         const glm::vec3 fwd = cam.forward();
@@ -918,6 +939,8 @@ int main(int argc, char** argv) {
                             if (touch_mode) {
                                 combat_in.fire = !locked && touch_in.fire;
                                 combat_in.reload |= touch_in.reload;
+                                if (touch_in.fire) logic.qte_press("fire");
+                                if (touch_in.power) logic.qte_press("repel");
                                 combat_in.grenade |= touch_in.grenade && logic.controls.items;
                                 if (touch_in.weapon_step != 0 && logic.controls.weapons) combat_in.select = combat.cycle_weapon(touch_in.weapon_step);
                             } else {
