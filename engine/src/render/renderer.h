@@ -145,8 +145,11 @@ struct PostParams {
     // gray_tint, `gray` of the way back to colour (< 0: off; 0 all grey).
     float gray = -1;
     glm::vec3 gray_tint{1};
+    // RadialBlur (RadialBlur2FP.glsl), the motion blur of a fast turn: each sample stepped
+    // out from the centre by blurwidth x its squared distance (0: off).
+    float radial_blur = 0;
     bool active() const {
-        return dof || height_fog || grading || heat_haze || sepia >= 0 || levels_white != 1 || flash_threshold > -2 || gray >= 0;
+        return dof || height_fog || grading || heat_haze || sepia >= 0 || levels_white != 1 || flash_threshold > -2 || gray >= 0 || radial_blur > 0;
     }
 };
 

@@ -307,6 +307,7 @@ void LevelLogic::start(StartMode mode) {
         player_vehicle_ = player_gun_ = player_mech_ = -1;
         qte_ = Qte{}, time_factor_ = 1, time_factor_left_ = 0;
         zfar = 8000, move_sensitivity = 1, look_sensitivity = 1, player_rush = true, fall_damage = true, jetpack_unlocked = false;
+        motion_blur = false;
         player.jetpack = false;
         player.push = glm::vec3(0);
         grading_ = Grading{};
@@ -1446,6 +1447,16 @@ void LevelLogic::update_screen_effect(float dt) {
             break;
         default: break;
     }
+}
+
+void LevelLogic::update_motion_blur(float dt) {
+    const float dyaw = std::abs(std::remainder(player.yaw - blur_yaw_, 360.0f)), dpitch = std::abs(player.pitch - blur_pitch_);
+    blur_yaw_ = player.yaw, blur_pitch_ = player.pitch;
+    post.radial_blur = 0;
+    if (!motion_blur || dt <= 0) return;
+    // The original measures a frame at its 30 fps.
+    const float k = (1.0f / 30.0f) / dt, turn_yaw = dyaw * k, turn_pitch = dpitch * k;
+    if (turn_yaw > 8 || turn_pitch > 8) post.radial_blur = std::min((turn_yaw + turn_pitch) * 0.001f, 1.0f);
 }
 
 void LevelLogic::update_heat_haze(float dt) {

@@ -1024,7 +1024,7 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
         glm::mat4 inv_view_proj;
         glm::vec4 camera, forward, dof, fog, fog_color, grading, heat, effects, gray;
     } u;
-    u.effects = {post->sepia, post->levels_white, post->flash_threshold, 0};
+    u.effects = {post->sepia, post->levels_white, post->flash_threshold, post->radial_blur};
     u.gray = glm::vec4(post->gray_tint, post->gray);
     u.inv_view_proj = glm::inverse(frame.proj * frame.view);
     u.camera = glm::vec4(frame.camera, 1);

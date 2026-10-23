@@ -757,6 +757,14 @@ int api_set_interactive_music_state(lua_State* L) {
     return 0;
 }
 
+// EnableMotionBlur(on): fast turns blur the picture (CLevel's flag; off stops it at once).
+int api_enable_motion_blur(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    c.motion_blur = lua_toboolean(L, 1) != 0;
+    if (!c.motion_blur) c.post.radial_blur = 0;
+    return 0;
+}
+
 // Particle effects: StartEffect(id[, index]) / StopEffect(id[, index]); id 0 is the player.
 int api_start_effect(lua_State* L) {
     LevelLogic& g = ctx(L);
@@ -1396,6 +1404,7 @@ const Entry kImplemented[] = {
     {"DisablePortal", api_portal<false>},
     {"SetInvulnerable", api_set_invulnerable},
     {"SetInteractiveMusicState", api_set_interactive_music_state},
+    {"EnableMotionBlur", api_enable_motion_blur},
 };
 
 }  // namespace

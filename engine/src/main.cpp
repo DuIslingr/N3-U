@@ -1612,6 +1612,7 @@ int main(int argc, char** argv) {
                     end_was_open = end_screen.open;
                     if (end_screen.open && !menu.open) end_screen.update(raw_dt);
                     if (menu.open) menu.update(raw_dt);
+                    if (opt.scripts && !menu.open && !main_menu.open) logic.update_motion_blur(raw_dt);
                     if (death.open && !menu.open) {
                         death.update(raw_dt);
                         if (death.music_due() && logic.audio) logic.audio->play("m_mission_failed");

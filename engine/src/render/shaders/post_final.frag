@@ -32,7 +32,7 @@ layout(set = 3, binding = 0) uniform PostUniforms {
     vec4 fog_color;
     vec4 grading;     // enabled
     vec4 heat;        // strength, overbright, blend, time (s; < 0: off)
-    vec4 effects;     // sepia (< 0 off), levels white (1 off), flash threshold (<= -2 off)
+    vec4 effects;     // sepia (< 0 off), levels white (1 off), flash threshold (<= -2 off), radial blur width (0 off)
     vec4 gray;        // Gray: tint, and how much of the colour is left (< 0 off)
 };
 
@@ -43,6 +43,13 @@ float smooth_edge(float e0, float e1, float x) {   // GLSL smoothstep, allowing 
 
 void main() {
     vec4 color = texture(scene, v_uv);
+    if (effects.w > 0.0) {   // RadialBlur2FP: five taps, the centre's twice
+        vec2 uv = v_uv - vec2(0.5);
+        float step = dot(uv, uv) * effects.w;
+        color = (texture(scene, clamp(v_uv + vec2(-step, -step), 0.0, 1.0)) + texture(scene, clamp(v_uv + vec2(step, step), 0.0, 1.0)) +
+                 texture(scene, clamp(v_uv + vec2(step, -step), 0.0, 1.0)) + texture(scene, clamp(v_uv + vec2(-step, step), 0.0, 1.0)) +
+                 color * 2.0) / 6.0;
+    }
     if (heat.w >= 0.0) {
         float t = heat.w * 0.1;
         vec2 c1 = v_uv * vec2(-6.4, 6.2) + t * vec2(-1.1, 1.05);   // BumpScale1, BumpScroll1

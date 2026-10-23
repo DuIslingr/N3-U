@@ -381,6 +381,10 @@ public:
     // StartEndLevelEffect(ms, r, g, b, back): CLevel's Gray, the picture drained to a tinted
     // grey over ms (or, with `back`, its colour returning), held there.
     void gray_effect(float ms, const glm::vec3& tint, bool back);
+    // EnableMotionBlur(on): fast turns blur the picture outwards (PlayerComponent::
+    // UpdateFromInput: past 8 degrees a frame at 30 fps, the RadialBlur by the turn).
+    bool motion_blur = false;
+    void update_motion_blur(float frame_dt);   // once a rendered frame, with its time
     // A post-effect variable ("DOF"/"HEIGHTFOG" and fFocus, fRange, fBlurStep, FogTop, ...),
     // reaching `to` in `seconds`; false if unknown.
     bool set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from = nullptr);
@@ -571,6 +575,7 @@ private:
         bool back = false;            // Gray: towards colour
     } screen_effect_;
     void update_screen_effect(float dt);
+    float blur_yaw_ = 0, blur_pitch_ = 0;
     struct HeatHaze {
         float now = 0, max = 0;   // ms grown, ms to grow
         bool stopping = true;
