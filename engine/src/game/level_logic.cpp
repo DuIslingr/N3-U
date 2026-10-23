@@ -593,9 +593,9 @@ bool LevelLogic::use() {
         best_d = d;
     }
     if (!best) return false;
+    // The original pushes its circuit minigame (GS_FaneMinigame) first when the instance's
+    // minigame flag ([3]) is set, but no campaign object sets it: the use is OnEnter alone.
     start_object_script(*best, "OnEnter");
-    // There are no minigames yet: count the use as won.
-    start_object_script(*best, "OnMinigameWin");
     return true;
 }
 
