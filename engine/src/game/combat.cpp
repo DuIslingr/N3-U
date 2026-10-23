@@ -6,6 +6,8 @@
 #include <cmath>
 #include <limits>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "audio/audio.h"
 #include "game/level_logic.h"
 #include "game/player.h"
@@ -123,11 +125,18 @@ void rect(std::vector<ColorVertex>& out, float x, float y, float w, float h, con
 
 Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
     : scene_(scene), player_(player), logic_(logic), gol_(gol) {
-    for (const char* name : {"AssaultRifle_Player", "Handgun_Player"}) weapons_.push_back(load_weapon(name)), weapon_types_.push_back(name);
+    // The player's arsenal (CWeaponManager), in the weapon panel's order; the campaign
+    // starts with the assault rifle and scripts unlock the rest (UnlockWeapon).
+    for (const char* name : {"AssaultRifle_Player", "AutomaticShotGun_Player", "Handgun_Player", "SniperRifle_Player",
+                             "RocketLauncher_Player", "GrenadeGun_Player", "FlameThrower_Player", "AlienWeapon_Player",
+                             "RailGun_Player", "AlienLightningGun_Player", "ExecutorPlasmaGun_Player", "Crystal_ItemWeapon"})
+        weapons_.push_back(load_weapon(name)), weapon_types_.push_back(name);
     for (const WeaponDef& w : weapons_) {
         clip_.push_back(w.clip);
         reserve_.push_back(w.reserve);
+        owned_.push_back(0);
     }
+    owned_[0] = 1;
     // The player: CHealthComponent and CPlayerBaseComponent (regeneration per second, delay).
     for (const auto& [id, type] : gol_) {
         if (type.name != "Player") continue;
@@ -139,6 +148,190 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
         }
     }
     player_health = player_max_health;
+    load_grenade();
+}
+
+void Combat::load_grenade() {
+    for (const auto& [id, type] : gol_) {
+        if (type.name != "Grenade_Player") continue;
+        grenade_def_.type = id;
+        // CComponentGrenade: fuse (ms), damage, ?, damage radius, throw speed, ?, sticky, ...,
+        // explosion effect, explosion object, ..., bounce sound, ..., explosion sounds.
+        if (const Value* g = resolved_template(type, gol_, 0x26); g && g->size() > 18) {
+            grenade_def_.fuse = num(*g, 0, 2300) / 1000.0f;
+            grenade_def_.damage = num(*g, 1, 40);
+            grenade_def_.radius = num(*g, 3, 10);
+            grenade_def_.speed = num(*g, 4, 25);
+            if (!str(*g, 10).empty()) grenade_def_.effect = str(*g, 10);
+            grenade_def_.bounce_sound = str(*g, 15);
+            grenade_def_.explode_sounds = sound_list((*g)[18]);
+        }
+        if (const Value* fx = resolved_template(type, gol_, 0x92); fx && fx->size() > 0 && (*fx)[0].size() > 0)
+            grenade_def_.trail = str((*fx)[0][0], 0);
+        break;
+    }
+}
+
+void Combat::throw_grenade(const glm::vec3& eye, const glm::vec3& aim) {
+    if (grenade_def_.type < 0) return;
+    Grenade* g = nullptr;
+    for (Grenade& x : live_grenades_)
+        if (!x.live) g = &x;
+    if (!g) {
+        live_grenades_.push_back({});
+        g = &live_grenades_.back();
+        g->object = scene_.spawn_object(grenade_def_.type, -3000 - int(live_grenades_.size()), eye, 0);
+    }
+    // Out of the right hand, along the view and a little up.
+    const glm::vec3 right = glm::normalize(glm::cross(aim, glm::vec3(0, 0, 1)) + glm::vec3(1e-4f));
+    g->pos = eye + aim * 0.4f + right * 0.2f - glm::vec3(0, 0, 0.15f);
+    float t = 1;
+    if (scene_.collision().raycast(eye, g->pos, t)) g->pos = eye;   // too close to a wall
+    g->vel = aim * (grenade_def_.speed * 0.6f) + glm::vec3(0, 0, 3.5f);
+    g->fuse = grenade_def_.fuse;
+    g->bounce_wait = 0;
+    g->live = true;
+    scene_.set_object_visible(g->object, true);
+    scene_.move_object(g->object, g->pos);
+    g->trail = grenade_def_.trail.empty() ? -1 : scene_.particles().start(grenade_def_.trail, glm::translate(glm::mat4(1), g->pos));
+}
+
+void Combat::update_grenades(float dt) {
+    constexpr float kGravity = 12.0f;
+    for (Grenade& g : live_grenades_) {
+        if (!g.live) continue;
+        g.bounce_wait = std::max(g.bounce_wait - dt, 0.0f);
+        g.vel.z -= kGravity * dt;
+        const glm::vec3 to = g.pos + g.vel * dt;
+        float t = 1;
+        glm::vec3 n(0, 0, 1);
+        if (glm::length(g.vel) > 1e-3f && scene_.collision().raycast(g.pos, to, t, nullptr, &n)) {
+            g.pos = glm::mix(g.pos, to, t) + n * 0.05f;
+            const float speed = glm::length(g.vel);
+            g.vel = glm::reflect(g.vel, n) * 0.4f;
+            if (n.z > 0.7f && glm::length(g.vel) < 1.0f) g.vel = glm::vec3(0);   // at rest
+            if (speed > 2.0f && g.bounce_wait <= 0) sound(grenade_def_.bounce_sound, &g.pos), g.bounce_wait = 0.15f;
+        } else {
+            g.pos = to;
+        }
+        g.spin += glm::length(g.vel) * dt * 4.0f;
+        scene_.set_object_transform(g.object, glm::rotate(glm::translate(glm::mat4(1), g.pos), g.spin, glm::vec3(1, 0, 0)));
+        if (g.trail >= 0) scene_.particles().move(g.trail, glm::translate(glm::mat4(1), g.pos));
+        if ((g.fuse -= dt) <= 0) {
+            g.live = false;
+            scene_.set_object_visible(g.object, false);
+            if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
+            explode(g.pos);
+        }
+    }
+}
+
+void Combat::explode(const glm::vec3& at) {
+    effect(grenade_def_.effect, at);
+    sound(grenade_def_.explode_sounds, &at);
+    const float r = grenade_def_.radius;
+    for (Target& t : targets_) {
+        if (!alive(t)) continue;
+        const LevelLogic::Object* o = logic_.object(t.id);
+        if (!o || !o->enabled) continue;
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
+        const float d = glm::distance(at, c);
+        if (d >= r || !line_clear(at + glm::vec3(0, 0, 0.2f), c)) continue;
+        apply_damage(t, grenade_def_.damage * (1 - d / r), true);
+    }
+    const float d = glm::distance(at, player_center());
+    if (d < r && line_clear(at + glm::vec3(0, 0, 0.2f), player_.eye())) {
+        damage_player(grenade_def_.damage * 0.5f * (1 - d / r), at);
+    }
+    if (d < r * 3) logic_.shake(400, 1.5f * (1 - d / (r * 3)));
+}
+
+
+
+int Combat::find_weapon(const std::string& name) const {
+    const std::string want = lower(name);
+    for (size_t i = 0; i < weapons_.size(); ++i)
+        if (lower(weapons_[i].name) == want || lower(weapon_types_[i]) == want) return int(i);
+    return -1;
+}
+
+int Combat::weapon_count() const {
+    int n = 0;
+    for (uint8_t o : owned_) n += o;
+    return n;
+}
+
+int Combat::owned_weapon(int k) const {
+    for (size_t i = 0; i < owned_.size(); ++i)
+        if (owned_[i] && k-- == 0) return int(i);
+    return -1;
+}
+
+int Combat::cycle_weapon(int step) const {
+    const int n = int(weapons_.size());
+    for (int k = 1; k < n; ++k) {
+        const int i = ((current_ + step * k) % n + n) % n;
+        if (owned_[size_t(i)]) return i;
+    }
+    return current_;
+}
+
+bool Combat::unlock_weapon(const std::string& name) {
+    if (lower(name) == "grenade") return grenades_enabled = true;
+    const int i = find_weapon(name);
+    if (i < 0) return false;
+    if (!owned_[size_t(i)]) {   // a new weapon comes loaded, with full reserves
+        owned_[size_t(i)] = 1;
+        clip_[size_t(i)] = weapons_[size_t(i)].clip;
+        reserve_[size_t(i)] = weapons_[size_t(i)].reserve;
+    }
+    return true;
+}
+
+bool Combat::lock_weapon(const std::string& name) {
+    if (lower(name) == "grenade") {
+        grenades_enabled = false;
+        return true;
+    }
+    const int i = find_weapon(name);
+    if (i < 0) return false;
+    owned_[size_t(i)] = 0;
+    if (i == current_) {
+        const int next = owned_weapon(0);
+        if (next >= 0) current_ = next, reload_left_ = 0;
+    }
+    return true;
+}
+
+bool Combat::use_weapon(const std::string& name) {
+    const int i = find_weapon(name);
+    if (i < 0) return false;
+    unlock_weapon(name);
+    if (i != current_) current_ = i, reload_left_ = 0, fire_cooldown_ = 0.4f;
+    return true;
+}
+
+bool Combat::give_ammo(const std::string& name, int amount) {
+    if (lower(name) == "grenade") {
+        grenades = std::max(grenades + amount, 0);
+        return true;
+    }
+    const int i = find_weapon(name);
+    if (i < 0) return false;
+    int& r = reserve_[size_t(i)];
+    const int max = weapons_[size_t(i)].reserve;
+    if (r >= 0) r = max >= 0 ? std::min(r + amount, max) : r + amount;
+    return true;
+}
+
+void Combat::campaign_loadout(const std::string& level) {
+    // Campaign order: San Francisco 1 and 2, then the rest. Later levels start with what
+    // the San Francisco levels unlock.
+    const std::string l = lower(level);
+    if (l.find("san_francisco_1") != std::string::npos) return;
+    for (const char* w : {"AutomaticShotGun", "HandGun"}) unlock_weapon(w);
+    if (l.find("san_francisco_2") == std::string::npos) unlock_weapon("SniperRifle");
+    grenades = std::max(grenades, 3);
 }
 
 const Value* Combat::component(const LevelObject& o, int comp) const {
@@ -210,6 +403,8 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
 
 void Combat::start() {
     nav_.build(scene_.level());
+    live_grenades_.clear();   // their objects went with the old level
+    throw_delay_ = -1;
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
@@ -989,6 +1184,17 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     regen_delay_ -= dt;
     if (regen_delay_ <= 0 && player_health < player_max_health)
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);
+
+    // Grenades: the throw animation starts, the grenade leaves the hand a moment later.
+    grenade_cooldown_ = std::max(grenade_cooldown_ - dt, 0.0f);
+    if (in.grenade && grenades_enabled && grenades > 0 && grenade_cooldown_ <= 0 && throw_delay_ < 0) {
+        --grenades;
+        throw_delay_ = 0.35f;
+        grenade_cooldown_ = 1.0f;
+        throw_started_ = true;
+    }
+    if (throw_delay_ >= 0 && (throw_delay_ -= dt) < 0) throw_grenade(eye, aim);
+    update_grenades(dt);
 
     // Weapon.
     if (in.select >= 0 && in.select < int(weapons_.size()) && in.select != current_) {

@@ -44,15 +44,16 @@ bool TouchControls::in_frame(int frame, glm::vec2 anchor, glm::vec2 at, float gr
 }
 
 TouchControls::Part TouchControls::hit(glm::vec2 at) const {
-    if (in_frame(kAim, cluster_, at, 0)) return Part::Aim;
-    if (in_frame(kPower, cluster_, at, 0)) return Part::Power;
-    if (in_frame(kJump, cluster_, at, 0)) return Part::Jump;
-    if (glm::distance(at, cluster_) < 80 * scale_) return Part::Fire;
-    if (in_frame(kSprint, pad_, at, 4 * scale_)) return Part::Sprint;
+    if (shown.aim && in_frame(kAim, cluster_, at, 0)) return Part::Aim;
+    if (shown.power && in_frame(kPower, cluster_, at, 0)) return Part::Power;
+    if (shown.jump && in_frame(kJump, cluster_, at, 0)) return Part::Jump;
+    if (shown.fire && glm::distance(at, cluster_) < 80 * scale_) return Part::Fire;
+    if (shown.sprint && in_frame(kSprint, pad_, at, 4 * scale_)) return Part::Sprint;
     if (std::abs(at.x - weapons_.x) < 50 * sx_ && std::abs(at.y - weapons_.y) < 22 * sy_) return Part::Weapons;
     if (std::abs(at.x - grenades_.x) < 28 * sx_ && std::abs(at.y - grenades_.y) < 20 * sy_) return Part::Grenades;
     // The walk pad: on it, or anywhere low on the left (it moves under the finger).
-    if (glm::distance(at, pad_) < pad_radius_ * 1.6f || (at.x < float(w_) * 0.4f && at.y > float(h_) * 0.3f)) return Part::Pad;
+    if (shown.pad && (glm::distance(at, pad_) < pad_radius_ * 1.6f || (at.x < float(w_) * 0.4f && at.y > float(h_) * 0.3f)))
+        return Part::Pad;
     return Part::Look;
 }
 
@@ -101,6 +102,7 @@ void TouchControls::up(int64_t id, glm::vec2 at) {
         if (std::abs(dx) > 20 * sx_) pending_.weapon_step = dx < 0 ? 1 : -1;
         else pending_.reload = true;
     }
+    if (t->part == Part::Grenades && glm::distance(at, t->start) < 20 * sx_) pending_.grenade = true;
     if (t->part == Part::Pad) run_ = false;   // sprinting stops with the walk
     touches_.erase(touches_.begin() + (t - touches_.data()));
 }
@@ -137,21 +139,25 @@ void TouchControls::draw(ParticleList& out) {
     };
     const glm::vec4 white(1);
     // Walk pad: the ring at rest; held, the base with the knob under the finger.
-    if (const Touch* t = held(Part::Pad)) {
-        glm::vec2 d = t->at - pad_center_;
-        if (glm::length(d) > pad_radius_) d = glm::normalize(d) * pad_radius_;
-        hud_.draw_frame(out, *s, kPadBase, pad_center_, scale_, white);
-        hud_.draw_frame(out, *s, kPadKnob, pad_center_ + d, scale_, white);
-    } else {
-        hud_.draw_frame(out, *s, kPadRing, pad_, scale_, white);
+    if (shown.pad) {
+        if (const Touch* t = held(Part::Pad)) {
+            glm::vec2 d = t->at - pad_center_;
+            if (glm::length(d) > pad_radius_) d = glm::normalize(d) * pad_radius_;
+            hud_.draw_frame(out, *s, kPadBase, pad_center_, scale_, white);
+            hud_.draw_frame(out, *s, kPadKnob, pad_center_ + d, scale_, white);
+        } else {
+            hud_.draw_frame(out, *s, kPadRing, pad_, scale_, white);
+        }
     }
-    hud_.draw_frame(out, *s, kSprint, pad_, scale_, run_ ? glm::vec4(0.6f, 1, 1, 1) : glm::vec4(1, 1, 1, 0.75f));
-    hud_.draw_frame(out, *s, held(Part::Fire) ? kFirePressed : kFire, cluster_, scale_, white);
-    const bool power = held(Part::Power) != nullptr;
-    hud_.draw_frame(out, *s, power ? kPowerPressed : kPower, cluster_, scale_, white);
-    hud_.draw_frame(out, *s, power ? kPowerIconPressed : kPowerIcon, cluster_, scale_, white);
-    hud_.draw_frame(out, *s, aim_ ? kAimOn : kAim, cluster_, scale_, white);
-    hud_.draw_frame(out, *s, held(Part::Jump) ? kJumpPressed : kJump, cluster_, scale_, white);
+    if (shown.sprint) hud_.draw_frame(out, *s, kSprint, pad_, scale_, run_ ? glm::vec4(0.6f, 1, 1, 1) : glm::vec4(1, 1, 1, 0.75f));
+    if (shown.fire) hud_.draw_frame(out, *s, held(Part::Fire) ? kFirePressed : kFire, cluster_, scale_, white);
+    if (shown.power) {
+        const bool power = held(Part::Power) != nullptr;
+        hud_.draw_frame(out, *s, power ? kPowerPressed : kPower, cluster_, scale_, white);
+        hud_.draw_frame(out, *s, power ? kPowerIconPressed : kPowerIcon, cluster_, scale_, white);
+    }
+    if (shown.aim) hud_.draw_frame(out, *s, aim_ ? kAimOn : kAim, cluster_, scale_, white);
+    if (shown.jump) hud_.draw_frame(out, *s, held(Part::Jump) ? kJumpPressed : kJump, cluster_, scale_, white);
 }
 
 }  // namespace nova

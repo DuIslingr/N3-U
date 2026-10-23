@@ -559,6 +559,44 @@ int api_enable_shoot_control(lua_State* L) {
     if (Combat* c = ctx(L).combat) c->shoot_enabled = lua_toboolean(L, 1) != 0;
     return 0;
 }
+// Enable<Kind>Control(bool): CBaseControlScheme::Enable*Control and the interface's own
+// buttons (weapons, items, powers).
+template <bool LevelLogic::Controls::*Flag>
+int api_enable_control(lua_State* L) {
+    ctx(L).controls.*Flag = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+int api_enable_hud(lua_State* L) {
+    ctx(L).hud_enabled = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+int api_force_interface_in_cinematic(lua_State* L) {
+    ctx(L).interface_in_cinematic = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+// SetCrtWeaponState(state): play a state of the current weapon (GetUp, GetDown, Idle,
+// UnAim, GetWeapon, Weapon_Show_Off).
+int api_set_crt_weapon_state(lua_State* L) {
+    ctx(L).weapon_state = str_arg(L, 1);
+    return 0;
+}
+// Weapons by name: UnlockWeapon, LockWeapon, UseWeapon(name); GiveAmmo(name, amount).
+int api_unlock_weapon(lua_State* L) {
+    if (Combat* c = ctx(L).combat; c && !c->unlock_weapon(str_arg(L, 1))) ctx(L).log("UnlockWeapon: no weapon " + str_arg(L, 1));
+    return 0;
+}
+int api_lock_weapon(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->lock_weapon(str_arg(L, 1));
+    return 0;
+}
+int api_use_weapon(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->use_weapon(str_arg(L, 1));
+    return 0;
+}
+int api_give_ammo(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->give_ammo(str_arg(L, 1), int(lua_tointeger(L, 2)));
+    return 0;
+}
 int api_get_health_mc(lua_State* L) {   // the player ("MC": main character)
     Combat* c = ctx(L).combat;
     lua_pushnumber(L, c ? c->player_health : 100);
@@ -678,6 +716,21 @@ const Entry kImplemented[] = {
     {"KillAllEnemies", api_kill_all_enemies},
     {"GiveDamage", api_give_damage},
     {"EnableShootControl", api_enable_shoot_control},
+    {"EnableMoveControl", api_enable_control<&LevelLogic::Controls::move>},
+    {"EnableRotateControl", api_enable_control<&LevelLogic::Controls::rotate>},
+    {"EnableJumpControl", api_enable_control<&LevelLogic::Controls::jump>},
+    {"EnableIronSightControl", api_enable_control<&LevelLogic::Controls::aim>},
+    {"EnableRushControl", api_enable_control<&LevelLogic::Controls::rush>},
+    {"EnablePowersControl", api_enable_control<&LevelLogic::Controls::powers>},
+    {"EnableWeaponsControl", api_enable_control<&LevelLogic::Controls::weapons>},
+    {"EnableItemsControl", api_enable_control<&LevelLogic::Controls::items>},
+    {"EnableHud", api_enable_hud},
+    {"ForceInterfaceInCinematic", api_force_interface_in_cinematic},
+    {"SetCrtWeaponState", api_set_crt_weapon_state},
+    {"UnlockWeapon", api_unlock_weapon},
+    {"LockWeapon", api_lock_weapon},
+    {"UseWeapon", api_use_weapon},
+    {"GiveAmmo", api_give_ammo},
     {"GetHealthMC", api_get_health_mc},
     {"GiveDamageMC", api_give_damage_mc},
     {"GetRandom", api_get_random},

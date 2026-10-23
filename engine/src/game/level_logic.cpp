@@ -261,6 +261,7 @@ void LevelLogic::start(bool keep_player) {
     if (!keep_player) fading_ = false, shake_left_ = 0;
     anim_sounds_->clear();
     if (!keep_player) post = PostParams{}, post_fades_.clear();
+    if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear();
     objects_.clear();
     triggers_.clear();
     doors_.clear();

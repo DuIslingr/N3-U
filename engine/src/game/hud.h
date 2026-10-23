@@ -28,6 +28,7 @@ public:
         int clip = 0, reserve = 0;   // ammo
         int clip_size = 1;
         bool grenades = false;
+        int grenade_count = 0;
         std::string weapon_sprite;   // the weapon's .bsprite: frame 0 is its icon
     };
     // A prompt with touch-button glyphs (^NN^: frames of tutorial.bsprite) drawn inline,

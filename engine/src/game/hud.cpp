@@ -170,6 +170,15 @@ void Hud::frame(FrameParams& f, int w, int h, const State& s, TextRenderer* numb
         const glm::vec2 ndc = glm::vec2(c) / std::max(c.w, 1e-4f);
         return glm::vec2((ndc.x * 0.5f + 0.5f) * float(w), (0.5f - ndc.y * 0.5f) * float(h));
     };
+    // The grenade count under the grenade button.
+    if (numbers && s.grenades) {
+        glm::vec3 at;
+        if (scene_.node_position(object_, "grenade_button", at)) {
+            const glm::vec2 p = screen(at);
+            numbers->draw(sprites, std::to_string(s.grenade_count), {p.x + float(h) * 0.01f, p.y + float(h) * 0.025f}, w,
+                          glm::vec4(0.75f, 0.95f, 1, 1), {0.5f, 0.0f});
+        }
+    }
     // The ammo gauge follows the panel; its bar fills to the clip's share, left to right.
     // (CHud::Init hangs the HUDAmmoIndicator object on the "weapons" node, at its origin.)
     scene_.set_object_transform(ammo_, scene_.object_matrix(object_, "weapons"));

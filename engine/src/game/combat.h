@@ -16,6 +16,7 @@
 #include <functional>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -67,6 +68,7 @@ struct NpcGoal {
 
 struct CombatInput {
     bool fire = false, reload = false;
+    bool grenade = false;              // throw a grenade
     int select = -1;                   // weapon slot to switch to
 };
 
@@ -125,7 +127,22 @@ public:
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
-    int weapon_count() const { return int(weapons_.size()); }
+    // Weapons the player has (unlocked); `select` indices for CombatInput.
+    int weapon_count() const;
+    int owned_weapon(int k) const;          // the k-th weapon the player has, -1 if none
+    int cycle_weapon(int step) const;       // the next (step +1) or previous (-1) one the player has
+    // Script API (UnlockWeapon, LockWeapon, UseWeapon, GiveAmmo): weapons by their name
+    // (CComponentWeapon [0], e.g. AutomaticShotGun) or gol type; "Grenade" is the grenades.
+    bool unlock_weapon(const std::string& name);
+    bool lock_weapon(const std::string& name);
+    bool use_weapon(const std::string& name);
+    bool give_ammo(const std::string& name, int amount);
+    // The weapons earlier campaign levels unlocked, when a later level is started directly.
+    void campaign_loadout(const std::string& level);
+    int grenades = 0;
+    bool grenades_enabled = true;
+    // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
+    bool take_grenade_throw() { return std::exchange(throw_started_, false); }
     float since_shot() const { return since_shot_; }   // seconds since the last shot
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
@@ -250,6 +267,29 @@ private:
     std::vector<std::string> player_hurt_sounds_;
     float player_hurt_wait_ = 0;
     void fire_player(const glm::vec3& eye, const glm::vec3& aim);
+    // Grenades (CGrenadeComponent of Grenade_Player): thrown along the view, they bounce
+    // off the level and explode when the fuse runs out, hurting everything in the radius.
+    struct GrenadeDef {
+        int type = -1;
+        float fuse = 2.3f, damage = 40, radius = 10, speed = 25;
+        std::string effect = "explosion", trail, bounce_sound;
+        std::vector<std::string> explode_sounds;
+    };
+    struct Grenade {
+        size_t object = size_t(-1);
+        glm::vec3 pos{0}, vel{0};
+        float fuse = 0, bounce_wait = 0, spin = 0;
+        int trail = -1;
+        bool live = false;
+    };
+    void load_grenade();
+    void throw_grenade(const glm::vec3& eye, const glm::vec3& aim);
+    void update_grenades(float dt);
+    void explode(const glm::vec3& at);
+    GrenadeDef grenade_def_;
+    std::vector<Grenade> live_grenades_;
+    float throw_delay_ = -1, grenade_cooldown_ = 0;
+    bool throw_started_ = false;
     void fire_bolt(Target& t);
     // Ray against targets: index and distance, -1 if none within `max_t`.
     int ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t, float& t_hit, glm::vec3& point) const;
@@ -272,6 +312,8 @@ private:
     std::vector<int> clip_, reserve_;
     int current_ = 0;
     std::vector<std::string> weapon_types_;
+    std::vector<uint8_t> owned_;
+    int find_weapon(const std::string& name) const;
     float since_shot_ = 100;
     float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
     bool trigger_held_ = false;

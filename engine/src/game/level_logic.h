@@ -57,6 +57,15 @@ public:
     };
     StringTable strings;             // MAIN and the level's table (English)
     InputScheme input = default_input_scheme();   // prompts are worded for it
+    // Player controls the scripts switch on and off (Enable<Kind>Control); disabled ones
+    // ignore input and their touch buttons are hidden.
+    struct Controls {
+        bool move = true, rotate = true, shoot = true, jump = true, aim = true, rush = true, powers = true, weapons = true,
+             items = true;
+    } controls;
+    bool hud_enabled = true;               // EnableHud
+    bool interface_in_cinematic = false;   // ForceInterfaceInCinematic: the HUD stays up in a cinematic
+    std::string weapon_state;              // SetCrtWeaponState request, taken by the view model
     const std::deque<Message>& messages() const { return messages_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function

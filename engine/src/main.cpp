@@ -66,6 +66,7 @@ struct Options {
     float walk_test = 0;
     bool log_player = false;    // print the player's state every second (interactive)
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
+    float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
@@ -128,6 +129,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--trace-zones") o.trace_zones = true;
         else if (a == "--log-player") o.log_player = true;
         else if (a == "--combat-test") o.combat_test = std::stof(next());
+        else if (a == "--grenade-test") o.grenade_test = std::stof(next());
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
@@ -349,12 +351,16 @@ int main(int argc, char** argv) {
                 hud_sprites.batches.clear();
                 if (opt.scripts) {
                     Hud::State hs;
-                    hs.visible = !combat.player_dead && !logic.player_locked();
+                    hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic);
                     hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
+                    hs.grenades = combat.grenades_enabled && logic.controls.items;
+                    hs.grenade_count = combat.grenades;
                     hs.weapon_sprite = combat.weapon_sprite();
                     hs.clip_size = combat.clip_size();
                     hud.frame(f, w, h, hs, &hud_numbers, hud_sprites);
                     if (logic.input == InputScheme::Touch && hs.visible) {
+                        const LevelLogic::Controls& lc = logic.controls;
+                        touch.shown = {lc.move, lc.move && lc.rush, lc.shoot && combat.shoot_enabled, lc.aim, lc.jump, lc.powers};
                         touch.layout(w, h);
                         touch.draw(hud_sprites);
                     } else {
@@ -377,6 +383,7 @@ int main(int argc, char** argv) {
                 std::printf("scripts: %zu chunks (%zu with errors), %zu objects, %zu triggers, %zu doors, %zu usable\n",
                             ls.chunks, ls.chunk_errors, ls.objects, ls.triggers, ls.doors, ls.interactive);
                 combat.start();
+                combat.campaign_loadout(opt.level);
                 viewmodel.start();
                 hud.start();
                 if (opt.list_actors)
@@ -594,6 +601,15 @@ int main(int argc, char** argv) {
                     if (opt.scripts) {
                         CombatInput ci;
                         glm::vec3 aim = player.view_forward(), target;
+                        if (opt.grenade_test >= 0 && t <= opt.grenade_test && t + kPhysicsStep > opt.grenade_test) {
+                            if (combat.nearest_enemy(player.eye(), target)) {
+                                const glm::vec3 d = target - player.eye();
+                                aim = glm::normalize(d + glm::vec3(0, 0, glm::length(d) * 0.25f));   // lob it
+                            }
+                            combat.give_ammo("Grenade", 1);
+                            ci.grenade = true;
+                            std::printf("t=%.2f grenade thrown, %d enemies alive\n", t, combat.enemies_alive());
+                        }
                         if (opt.combat_test > 0 && combat.nearest_enemy(player.eye(), target)) {
                             aim = glm::normalize(target - player.eye());
                             player.yaw = glm::degrees(std::atan2(-aim.x, aim.y));
@@ -616,6 +632,7 @@ int main(int argc, char** argv) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
                         vm.visible = !combat.player_dead && !logic.player_locked();
+                        if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
                         viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
@@ -650,6 +667,7 @@ int main(int argc, char** argv) {
                     ViewModel::Input vm;
                     vm.weapon = combat.weapon_type();
                     vm.visible = !combat.player_dead && !logic.player_locked();
+                    if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                     vm.firing = combat.since_shot() < 0.2f;
                     vm.reloading = combat.reloading();
                     viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
@@ -784,21 +802,21 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts) logic.use();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) fire_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) aim_held = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) aim_held = false;
                         if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false, aim_held = false;
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_1) combat_in.select = 0;
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_2) combat_in.select = 1;
+                        // Weapons: number keys pick the n-th weapon the player has; the wheel cycles.
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key >= SDLK_1 && e.key.key <= SDLK_9 && logic.controls.weapons)
+                            combat_in.select = combat.owned_weapon(int(e.key.key - SDLK_1));
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F3 && !e.key.repeat) {
                             scene.set_game_shaders(!scene.game_shaders());
                         }
-                        if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && combat.weapon_count() > 1) {   // cycle weapons
-                            const int n = combat.weapon_count();
-                            combat_in.select = (combat.current_weapon() + (e.wheel.y < 0 ? 1 : n - 1)) % n;
-                        }
-                        if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && logic.player_locked())) {
+                        if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
+                            combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
+                        if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || !logic.controls.rotate))) {
                             const float k = 0.12f * cam.fov / kFov;   // slower while aiming
                             cam.yaw -= e.motion.xrel * k;
                             cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k, -89.0f, 89.0f);
@@ -827,9 +845,10 @@ int main(int argc, char** argv) {
                     }
                     const bool* keys = SDL_GetKeyboardState(nullptr);
                     const TouchControls::Output touch_in = touch_mode ? touch.take() : TouchControls::Output{};
-                    {   // aim mode: the view narrows (right mouse button held, or the aim button)
-                        const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead &&
-                                            (touch_mode ? touch_in.aim : aim_held);
+                    // Aim mode: the view narrows (right mouse button held, or the aim button).
+                    const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead && logic.controls.aim &&
+                                        (touch_mode ? touch_in.aim : aim_held);
+                    {
                         const float target = aiming ? kAimFov : kFov;
                         cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
                     }
@@ -848,13 +867,18 @@ int main(int argc, char** argv) {
                         PlayerInput in;
                         const bool locked = opt.scripts && logic.player_locked();   // cinematics
                         if (!locked) {
-                            in.forward = glm::clamp(float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]) + touch_in.forward, -1.0f, 1.0f);
-                            in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
-                            in.jump = keys[SDL_SCANCODE_SPACE] || touch_in.jump;
-                            in.run = keys[SDL_SCANCODE_LSHIFT] || touch_in.run;
-                            const float k = cam.fov / kFov;
-                            cam.yaw += touch_in.look.x * k;
-                            cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k, -89.0f, 89.0f);
+                            const LevelLogic::Controls& lc = logic.controls;   // all on without scripts
+                            if (lc.move) {
+                                in.forward = glm::clamp(float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]) + touch_in.forward, -1.0f, 1.0f);
+                                in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
+                            }
+                            in.jump = lc.jump && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
+                            in.run = lc.rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
+                            if (lc.rotate) {
+                                const float k = cam.fov / kFov;
+                                cam.yaw += touch_in.look.x * k;
+                                cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k, -89.0f, 89.0f);
+                            }
                         }
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
                         player.yaw = cam.yaw;
@@ -870,10 +894,8 @@ int main(int argc, char** argv) {
                             if (touch_mode) {
                                 combat_in.fire = !locked && touch_in.fire;
                                 combat_in.reload |= touch_in.reload;
-                                if (touch_in.weapon_step != 0 && combat.weapon_count() > 1) {
-                                    const int n = combat.weapon_count();
-                                    combat_in.select = (combat.current_weapon() + touch_in.weapon_step + n) % n;
-                                }
+                                combat_in.grenade |= touch_in.grenade && logic.controls.items;
+                                if (touch_in.weapon_step != 0 && logic.controls.weapons) combat_in.select = combat.cycle_weapon(touch_in.weapon_step);
                             } else {
                                 combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
                             }
@@ -904,6 +926,10 @@ int main(int argc, char** argv) {
                         ViewModel::Input vm;
                         vm.weapon = combat.weapon_type();
                         vm.visible = !flying && !combat.player_dead && !logic.player_locked();
+                        if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
+                        if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
+                        vm.aiming = aiming;
+                        vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
                         const bool* k = SDL_GetKeyboardState(nullptr);
                         vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D] ||
                                                          touch_in.forward != 0 || touch_in.right != 0);

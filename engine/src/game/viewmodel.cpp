@@ -31,13 +31,7 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
     if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1)
         for (const Value& st : (*v)[1].list) {
             if (st.size() < 12 || st[11].size() == 0 || st[11][0].size() == 0) continue;
-            const std::string& name = st[0].s;
-            const std::string& clip = st[11][0][0].s;
-            if (name == "Idle") c.idle = clip;
-            else if (name == "Walk") c.walk = clip;
-            else if (name == "Attack_Loop") c.fire = clip;
-            else if (name == "Reload") c.reload = clip;
-            else if (name == "GetWeapon") c.show = clip;
+            c.states[st[0].s] = st[11][0][0].s;
         }
     return c;
 }
@@ -47,8 +41,9 @@ void ViewModel::start() {
     if (!type_named(gol_, "AssaultRifle_Player", &type)) return;
     object_ = scene_.spawn_object(type, -1000, glm::vec3(0), 0);
     scene_.set_object_viewmodel(object_);
-    weapon_.clear(), playing_.clear();
-    visible_ = false;
+    weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear();
+    visible_ = false, lowered_ = false, was_reloading_ = false;
+    once_left_ = 0;
 }
 
 void ViewModel::show_weapon(const std::string& node) {
@@ -56,26 +51,58 @@ void ViewModel::show_weapon(const std::string& node) {
         if (n.rfind("WEAPON_", 0) == 0 && n.find("_PIVOT") == std::string::npos) scene_.set_node_visible(object_, n, n == node);
 }
 
+void ViewModel::set_state(const std::string& state) { requested_ = state; }
+
+void ViewModel::play_once(const std::string& clip, bool reverse) {
+    if (clip.empty() || !scene_.play_clip(object_, clip, false, reverse)) return;
+    playing_ = clip;
+    Scene::ClipState cs;
+    once_left_ = scene_.clip_state(object_, cs) ? cs.length / 1000.0f : 0.5f;
+}
+
 void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitch_deg, const Input& in) {
     if (object_ == size_t(-1)) return;
     if (in.visible != visible_) scene_.set_object_visible(object_, in.visible), visible_ = in.visible;
     if (!in.visible) return;
     const Clips& c = clips(in.weapon);
-    if (in.weapon != weapon_) {
+    once_left_ = std::max(once_left_ - dt, 0.0f);
+    if (in.weapon != weapon_) {   // switched: the new weapon comes up
         weapon_ = in.weapon;
         show_weapon(c.node);
-        switch_time_ = 0.6f;
-        if (!c.show.empty()) scene_.play_clip(object_, c.show, false), playing_ = c.show;
+        lowered_ = false;
+        play_once(c.get("GetUp").empty() ? c.get("GetWeapon") : c.get("GetUp"));
     }
-    switch_time_ = std::max(switch_time_ - dt, 0.0f);
-    std::string want = c.idle;
-    if (in.reloading && !c.reload.empty()) want = c.reload;
-    else if (in.firing && !c.fire.empty()) want = c.fire;
-    else if (switch_time_ > 0 && !c.show.empty()) want = c.show;
-    else if (in.moving && !c.walk.empty()) want = c.walk;
-    if (!want.empty() && want != playing_) {
-        scene_.play_clip(object_, want, want != c.reload && want != c.show);
-        playing_ = want;
+    if (!requested_.empty()) {
+        const std::string r = requested_;
+        requested_.clear();
+        if (r == "GetDown") {
+            play_once(c.get("GetDown"), true);   // the switch clip backwards: the weapon goes down
+            lowered_ = true;
+        } else if (r == "ThrowGrenade") {   // the throw, then back to the weapon
+            lowered_ = false;
+            play_once(c.get("ThrowGrenade"));
+            queued_ = c.get("ThrowGrenade_End");
+        } else if (r == "Idle" || r == "UnAim") {
+            lowered_ = false, once_left_ = 0;
+            if (r == "UnAim") play_once(c.get("UnAim"));
+        } else {
+            lowered_ = false;
+            play_once(c.get(r));
+        }
+    }
+    if (once_left_ <= 0 && !queued_.empty()) play_once(queued_), queued_.clear();
+    if (in.reloading && !was_reloading_) play_once(c.get("Reload"));
+    was_reloading_ = in.reloading;
+    if (once_left_ <= 0 && !lowered_) {
+        std::string want;
+        if (in.aiming) want = in.firing ? c.get("AimAttack") : in.moving ? c.get("AimWalk") : c.get("AimIdle");
+        else if (in.firing) want = c.get("Attack_Loop");
+        else if (in.moving) want = in.running && !c.get("RushWalk").empty() ? c.get("RushWalk") : c.get("Walk");
+        if (want.empty()) want = c.get("Idle");
+        if (!want.empty() && want != playing_) {
+            scene_.play_clip(object_, want, true);
+            playing_ = want;
+        }
     }
     // The rig's camera (Collada: looking down -Z) turned to look along +Y, in rig space.
     glm::mat4 placement = scene_.object_matrix(object_);

@@ -35,13 +35,17 @@ public:
         float forward = 0, right = 0;   // the walk pad, -1..1
         glm::vec2 look{0};              // degrees to turn: yaw (left +), pitch (up +)
         bool fire = false, jump = false, run = false, aim = false;
-        bool reload = false;
+        bool reload = false, grenade = false;
         int weapon_step = 0;            // +1 next weapon, -1 previous
     };
     // This frame's input; turning and taps are consumed.
     Output take();
 
     void draw(ParticleList& out);
+    // Controls the scripts have switched off are hidden and ignore touches.
+    struct Shown {
+        bool pad = true, sprint = true, fire = true, aim = true, jump = true, power = true;
+    } shown;
     glm::vec2 pad_anchor() const { return pad_; }
 
 private:
