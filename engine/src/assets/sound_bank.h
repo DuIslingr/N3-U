@@ -48,5 +48,8 @@ struct SoundTable {
 };
 
 SoundTable parse_sound_table(const std::string& xml);
+// Add another version's table (the iOS build's) to `into`: its sounds and events whose
+// labels `into` lacks, their banks and groups matched by name.
+void merge_sound_table(SoundTable& into, const SoundTable& extra);
 
 }  // namespace nova

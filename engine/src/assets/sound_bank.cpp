@@ -130,4 +130,48 @@ SoundTable parse_sound_table(const std::string& xml) {
     return t;
 }
 
+void merge_sound_table(SoundTable& into, const SoundTable& extra) {
+    // Banks and groups by name: the uids differ between the tables.
+    auto bank_uid = [&](int uid) {
+        auto it = extra.banks.find(uid);
+        if (it == extra.banks.end()) return uid;
+        for (const auto& [u, b] : into.banks)
+            if (b.name == it->second.name) return u;
+        int fresh = 1000 + int(into.banks.size());
+        into.banks[fresh] = it->second;
+        return fresh;
+    };
+    auto group_uid = [&](int uid) {
+        auto it = extra.groups.find(uid);
+        if (it == extra.groups.end()) return uid;
+        for (const auto& [u, g] : into.groups)
+            if (g.name == it->second.name) return u;
+        int fresh = 1000 + int(into.groups.size());
+        into.groups[fresh] = it->second;
+        return fresh;
+    };
+    std::unordered_map<int, int> uid_map;   // extra uid -> into uid
+    for (const SoundDef& s : extra.sounds) {
+        if (s.uid < 0) continue;
+        if (const SoundDef* have = into.sound(s.label)) {
+            uid_map[s.uid] = have->uid;
+            continue;
+        }
+        SoundDef d = s;
+        d.uid = int(into.sounds.size());
+        d.bank = bank_uid(s.bank), d.group = group_uid(s.group);
+        uid_map[s.uid] = d.uid;
+        into.by_label_.emplace(lower(d.label), d.uid);
+        into.by_file_.emplace(lower(strip_ext(d.filename)), d.uid);
+        into.sounds.push_back(std::move(d));
+    }
+    for (const SoundEvent& e : extra.events) {
+        if (into.event(e.label)) continue;
+        SoundEvent n = e;
+        for (int& u : n.sounds) u = uid_map.count(u) ? uid_map[u] : -1;
+        into.event_by_label_.emplace(lower(n.label), int(into.events.size()));
+        into.events.push_back(std::move(n));
+    }
+}
+
 }  // namespace nova

@@ -12,6 +12,7 @@
 
 namespace nova {
 
+class Audio;
 class Combat;
 struct Settings;
 
@@ -26,6 +27,7 @@ public:
         bool item = false;               // the ITEM tab (else UPGRADE)
     };
     void load(const Gol& gol);
+    Audio* audio = nullptr;   // a purchase's sound (the iOS build's sfx_menu_nova3_*)
     const std::vector<Item>& items() const { return items_; }
 
     // CUpgradesManager::GetUpgradeCost: the list's cost by the difficulty's factor

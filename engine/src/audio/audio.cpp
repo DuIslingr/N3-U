@@ -25,9 +25,14 @@ struct Lock {
 Audio::Audio(const Vfs& vfs, bool device) : vfs_(vfs) {
     SDL_SetHint(SDL_HINT_WAVE_TRUNCATION, "dropframe");   // keep partial last blocks (vxn segments)
     SDL_SetHint(SDL_HINT_WAVE_FACT_CHUNK, "ignore");
-    if (vfs_.exists("NOVA3_VOX_SDD.xml")) {
-        const Bytes xml = vfs_.read("NOVA3_VOX_SDD.xml");
-        table_ = parse_sound_table(std::string(xml.begin(), xml.end()));
+    // The table of the main data, then any other version's mounted after it (the iOS
+    // build's adds sounds this one lacks, such as the shop's).
+    const auto& tables = vfs_.find("NOVA3_VOX_SDD.xml");
+    for (size_t i = 0; i < tables.size(); ++i) {
+        const Bytes xml = vfs_.read(tables[i]);
+        SoundTable t = parse_sound_table(std::string(xml.begin(), xml.end()));
+        if (i == 0) table_ = std::move(t);
+        else merge_sound_table(table_, t);
     }
     if (!device) {
         offline_ = true;
@@ -269,7 +274,7 @@ int Audio::start(const SoundDef& def, const Params& p, const std::string& tag) {
     v.def = &def;
     v.tag = tag;
     v.loop = p.loop < 0 ? def.loop : p.loop != 0;
-    v.gain = p.gain;
+    v.gain = p.gain, v.ui = p.ui;
     if (c->interactive()) {   // its first state's playlist, which says what loops
         v.loop = false;
         set_state(v, 0);
@@ -493,7 +498,7 @@ void Audio::render(float* out, int frames) {
 void Audio::mix(float* out, int frames) {
     const float smooth = 1.0f / 256.0f;   // 3D gain changes glide over ~5 ms
     for (Voice& v : voices_) {
-        if (paused_ && !(v.def && !unpaused_.empty() && v.def->label == unpaused_)) continue;   // held
+        if (paused_ && !v.ui && !(v.def && !unpaused_.empty() && v.def->label == unpaused_)) continue;   // held
         const std::vector<float>& s = v.clip->samples;
         const bool interactive = v.clip->interactive();
         size_t length = v.loop ? v.clip->loop_end : s.size() / 2;

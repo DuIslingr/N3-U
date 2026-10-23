@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "audio/audio.h"
 #include "game/combat.h"
 #include "game/settings.h"
 
@@ -65,6 +66,14 @@ bool Shop::buy(int i, Combat& combat, Settings& s) const {
     s.credits -= cost(i);
     if (!it.item) s.upgrades |= 1 << i;
     apply(it, combat);
+    // The iOS build's CUpgradesManager::ApplyUpgrade sounds (its sounds_hi has them, the
+    // Android one does not): the cores recharge the shield, the packs and the refill
+    // restock, the guns and upgrades are fitted.
+    if (audio) {
+        Audio::Params p;
+        p.ui = true;
+        audio->play(it.index <= 2 ? "sfx_menu_nova3_shield_recharge" : it.index <= 5 ? "sfx_menu_nova3_refill" : "sfx_menu_nova3_upgrade", p);
+    }
     return true;
 }
 

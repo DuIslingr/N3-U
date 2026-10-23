@@ -63,6 +63,9 @@ namespace {
 
 struct Options {
     std::string data = "work/data";
+    // Other versions' archives, mounted after the main data to fill what it lacks; by
+    // default the iOS build's app folder beside it (<data>/../ios/ipa/Payload/nova3.app).
+    std::vector<std::string> extra_data;
     std::string level = "levels/San_Francisco_1_FINAL.lvc";   // the campaign's first level
     std::vector<std::string> effects;   // --effect: started 6 m in front of the camera
     bool sound_check = false;           // decode every sound in the sound table and exit
@@ -124,6 +127,7 @@ Options parse(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "--data") o.data = next();
+        else if (a == "--extra-data") o.extra_data.push_back(next());
         else if (a == "--level") o.level = next(), o.level_given = true;
         else if (a == "--main-menu") o.main_menu_keys = next();
         else if (a == "--screenshot") o.screenshot = next();
@@ -312,6 +316,14 @@ int main(int argc, char** argv) {
     try {
         Vfs vfs;
         if (vfs.mount_directory(opt.data) == 0) throw std::runtime_error("no .gla archives in " + opt.data);
+        std::vector<std::string> extra = opt.extra_data;
+        if (extra.empty()) {
+            const std::filesystem::path ios = std::filesystem::path(opt.data) / ".." / "ios" / "ipa" / "Payload" / "nova3.app";
+            if (std::filesystem::is_directory(ios)) extra.push_back(ios.string());
+        }
+        for (const std::string& dir : extra)
+            if (dir == "none") break;   // --extra-data none: the main data alone
+            else if (const size_t n = vfs.mount_directory(dir)) std::printf("mounted %zu archives from %s\n", n, dir.c_str());
         const Gol gol = load_gol(vfs.read("gol.bin"));
         if (opt.sound_check) {
             Audio audio(vfs, false);
@@ -508,6 +520,7 @@ int main(int argc, char** argv) {
                 if (!g.write(save_path)) std::fprintf(stderr, "could not write %s\n", save_path.c_str());
             };
             if (!shop.items().empty()) menu.shop = &shop, menu.combat = &combat;
+            shop.audio = logic.audio;
             LensFlares flares(scene, logic);
             DeathScreen death;
             EndLevelScreen end_screen;

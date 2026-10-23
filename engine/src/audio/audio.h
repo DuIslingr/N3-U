@@ -44,6 +44,7 @@ public:
         int loop = -1;                         // -1: as the table says
         float fade_in_ms = 0;
         float gain = 1;
+        bool ui = false;                       // a menu's sound: plays while the game's are held
     };
     // Play a sound by label or file name; returns a handle, or -1.
     int play(const std::string& name, const Params& p);
@@ -119,7 +120,7 @@ private:
         // Interactive clips: the state's playlist and where in it; the segment left behind
         // at a state change fades out alongside.
         int state = 0, element = 0;
-        bool done = false;
+        bool done = false, ui = false;
         size_t tail_frame = 0, tail_end = 0;
         float tail_gain = 0, tail_step = 0;
     };
