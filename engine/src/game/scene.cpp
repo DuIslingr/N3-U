@@ -1317,6 +1317,25 @@ bool Scene::set_object_technique(size_t object, const std::string& material, con
     return any;
 }
 
+bool Scene::set_object_material(size_t object, const std::string& model_file, const std::string& material) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !game_shaders_) return false;
+    const Instance& inst = instances_[it->second];
+    const Material* source = nullptr;
+    if (!model_file.empty()) {
+        const LoadedModel* lm = model(model_file);
+        if (!lm) return false;
+        for (const Material& m : lm->cpu.materials)
+            if (m.id == material) source = &m;
+        if (!source) return false;
+    }
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count; ++i) {
+        if (!source) draws_[i].material = draw_materials_[i];
+        else if (const GpuMaterial* gm = materials_->get(*source, draw_info_[i].skinned)) draws_[i].material = gm;
+    }
+    return true;
+}
+
 void Scene::set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return;

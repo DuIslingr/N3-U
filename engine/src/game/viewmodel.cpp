@@ -63,6 +63,19 @@ void ViewModel::start() {
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
     current_ = -1, left_ = 0;
+    distort_ = false;
+}
+
+void ViewModel::arms_distort(bool on) {
+    if (on == distort_ || object_ == size_t(-1)) return;
+    distort_ = on && scene_.set_object_material(object_, "hand_mesh_new_distort.bdae", "armsDistort");
+    if (!on) scene_.set_object_material(object_, "", "");
+    distort_blend_ = -0.3f, distort_target_ = 0, distort_ms_ = 0;
+}
+
+void ViewModel::arms_distort_blend(float target, float ms) {
+    distort_target_ = target, distort_ms_ = ms;
+    if (ms < 1) distort_blend_ = target;
 }
 
 void ViewModel::show_weapon(const std::string& node) {
@@ -109,6 +122,14 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     }
     const Clips& c = clips(in.weapon);
     update_camera_layer(dt, c);
+    if (distort_) {   // PlayerComponent::distort_update
+        if (distort_ms_ > 0) {
+            distort_ms_ -= dt * 1000.0f;
+            distort_blend_ += (distort_target_ - distort_blend_) * (1.0f - std::pow(0.75f, dt * 30.0f));
+            if (distort_ms_ < 1) distort_blend_ = distort_target_;
+        }
+        scene_.set_object_param(object_, "BlendFactor", glm::vec4(distort_blend_), 1);
+    }
     // What is playing: a state that does not loop holds the rest off, except the moves
     // between the input's own states (aiming, sprinting, the fire's start and end, jumps,
     // landings), which the next of those cut short.

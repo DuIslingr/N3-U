@@ -523,6 +523,7 @@ void Game::run_window() {
             vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || mech);
             vm.cockpit = mech;
             if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
+            arms_distort();
             if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
             if (combat.take_power_used()) viewmodel.set_state("Repel");
             if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(aiming ? "IronSight_" + h : h);

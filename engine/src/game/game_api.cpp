@@ -853,6 +853,27 @@ int api_force_interface_in_cinematic(lua_State* L) {
     ctx(L).interface_in_cinematic = lua_toboolean(L, 1) != 0;
     return 0;
 }
+// Test_distort_start(): the weapon object's materials become hand_mesh_new_distort.bdae's
+// armsDistort at BlendFactor -0.3. Test_change_blend(value, ms) eases there over ms;
+// Test_distort_stop() puts its own materials back.
+int api_test_distort_start(lua_State* L) {
+    LevelLogic::ArmsDistort& d = ctx(L).arms_distort;
+    d.on = true, d.target = 0, d.ms = 0, ++d.serial;
+    return 0;
+}
+
+int api_test_distort_stop(lua_State* L) {
+    LevelLogic::ArmsDistort& d = ctx(L).arms_distort;
+    d.on = false, ++d.serial;
+    return 0;
+}
+
+int api_test_change_blend(lua_State* L) {
+    LevelLogic::ArmsDistort& d = ctx(L).arms_distort;
+    d.target = float(lua_tonumber(L, 1)), d.ms = float(lua_tonumber(L, 2)), ++d.serial;
+    return 0;
+}
+
 // SetCrtWeaponState(state): play a state of the current weapon (GetUp, GetDown, Idle,
 // UnAim, GetWeapon, Weapon_Show_Off).
 int api_set_crt_weapon_state(lua_State* L) {
@@ -1258,6 +1279,9 @@ const Entry kImplemented[] = {
     {"EnableHud", api_enable_hud},
     {"ForceInterfaceInCinematic", api_force_interface_in_cinematic},
     {"SetCrtWeaponState", api_set_crt_weapon_state},
+    {"Test_distort_start", api_test_distort_start},
+    {"Test_distort_stop", api_test_distort_stop},
+    {"Test_change_blend", api_test_change_blend},
     {"UnlockWeapon", api_unlock_weapon},
     {"LockWeapon", api_lock_weapon},
     {"UseWeapon", api_use_weapon},

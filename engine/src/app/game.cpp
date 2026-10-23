@@ -567,6 +567,14 @@ void Game::movement_states(bool aim) {
     if (const int l = combat.take_landing(); l >= 0) viewmodel.movement_state(kLanding[aim][l]);
 }
 
+void Game::arms_distort() {
+    const LevelLogic::ArmsDistort& d = logic.arms_distort;
+    if (d.serial == distort_serial) return;
+    distort_serial = d.serial;
+    viewmodel.arms_distort(d.on);
+    if (d.on) viewmodel.arms_distort_blend(d.target, d.ms);
+}
+
 int Game::run() {
     view_spawns = player.spawns, view_jumps = player.jumps;
     cam.position = opt.have_eye ? glm::vec3(opt.eye) : player.eye();

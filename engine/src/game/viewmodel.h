@@ -45,6 +45,12 @@ public:
     // y forward, z up); identity when none plays. The world is seen through it, the hands
     // stay where the rig's unmoved camera puts them.
     const glm::mat4& camera_offset() const { return camera_offset_; }
+    // PlayerComponent::distort_push / distort_pop / distort_change_blend: the rig drawn with
+    // hand_mesh_new_distort.bdae's armsDistort (the screen behind shows through it where its
+    // noise texture plus BlendFactor is under 0.5), BlendFactor from -0.3 eased to `target`
+    // over `ms` (a quarter of the way each 30 fps frame, then set).
+    void arms_distort(bool on);
+    void arms_distort_blend(float target, float ms);
 
 private:
     // The weapon's states set (CStatesSetComponent): each state's type, whether it loops,
@@ -99,6 +105,8 @@ private:
     std::string camera_request_, camera_clip_;
     float camera_ms_ = 0;
     glm::mat4 camera_offset_{1};
+    bool distort_ = false;
+    float distort_blend_ = 0, distort_target_ = 0, distort_ms_ = 0;
     void update_camera_layer(float dt, const Clips& c);
 };
 

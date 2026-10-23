@@ -227,6 +227,12 @@ private:
     };
     std::vector<VertexUpdate> vertex_updates_;
     void flush_vertex_updates(SDL_GPUCommandBuffer* cmd);
+    // A visible draw samples the screen behind it (ScreenTextureSampler); `which`: 0 the
+    // scene's draws, 1 the HUD's, -1 any.
+    bool reads_screen(const std::vector<DrawItem>& items, int which = -1) const;
+    // scene_color_ upside down into screen_copy_.
+    void copy_screen(SDL_GPUCommandBuffer* cmd, uint32_t w, uint32_t h);
+    bool screen_ready_ = false;   // screen_copy_ holds this frame
     // The scene into `target`; `hud`: also the screen overlay (otherwise drawn after post effects).
     bool hud_pass_ = false;   // encode_scene draws the HUD items over the target (kept), not the world
     void encode_hud(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w, uint32_t h,
@@ -274,6 +280,7 @@ private:
     SDL_GPUShader* fs_post_final_ = nullptr;
     SDL_GPUSampler* clamp_sampler_ = nullptr;
     SDL_GPUTexture* scene_color_ = nullptr;             // post effects: the scene, then two blur targets
+    SDL_GPUTexture* screen_copy_ = nullptr;             // the frame before the view model, upside down (ScreenTexture)
     SDL_GPUTexture* blur_a_ = nullptr;
     SDL_GPUTexture* blur_b_ = nullptr;
     SDL_GPUTexture* grading_ = nullptr;                 // 256x1 colour grading curves

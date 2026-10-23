@@ -65,6 +65,9 @@ struct GpuMaterial {
         UniformField field;
     };
     std::vector<ParamField> param_fields;
+    // The fragment sampler that reads the screen behind (ScreenTextureSampler: the arms'
+    // distortion), bound to a copy of the frame so far; -1 if none.
+    int screen_slot = -1;
     std::string name;                                          // effect/technique, for diagnostics
 };
 

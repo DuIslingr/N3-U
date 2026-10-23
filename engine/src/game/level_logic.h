@@ -69,6 +69,13 @@ public:
     bool hud_enabled = true;               // EnableHud
     bool interface_in_cinematic = false;   // ForceInterfaceInCinematic: the HUD stays up in a cinematic
     std::string weapon_state;              // SetCrtWeaponState request, taken by the view model
+    // Test_distort_start / Test_distort_stop / Test_change_blend: the arms' distortion
+    // (PlayerComponent::distort_*), applied by the view model; `serial` counts requests.
+    struct ArmsDistort {
+        bool on = false;
+        float target = 0, ms = 0;          // the last Test_change_blend
+        uint32_t serial = 0;
+    } arms_distort;
     // Mission objectives (CLevel: SetPrimaryObjective clears the secondaries; each change
     // shows the objectives box for 5 s; completing every secondary completes the primary).
     struct Objectives {

@@ -139,6 +139,8 @@ const GpuMaterial* MaterialSystem::get(const Material& m, bool skinned) {
                        gm.param_fields, false);
             fill_stage(*fx, pass, m, prog->fragment_iface, gm.fragment_uniforms, gm.fragment_semantics,
                        gm.fragment_textures, gm.param_fields, true);
+            for (size_t k = 0; k < prog->fragment_iface.samplers.size(); ++k)
+                if (prog->fragment_iface.samplers[k] == "ScreenTextureSampler") gm.screen_slot = int(k);
             result = &gm;
             ++stats_.materials;
         }

@@ -74,6 +74,7 @@ private:
     // A fixed step of level logic (and what it sets off: sections, respawns, level ends).
     void step_logic(float dt);
     void movement_states(bool aim);
+    void arms_distort();   // the level logic's Test_distort_* requests, to the view model
     void apply_sound();
     void update_frost(float dt);
 
@@ -142,7 +143,7 @@ private:
     bool end_screen_done = false;              // dismissed with Continue: the level's end goes on
     float ended_for = 0;                       // seconds since the level ended
     Camera cam;
-    uint32_t view_spawns = 0, view_jumps = 0;
+    uint32_t view_spawns = 0, view_jumps = 0, distort_serial = 0;
 
     // Playing in the window.
     bool flying = false;

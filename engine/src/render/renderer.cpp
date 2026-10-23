@@ -334,7 +334,7 @@ Renderer::~Renderer() {
         SDL_ReleaseGPUGraphicsPipeline(device_, p.blur);
         SDL_ReleaseGPUGraphicsPipeline(device_, p.final);
     }
-    for (SDL_GPUTexture* t : {scene_color_, blur_a_, blur_b_, grading_})
+    for (SDL_GPUTexture* t : {scene_color_, screen_copy_, blur_a_, blur_b_, grading_})
         if (t) SDL_ReleaseGPUTexture(device_, t);
     if (grading_transfer_) SDL_ReleaseGPUTransferBuffer(device_, grading_transfer_);
     SDL_ReleaseGPUShader(device_, vs_post_);
@@ -775,7 +775,11 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     depth.texture = depth_;
     depth.clear_depth = 0.0f;   // reversed depth: near 1, far 0
     depth.load_op = SDL_GPU_LOADOP_CLEAR;
-    depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
+    // Materials that read the screen behind them (ScreenTextureSampler) come after a copy of
+    // the frame so far: a second pass that keeps the depth.
+    if (!hud_pass_) screen_ready_ = false;
+    const bool split = target == scene_color_ && !hud_pass_ && reads_screen(items, 0);
+    depth.store_op = split ? SDL_GPU_STOREOP_STORE : SDL_GPU_STOREOP_DONT_CARE;
     depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
@@ -789,21 +793,24 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     mu.camera = glm::vec4(frame.camera, 1);
 
     // Sky first, then opaque, then translucent back to front.
-    std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended;
+    std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended, refracting;
     for (const auto& it : items) {
         if (!it.visible || it.hidden || it.anim_hidden || it.zone_hidden || it.occluded || !it.model->vertices) continue;
         if (it.hud != hud_pass_) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
         if (it.sky) sky.push_back(&it);
         else if (it.viewmodel) (blend ? view_blended : view_opaque).push_back(&it);
+        else if (split && it.material && it.material->screen_slot >= 0) refracting.push_back(&it);
         else (blend ? blended : opaque).push_back(&it);
     }
     std::stable_partition(sky.begin(), sky.end(), [](const DrawItem* it) {
         return !(it->material ? it->material->state.blend : it->blend);
     });
-    std::sort(blended.begin(), blended.end(), [&](const DrawItem* a, const DrawItem* b) {
+    auto back_to_front = [&](const DrawItem* a, const DrawItem* b) {
         return glm::distance(a->center, frame.camera) > glm::distance(b->center, frame.camera);
-    });
+    };
+    std::sort(blended.begin(), blended.end(), back_to_front);
+    std::sort(refracting.begin(), refracting.end(), back_to_front);
     // Glows drawn without a depth test (the "...NoZ" techniques: coronas, flares) go over the
     // other translucent surfaces rather than under whatever is sorted after them.
     std::stable_partition(blended.begin(), blended.end(), [](const DrawItem* it) { return !it->material || it->material->state.depth_test; });
@@ -865,6 +872,10 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
         };
         bind(m.vertex_textures, true);
         bind(m.fragment_textures, false);
+        if (m.screen_slot >= 0 && screen_copy_) {   // the frame behind (see the split before the view model)
+            const SDL_GPUTextureSamplerBinding screen{screen_ready_ ? screen_copy_ : white_.texture, clamp_sampler_};
+            SDL_BindGPUFragmentSamplers(pass, uint32_t(m.screen_slot), &screen, 1);
+        }
         SDL_DrawGPUIndexedPrimitives(pass, it.range.index_count, 1, it.range.first_index, it.range.vertex_offset, 0);
     };
     auto draw = [&](const DrawItem& it, SDL_GPUGraphicsPipeline* pipe) {
@@ -922,6 +933,18 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
             SDL_DrawGPUPrimitives(pass, b.count, 1, b.first, 0);
         }
     }
+    if (split) {
+        // ScreenTexture (CGameObject::BindParamsFromRTT): the frame so far, copied upside down
+        // as the game's GL code expects (texture rows from the bottom); then what reads it.
+        SDL_EndGPURenderPass(pass);
+        copy_screen(cmd, w, h);
+        color.load_op = SDL_GPU_LOADOP_LOAD;
+        depth.load_op = SDL_GPU_LOADOP_LOAD;
+        depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
+        pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
+        bound = nullptr, bound_pipe = nullptr;
+        for (const DrawItem* it : refracting) draw(*it, it->material->state.blend ? pipes.blend : pipes.opaque);
+    }
     if (!view_opaque.empty() || !view_blended.empty()) {
         // The first-person view model: depth squeezed into [0.9, 1] (reversed depth: the
         // nearest tenth), so it stays in front of walls it would otherwise poke into.
@@ -943,6 +966,29 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     }
     if (hud) draw_screen_overlay(pass, cmd, pipes, w, h, overlay, frame.sprites);
     SDL_EndGPURenderPass(pass);
+    // HUD models that read the screen (Repel, slow motion) see the finished scene.
+    if (target == scene_color_ && !hud_pass_ && reads_screen(items, 1)) copy_screen(cmd, w, h);
+}
+
+bool Renderer::reads_screen(const std::vector<DrawItem>& items, int which) const {
+    for (const DrawItem& it : items)
+        if (it.material && it.material->screen_slot >= 0 && it.visible && !it.hidden && !it.anim_hidden && !it.zone_hidden &&
+            (which < 0 || it.hud == (which == 1)))
+            return true;
+    return false;
+}
+
+void Renderer::copy_screen(SDL_GPUCommandBuffer* cmd, uint32_t w, uint32_t h) {
+    SDL_GPUBlitInfo blit{};
+    blit.source.texture = scene_color_;
+    blit.source.w = w, blit.source.h = h;
+    blit.destination.texture = screen_copy_;
+    blit.destination.w = w, blit.destination.h = h;
+    blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    blit.flip_mode = SDL_FLIP_VERTICAL;
+    blit.filter = SDL_GPU_FILTER_NEAREST;
+    SDL_BlitGPUTexture(cmd, &blit);
+    screen_ready_ = true;
 }
 
 void Renderer::draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const Pipelines& pipes, uint32_t w,
@@ -974,7 +1020,7 @@ void Renderer::draw_screen_overlay(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer
 
 void Renderer::ensure_post_targets(uint32_t w, uint32_t h) {
     if (scene_color_ && post_w_ == w && post_h_ == h) return;
-    for (SDL_GPUTexture** t : {&scene_color_, &blur_a_, &blur_b_})
+    for (SDL_GPUTexture** t : {&scene_color_, &screen_copy_, &blur_a_, &blur_b_})
         if (*t) SDL_ReleaseGPUTexture(device_, *t), *t = nullptr;
     auto make = [&](uint32_t tw, uint32_t th) {
         SDL_GPUTextureCreateInfo ti{};
@@ -990,6 +1036,7 @@ void Renderer::ensure_post_targets(uint32_t w, uint32_t h) {
         return t;
     };
     scene_color_ = make(w, h);
+    screen_copy_ = make(w, h);
     blur_a_ = make(w / 4, h / 4);   // the blur works at a quarter of the screen size
     blur_b_ = make(w / 4, h / 4);
     post_w_ = w, post_h_ = h;
@@ -1032,6 +1079,10 @@ void Renderer::encode_hud(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL
 void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat format, uint32_t w,
                       uint32_t h, const std::vector<DrawItem>& items, const FrameParams& frame) {
     const PostParams* post = frame.post && frame.post->active() ? frame.post : nullptr;
+    // A view model reading the screen behind it needs the scene in a texture it can copy:
+    // the offscreen path, with no effect (its final pass is then a plain copy).
+    static const PostParams kNoEffects;
+    if (!post && reads_screen(items)) post = &kNoEffects;
     if (!post) {
         encode_scene(cmd, target, format, w, h, items, frame, !frame.hud3d);
         if (frame.hud3d) encode_hud(cmd, target, format, w, h, items, frame);
