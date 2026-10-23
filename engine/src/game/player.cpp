@@ -10,7 +10,7 @@ void Player::spawn(const glm::vec3& feet, float yaw_deg) {
     yaw = yaw_deg;
     pitch = 0;
     ++spawns;
-    vertical_speed = 0, landing_speed = 0;
+    vertical_speed = 0, landing_speed = 0, fall_speed = 0, jump_left = 0;
     on_ground = false;
     stuck_time = escape_time = 0;
 }
@@ -35,12 +35,13 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
         // Thrust while the jump is held (it beats gravity); otherwise a slow descent.
         if (in.jump) vertical_speed = std::min(vertical_speed + (gravity + 14.0f) * dt, 7.0f), on_ground = false;
         vertical_speed = std::max(vertical_speed - gravity * dt, -6.0f);
+        fall_speed = std::max(-vertical_speed, 0.0f), jump_left = 0;
     } else {
-        if (on_ground && in.jump) {
-            vertical_speed = jump_speed;
-            on_ground = false;
-        }
-        vertical_speed = std::max(vertical_speed - gravity * dt, -max_fall_speed);
+        if (on_ground && in.jump) jump_left = jump_time, fall_speed = 0, on_ground = false, ++jumps;
+        fall_speed = std::min(fall_speed + gravity * dt, max_fall_speed);
+        const float push = jump_left > 0 ? jump_speed * (jump_left / jump_time) * (jump_left / jump_time) : 0.0f;
+        jump_left = std::max(jump_left - dt, 0.0f);
+        vertical_speed = push - fall_speed;
     }
 
     glm::vec3 vertical(0, 0, vertical_speed * dt);
@@ -56,13 +57,13 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
     if (stuck_time > 0.6f) escape_time = 0.5f, stuck_time = 0;
     if (rising) {
         // A rising sweep that hits something is a ceiling, not a floor.
-        if (!r.falling) vertical_speed = 0;
+        if (!r.falling) vertical_speed = 0, fall_speed = 0, jump_left = 0;
         on_ground = false;
     } else {
         const bool was_on_ground = on_ground;
         on_ground = !r.falling;
-        if (on_ground && !was_on_ground) landing_speed = -vertical_speed;
-        if (on_ground) vertical_speed = 0;
+        if (on_ground && !was_on_ground) landing_speed = jetpack ? -vertical_speed : fall_speed;
+        if (on_ground) vertical_speed = 0, fall_speed = 0, jump_left = 0;
     }
     center = r.position;
 }

@@ -51,7 +51,7 @@ void ViewModel::start() {
         scene_.set_object_viewmodel(cockpit_);
         scene_.set_object_visible(cockpit_, false);
     }
-    weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear();
+    weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
     once_left_ = 0;
@@ -119,6 +119,10 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         }
     }
     if (once_left_ <= 0 && !queued_.empty()) play_once(queued_), queued_.clear();
+    if (!movement_.empty()) {
+        if (once_left_ <= 0 && !lowered_ && !in.reloading) play_once(c.get(movement_));
+        movement_.clear();
+    }
     if (in.reloading && !was_reloading_) play_once(c.get("Reload"));
     was_reloading_ = in.reloading;
     if (once_left_ <= 0 && !lowered_) {

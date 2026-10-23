@@ -31,6 +31,9 @@ public:
     // SetCrtWeaponState: play a weapon state once (GetDown lowers the weapon until GetUp,
     // Idle and UnAim go back to normal).
     void set_state(const std::string& state);
+    // StartJump / StartLanding: a state played once only over the plain idle, walk or aim
+    // clips (not over a reload, a switch or a throw).
+    void movement_state(const std::string& state) { movement_ = state; }
     // After the level is loaded (it spawns the rig as a runtime object).
     void start();
     void update(float dt, const glm::vec3& eye, float yaw_deg, float pitch_deg, const Input& in);
@@ -71,6 +74,7 @@ private:
     bool lowered_ = false;         // GetDown: held lowered until GetUp
     bool was_reloading_ = false;
     std::string requested_, queued_;   // queued_: a clip to play once after the current one
+    std::string movement_;
     std::string camera_request_, camera_clip_;
     float camera_ms_ = 0;
     glm::mat4 camera_offset_{1};

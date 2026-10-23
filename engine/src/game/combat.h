@@ -13,6 +13,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <functional>
 #include <random>
@@ -263,6 +264,9 @@ public:
     // The view's jolt for the last hit (CPlayerBaseComponent::ReceiveDamage): Hurt_front,
     // Hurt_left_heavy, ... by where it came from; the caller adds "IronSight_" while aiming.
     std::string take_view_hurt() { return std::exchange(view_hurt_, {}); }
+    // A landing hard enough for the weapon's landing clip: 0 Landing, 1 LandingMed,
+    // 2 LandingHi; -1 if none since the last call.
+    int take_landing() { return std::exchange(landing_, -1); }
     // A grenade throw has started (the view model plays ThrowGrenade); cleared when taken.
     bool take_grenade_throw() { return std::exchange(throw_started_, false); }
     // CLevel::DrawGrenades: enemy grenades that can reach the player (where they are).
@@ -486,6 +490,9 @@ private:
     // that makes one heavy.
     float view_hurt_pause_ = 0, view_hurt_heavy_ = 0, view_hurt_wait_ = 0;
     std::string view_hurt_;
+    float fall_damage_from_ = 15, fall_damage_per_ = 16;
+    std::array<float, 3> landing_speeds_{5, 15, 20};
+    int landing_ = -1;
     bool critical_ = false;   // below 30% of the shield at the last hit
     int difficulty_ = 1;
     float base_max_health_ = 150, base_regen_pause_ = 3;

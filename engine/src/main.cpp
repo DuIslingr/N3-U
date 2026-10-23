@@ -856,7 +856,13 @@ int main(int argc, char** argv) {
             constexpr float kPhysicsStep = 1.0f / 120.0f;
 
             Camera cam;
-            uint32_t view_spawns = player.spawns;
+            uint32_t view_spawns = player.spawns, view_jumps = player.jumps;
+            // StartJump / StartLanding: the weapon's own clips (ironsight ones while aiming).
+            auto movement_states = [&](bool aim) {
+                if (player.jumps != view_jumps) view_jumps = player.jumps, viewmodel.movement_state(aim ? "AimJump" : "Jump");
+                static const char* const kLanding[2][3] = {{"Landing", "LandingMed", "LandingHi"}, {"LandingAim", "LandingAimMed", "LandingAimHi"}};
+                if (const int l = combat.take_landing(); l >= 0) viewmodel.movement_state(kLanding[aim][l]);
+            };
             cam.position = opt.have_eye ? glm::vec3(opt.eye) : player.eye();
             cam.yaw = opt.have_eye ? opt.eye.w : scene.start_yaw;
             cam.pitch = opt.pitch;
@@ -1100,6 +1106,7 @@ int main(int argc, char** argv) {
                         vm.cockpit = logic.in_mech();
                         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
                         if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(h);
+                        movement_states(false);
                         vm.firing = combat.since_shot() < 0.2f;
                         vm.reloading = combat.reloading();
                         viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
@@ -1764,6 +1771,7 @@ int main(int argc, char** argv) {
                         if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");
                         if (combat.take_power_used()) viewmodel.set_state("Repel");
                         if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(aiming ? "IronSight_" + h : h);
+                        movement_states(aiming);
                         update_frost(dt);
                         vm.aiming = aiming;
                         vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);

@@ -148,6 +148,14 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
     for (const auto& [id, type] : gol_) {
         if (type.name != "Player") continue;
         if (const Value* h = resolved_template(type, gol_, kCompHealth)) player_max_health = num(*h, 0, 150);
+        // CComponentPlayerComponent: falls (gravity, the fastest fall), the jump, fall damage
+        // ([7] the speed it starts at, [4] per unit over) and the landing clips' speeds.
+        if (const Value* pc = resolved_template(type, gol_, 0x2a); pc && pc->size() > 15) {
+            player_.gravity = -num(*pc, 13, -9.8f), player_.max_fall_speed = num(*pc, 6, 30);
+            player_.jump_speed = num(*pc, 14, 8), player_.jump_time = num(*pc, 15, 0.8f);
+            fall_damage_from_ = num(*pc, 7, 15), fall_damage_per_ = num(*pc, 4, 16);
+            landing_speeds_ = {num(*pc, 8, 5), num(*pc, 9, 15), num(*pc, 10, 20)};
+        }
         if (const Value* b = resolved_template(type, gol_, 0x29)) {
             if (b->size() > 5) player_hurt_sounds_ = sound_list((*b)[5]);
             regen_rate_ = num(*b, 1, 20);
@@ -1881,7 +1889,9 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     // Falling: a hard landing hurts (Player_EnableFallDamage).
     if (player_.landing_speed > 0) {
         const float v = std::exchange(player_.landing_speed, 0.0f);
-        if (logic_.fall_damage && v > 13.0f) damage_player((v - 13.0f) * 8.0f, player_.center);
+        if (logic_.fall_damage && v > fall_damage_from_) damage_player((v - fall_damage_from_) * fall_damage_per_, player_.center);
+        // The weapon's landing clip (PlayerComponent::Update -> CWeaponManager::StartLanding).
+        if (v > landing_speeds_[0]) landing_ = v >= landing_speeds_[2] ? 2 : v >= landing_speeds_[1] ? 1 : 0;
     }
     if (core >= 0 && player_health <= player_max_health) core = -1;   // the core's charge is spent
     regen_delay_ -= dt;
