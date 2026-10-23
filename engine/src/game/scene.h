@@ -215,7 +215,9 @@ private:
             int light = -1;                  // light colour: index into Scene::lights_
             float intensity = 1;
             int node = -1;                   // visibility: node index
+            int camera = -1;                 // field of view: the camera's node index
         };
+        std::unordered_map<int, float> camera_fov;   // animated fields of view, by node
         std::vector<ValueBinding> values;
         std::vector<uint8_t> node_hidden;    // per node, from visibility tracks (inherited by children)
         std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)

@@ -230,6 +230,14 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
             }
             for (const ValueTrack& vt : lib->values) {
                 if (vt.light) continue;   // bound when the light is placed below
+                if (vt.camera_fov) {      // "Camera003-camera" -> the node Camera003 holding it
+                    const std::string node = vt.target.size() > 7 && vt.target.compare(vt.target.size() - 7, 7, "-camera") == 0
+                                                 ? vt.target.substr(0, vt.target.size() - 7) : vt.target;
+                    for (size_t n = 0; n < m.cpu.nodes.size(); ++n)
+                        if (m.cpu.nodes[n].camera_fov > 0 && (m.cpu.nodes[n].name == node || m.cpu.nodes[n].id == node + "-node"))
+                            anim->values.push_back({&vt, -1, -1, -1, 1, -1, int(n)});
+                    continue;
+                }
                 if (vt.visibility) {
                     for (size_t n = 0; n < m.cpu.nodes.size(); ++n)
                         if (m.cpu.nodes[n].id == vt.target) anim->values.push_back({&vt, -1, -1, -1, 1, int(n)});
@@ -570,7 +578,9 @@ void Scene::pose(AnimatedInstance& a) {
     for (const auto& vb : a.values) {
         if (vb.track->stride > 16) continue;
         sample_value(*vb.track, t, v);
-        if (vb.node >= 0) {
+        if (vb.camera >= 0) {
+            a.camera_fov[vb.camera] = v[0];
+        } else if (vb.node >= 0) {
             a.node_hidden[size_t(vb.node)] = v[0] < 0.5f;
             any_visibility = true;
         } else if (vb.material >= 0) {
@@ -1116,7 +1126,8 @@ bool Scene::camera_view(size_t object, CameraView& out) const {
         out.position = glm::vec3(w[3]);
         out.forward = glm::normalize(-glm::vec3(w[2]));
         out.up = glm::normalize(glm::vec3(w[1]));
-        out.fov = nodes[n].camera_fov;
+        auto animated = a->camera_fov.find(int(n));
+        out.fov = animated != a->camera_fov.end() && animated->second > 0 ? animated->second : nodes[n].camera_fov;
         return true;
     }
     return false;

@@ -151,12 +151,13 @@ AnimationLibrary load_animation(const Bytes& raw) {
         uint32_t s[8];
         for (int k = 0; k < 8; ++k) s[k] = b.u32(sampler + 4 * k);
         const uint32_t ctype = b.u32(channel + 4);
-        if (ctype == 114 || ctype == 19 || ctype == 24) {
+        if (ctype == 114 || ctype == 19 || ctype == 24 || ctype == 14) {
             ValueTrack vt;
             vt.light = ctype == 19;
             vt.visibility = ctype == 24;
+            vt.camera_fov = ctype == 14;
             vt.target = b.cstr(channel);
-            if (!vt.light && !vt.visibility) {
+            if (!vt.light && !vt.visibility && !vt.camera_fov) {
                 vt.param = b.cstr(channel + 8);
                 const uint32_t mask = b.u32(channel + 0xC);
                 while (vt.first < 3 && !(mask & (1u << vt.first))) ++vt.first;

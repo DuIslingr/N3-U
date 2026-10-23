@@ -34,6 +34,7 @@ struct AnimTrack {
 struct ValueTrack {
     bool light = false;
     bool visibility = false;
+    bool camera_fov = false;          // a camera's field of view (radians); target "<camera>-camera"
     std::string target, param;
     int first = 0;                    // first component written (lowest bit of the channel's mask)
     int stride = 0;                   // components per key
