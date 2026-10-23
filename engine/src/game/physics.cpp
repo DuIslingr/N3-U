@@ -43,6 +43,7 @@ struct CollisionWorld::Data {
     float sliding = 0.0005f;
     int hits = 0;
     bool one_sided = false;               // only front faces block (Irrlicht's rule)
+    bool stick = false;                   // gravity sweep: stop on walkable ground instead of sliding
     std::vector<uint32_t> cand;
 };
 
@@ -216,6 +217,9 @@ glm::vec3 CollisionWorld::collide(int depth, Data& d, const glm::vec3& pos, cons
     const glm::vec3 diff = new_base - d.intersection;
     if (glm::length(diff) < 1e-9f) return new_base;
     const glm::vec3 slide_normal = glm::normalize(diff);
+    // Landing on ground no steeper than ~45 degrees ends the gravity sweep: sliding along it
+    // would creep down every gentle slope while standing still.
+    if (d.stick && glm::normalize(slide_normal / d.eradius).z > 0.7f) return new_base;
     const float dist_to_plane = glm::dot(slide_normal, destination) - glm::dot(slide_normal, slide_origin);
     const glm::vec3 new_destination = destination - slide_normal * dist_to_plane;
     const glm::vec3 new_velocity = new_destination - d.intersection;
@@ -236,6 +240,7 @@ CollisionWorld::MoveResult CollisionWorld::move(const glm::vec3& position, const
     r.falling = false;
     if (gravity != glm::vec3(0)) {
         d.hits = 0;
+        d.stick = true;
         p = collide(0, d, p, gravity / radius);
         r.falling = d.hits == 0;
     }
