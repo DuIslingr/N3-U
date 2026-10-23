@@ -428,6 +428,16 @@ bool Combat::give_ammo(const std::string& name, int amount) {
     return true;
 }
 
+void Combat::respawn() {
+    if (!player_dead) return;
+    player_dead = false;
+    player_health = player_max_health;
+    protect_ = 3.0f;
+    ammo_refill_on_respawn();
+    logic_.respawn_player();
+    log("player respawned at " + (logic_.checkpoint() >= 0 ? "checkpoint " + std::to_string(logic_.checkpoint()) : std::string("the start")));
+}
+
 void Combat::campaign_loadout(const std::string& level) {
     // Campaign order: San Francisco 1 and 2, then the rest. Later levels start with what
     // the San Francisco levels unlock.
@@ -1451,15 +1461,9 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         // The screen fades, then the player is back at the last checkpoint (or the start).
         const float before = dead_timer_;
         dead_timer_ += dt;
+        if (death_screen) return;   // its Retry calls respawn()
         if (before < 1.5f && dead_timer_ >= 1.5f) logic_.start_fade(false, 1200, glm::vec3(0));
-        if (dead_timer_ > 3.0f) {
-            player_dead = false;
-            player_health = player_max_health;
-            protect_ = 3.0f;
-            ammo_refill_on_respawn();
-            logic_.respawn_player();
-            log("player respawned at " + (logic_.checkpoint() >= 0 ? "checkpoint " + std::to_string(logic_.checkpoint()) : std::string("the start")));
-        }
+        if (dead_timer_ > 3.0f) respawn();
         return;
     }
     protect_ = std::max(protect_ - dt, 0.0f);

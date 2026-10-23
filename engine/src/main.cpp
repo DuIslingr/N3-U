@@ -40,6 +40,7 @@
 #include "game/hud.h"
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/death_screen.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -75,7 +76,8 @@ struct Options {
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
-    int loading_screen = -1;    // headless: draw the level's loading screen, 0 loading, 1 loaded
+    int loading_screen = -1;
+    float death_screen = -1;    // headless: draw the death screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -146,6 +148,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
         else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
+        else if (a == "--death-screen") o.death_screen = std::stof(next());
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
@@ -449,6 +452,7 @@ int main(int argc, char** argv) {
             Combat combat(scene, player, logic, gol);
             combat.log = [](const std::string& line) { std::printf("[combat] %s\n", line.c_str()); };
             combat.player_invulnerable = opt.god;
+            combat.death_screen = !headless;
             logic.combat = &combat;
             Overlay overlay;
             ViewModel viewmodel(scene, gol);
@@ -460,6 +464,11 @@ int main(int argc, char** argv) {
             const std::string settings_path = headless ? std::string() : Settings::default_path();
             Settings settings = Settings::load(settings_path);
             PauseMenu menu;
+            DeathScreen death;
+            death.text = [&main_strings](const std::string& id) {
+                const std::string t = main_strings.find(id);
+                return t.empty() ? id : t;
+            };
             menu.text = [&logic](const std::string& id) {
                 const std::string t = logic.strings.find(id);
                 return t.empty() ? id : t;
@@ -552,6 +561,7 @@ int main(int argc, char** argv) {
                         subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, y}, wrap, {1, 1, 1, a});
                     }
                 }
+                if (death.open) death.draw(overlay, hud_sprites, hud, subtitles, w, h);
                 if (menu.open) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
@@ -976,6 +986,11 @@ int main(int argc, char** argv) {
                     shot = draw_main_menu(opt.width, opt.height);
                     scene_hidden = true;
                 }
+                if (opt.death_screen >= 0) {   // the death screen over the view
+                    death.show();
+                    death.update(opt.death_screen);
+                    draw_text(shot, opt.width, opt.height);
+                }
                 if (opt.loading_screen >= 0) {   // the level's loading screen instead of the view
                     loading.begin(campaign_level(opt.level));
                     for (int k = 0; k < 10; ++k) loading.update(0.1f);
@@ -1091,6 +1106,17 @@ int main(int argc, char** argv) {
                         case A::None: break;
                     }
                 };
+                auto death_action = [&](DeathScreen::Action a) {
+                    if (a == DeathScreen::Action::None) return;
+                    death.open = false;
+                    combat.respawn();
+                    if (a == DeathScreen::Action::Menu) {
+                        main_menu.show();
+                        SDL_SetWindowRelativeMouseMode(window, false);
+                    } else {
+                        SDL_SetWindowRelativeMouseMode(window, !touch_mode);
+                    }
+                };
                 auto main_action = [&](MainMenu::Action a) {
                     using A = MainMenu::Action;
                     switch (a) {
@@ -1143,6 +1169,28 @@ int main(int argc, char** argv) {
                             } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP) {
                                 main_action(main_menu.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
                                                               e.type == SDL_EVENT_FINGER_DOWN ? P::Press : P::Release));
+                            }
+                            continue;
+                        }
+                        if (death.open && !menu.open) {   // Retry or Back to Menu
+                            using K = DeathScreen::Key;
+                            using P = DeathScreen::Pointer;
+                            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                                switch (e.key.key) {
+                                    case SDLK_UP: case SDLK_W: death_action(death.key(K::Up)); break;
+                                    case SDLK_DOWN: case SDLK_S: death_action(death.key(K::Down)); break;
+                                    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: death_action(death.key(K::Activate)); break;
+                                    default: break;
+                                }
+                            } else if (e.type == SDL_EVENT_MOUSE_MOTION && e.motion.which != SDL_TOUCH_MOUSEID) {
+                                death_action(death.pointer(to_pixels(e.motion.x, e.motion.y, false), P::Move));
+                            } else if ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                                       e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT) {
+                                death_action(death.pointer(to_pixels(e.button.x, e.button.y, false),
+                                                           e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? P::Press : P::Release));
+                            } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP) {
+                                death_action(death.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
+                                                           e.type == SDL_EVENT_FINGER_DOWN ? P::Press : P::Release));
                             }
                             continue;
                         }
@@ -1274,6 +1322,16 @@ int main(int argc, char** argv) {
                         SDL_GetWindowSizeInPixels(window, &lw, &lh);
                         renderer.render_to_window({}, draw_loading(lw, lh));
                         continue;
+                    }
+                    // Dead: after a moment, the death screen (the game goes on behind it).
+                    if (combat.player_dead && !death.open && combat.dead_time() > 1.0f) {
+                        death.show();
+                        SDL_SetWindowRelativeMouseMode(window, false);
+                        fire_held = aim_held = false;
+                    }
+                    if (death.open && !menu.open) {
+                        death.update(raw_dt);
+                        if (death.music_due() && logic.audio) logic.audio->play("m_mission_failed");
                     }
                     if (menu.open) dt = 0;   // paused
                     if (opt.scripts) {   // bullet time: the game runs slower for a while of real time

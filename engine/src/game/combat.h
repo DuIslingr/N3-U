@@ -99,6 +99,10 @@ public:
     bool push_goal(int actor, const NpcGoal& g);
     bool goal_pending(int actor, int goal_id) const;
     void cancel_goals(int actor);
+    // A death screen offers Retry (respawn()); without one the player is back after 3 s.
+    bool death_screen = false;
+    void respawn();
+    float dead_time() const { return dead_timer_; }
     void ammo_refill_on_respawn() {   // the checkpoint's ammunition is not saved here: refill clips
         for (size_t i = 0; i < weapons_.size(); ++i) clip_[i] = weapons_[i].clip, reserve_[i] = std::max(reserve_[i], weapons_[i].clip * 2);
     }
