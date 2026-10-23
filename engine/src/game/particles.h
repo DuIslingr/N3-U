@@ -35,6 +35,8 @@ public:
                ParticleList& out) const;
     size_t particle_count() const;
     bool has(const std::string& effect) const { return library_ && library_->count(effect); }
+    // Called when an emitter with sounds starts emitting: its sounds (pick one) and where.
+    std::function<void(const std::vector<std::string>&, const glm::vec3&)> on_sound;
 
 private:
     struct Particle {

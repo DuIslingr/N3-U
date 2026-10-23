@@ -286,6 +286,12 @@ int main(int argc, char** argv) {
                 audio = std::make_unique<Audio>(vfs, opt.sound_render.empty());
                 if (audio->enabled()) logic.audio = audio.get();
                 audio->trace = !opt.sound_render.empty();
+                scene.particles().on_sound = [&logic](const std::vector<std::string>& names, const glm::vec3& at) {
+                    if (!logic.audio) return;
+                    Audio::Params p;
+                    p.position = &at;
+                    logic.audio->play_one_of(names, p);
+                };
             }
             std::vector<float> rendered;   // --sound-render
             if (opt.scripts) post_params = &logic.post;

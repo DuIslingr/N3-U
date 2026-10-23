@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,7 @@ class Audio;
 class LevelLogic {
 public:
     LevelLogic(Scene& scene, Player& player, const Gol& gol);
+    ~LevelLogic();
 
     // Load the scripts and objects of the scene's current level and run its start
     // scripts. Call after Scene::load_level and spawning the player. `keep_player`:
@@ -179,6 +181,7 @@ private:
     int dialog_voice_ = -1;
     float dialog_wait_ = 0;
     void update_dialog(float dt);
+    std::unique_ptr<class AnimSounds> anim_sounds_;
     int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
     glm::vec4 level_fog_color_{0};
     float level_fog_start_ = 0, level_fog_end_ = 0, level_fog_density_ = 0;

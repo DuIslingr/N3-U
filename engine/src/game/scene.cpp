@@ -843,6 +843,8 @@ bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool re
     const AnimClip* c = a->library->clip(clip);
     if (!c) return false;
     a->clip = *c;
+    a->clip_name = clip;
+    ++a->clip_serial;
     a->time = 0;
     a->loop = loop;
     a->reverse = reverse;
@@ -883,6 +885,19 @@ size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float ya
     }
     stats_.draws = draws_.size();
     return index;
+}
+
+bool Scene::clip_state(size_t object, ClipState& out) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a || !a->library || a->clip_name.empty()) return false;
+    out.name = a->clip_name;
+    out.length = a->clip.end - a->clip.start;
+    out.ms = a->time * 1000.0f;
+    if (a->loop && out.length > 0) out.ms = std::fmod(out.ms, out.length);
+    else out.ms = std::min(out.ms, out.length);
+    out.serial = a->clip_serial;
+    out.reverse = a->reverse;
+    return true;
 }
 
 float Scene::clip_progress(size_t object) const {

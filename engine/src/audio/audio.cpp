@@ -136,6 +136,11 @@ int Audio::start(const SoundDef& def, const Params& p, const std::string& tag) {
         v.fade = 0;
         v.fade_step = 1.0f / (p.fade_in_ms * 0.001f * float(rate_));
     }
+    // One-shots out of earshot are not started (they would only take a voice).
+    if (v.positional && !v.loop) {
+        const float max = def.max_distance > 0 ? def.max_distance : 60.0f;
+        if (glm::distance(v.position, listener_) > max * 1.25f) return -1;
+    }
     spatialize(v);
     v.cur_left = v.left, v.cur_right = v.right;
     Lock lock(mutex_);

@@ -44,6 +44,7 @@ struct EffectEmitter {
     std::vector<std::pair<float, glm::vec2>> size_keys;
     glm::vec3 gravity{0};             // m/ms per second
     int spin_min = 0, spin_max = 0;   // degrees per second
+    std::vector<std::string> sounds;  // one is played as each emission window starts
 };
 
 struct ParticleEffect {

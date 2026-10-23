@@ -125,6 +125,7 @@ void ParticleSystem::update(float dt) {
                     s.active = true;
                     s.accum = 0;
                     s.window_end = d.life_min < 0 ? -1.0f : s.time + uniform(float(d.life_min), float(std::max(d.life_max, d.life_min)));
+                    if (on_sound && !d.sounds.empty()) on_sound(d.sounds, glm::vec3(inst.transform[3]));
                     const float rate = uniform(float(d.rate_min), float(d.rate_max));
                     if (s.window_end >= 0) {   // a burst: the window's worth of particles now
                         const int n = std::max(1, int(rate * (s.window_end - s.time) / 1000.0f + 0.5f));

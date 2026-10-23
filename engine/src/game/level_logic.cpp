@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "audio/audio.h"
+#include "game/anim_sounds.h"
 #include "game/player.h"
 #include "game/scene.h"
 
@@ -37,7 +38,9 @@ void collect_scripts(const Value& v, std::vector<std::string>& out) {
 
 }  // namespace
 
-LevelLogic::LevelLogic(Scene& s, Player& p, const Gol& g) : scene(s), player(p), gol(g) {
+LevelLogic::~LevelLogic() = default;
+
+LevelLogic::LevelLogic(Scene& s, Player& p, const Gol& g) : scene(s), player(p), gol(g), anim_sounds_(std::make_unique<AnimSounds>(g)) {
     runtime_.log = [this](const std::string& line) {
         log(line);
         if (line.rfind("error", 0) == 0) message(line, 8);
@@ -226,6 +229,7 @@ void LevelLogic::start(bool keep_player) {
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
+    anim_sounds_->clear();
     if (!keep_player) post = PostParams{}, post_fades_.clear();
     objects_.clear();
     triggers_.clear();
@@ -542,6 +546,9 @@ void LevelLogic::update_music(float dt) {
 void LevelLogic::update(float dt) {
     update_music(dt);
     update_dialog(dt);
+    if (audio)
+        for (const auto& [id, o] : objects_)
+            if (o.index < scene.level().objects.size() && o.visible) anim_sounds_->update(scene, *audio, o.index, scene.level().objects[o.index].type);
     // PostEffects::Update: variables move linearly to their targets.
     for (PostFade& f : post_fades_) {
         f.elapsed += dt;

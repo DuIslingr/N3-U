@@ -63,6 +63,15 @@ public:
     bool clip_finished(size_t object) const;
     // How far the object's current clip has played, 0..1 (1 if none).
     float clip_progress(size_t object) const;
+    // The object's current clip: its name, the time into it (ms; looping clips wrap), and
+    // a serial that changes whenever a clip is (re)started. False if it is not animated.
+    struct ClipState {
+        std::string name;
+        float ms = 0, length = 0;
+        uint32_t serial = 0;
+        bool reverse = false;
+    };
+    bool clip_state(size_t object, ClipState& out) const;
 
     // Create an object of a gol type at runtime (spawn managers); it starts hidden.
     // Returns its index into level().objects.
@@ -148,6 +157,8 @@ private:
         float speed = 1, time = 0;                     // seconds into the clip
         bool loop = true;                              // false: play once and hold the last frame (skyboxes)
         bool reverse = false;                          // play the clip backwards (door closing)
+        std::string clip_name;                         // as play_clip was given it
+        uint32_t clip_serial = 0;                      // bumped by each play_clip
         std::vector<const std::vector<AnimTrack>*> tracks;   // per node, or null
         std::vector<glm::mat4> world;                  // per node
         std::vector<std::array<glm::mat4, kMaxJoints>> palettes;   // per skin

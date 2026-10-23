@@ -100,7 +100,10 @@ EffectEmitter read_emitter(DictStream& st) {
     st.i();
     st.s();
     const int nsounds = st.i();
-    for (int k = 0; k < nsounds; ++k) st.s(), st.i(), st.i(), st.i(), st.c();
+    for (int k = 0; k < nsounds; ++k) {
+        e.sounds.push_back(st.s());
+        st.i(), st.i(), st.i(), st.c();
+    }
     if (st.c() == 1) {
         const int n = st.i();
         for (int k = 0; k < n; ++k) {
