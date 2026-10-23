@@ -321,6 +321,12 @@ public:
     uint32_t checkpoint_section() const;
     void respawn_at_checkpoint();
     int checkpoint() const { return checkpoint_; }
+    // The checkpoint as bytes for the save file, and back (save_game.cpp); empty / false
+    // without one or for data that does not read.
+    std::vector<uint8_t> checkpoint_data() const;
+    bool load_checkpoint_data(const std::vector<uint8_t>& data);
+    // Called when a checkpoint is taken (the save file is written then).
+    std::function<void()> on_checkpoint;
     // The end of level's play time bonus limits, minutes (level properties [43], [44]).
     float play_time_limit(int k) const { return play_time_limits_[k & 1]; }
     // Limited control (CPlayerLimitedControlComponent; SwitchToPlayerLimitedControl): the

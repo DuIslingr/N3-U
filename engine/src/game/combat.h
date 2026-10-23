@@ -116,7 +116,7 @@ public:
     struct Saved {
         std::vector<uint8_t> owned;
         std::vector<int> clip, reserve;
-        int current = 0, grenades = 0, power_index = 0;
+        int current = 0, grenades = 0, mines = 0, power_index = 0;
         std::vector<std::string> powers;
         struct Actor {
             int id = 0;
@@ -129,6 +129,9 @@ public:
     };
     Saved save() const;
     void restore(const Saved& s);   // after start() on the freshly loaded level
+    // The arsenal alone (weapons, ammunition, grenades, mines, powers): a level begun from
+    // the save made when the one before ended.
+    void restore_arsenal(const Saved& s);
     bool is_actor(int id) const;
     // A death screen offers Retry (respawn()); without one the player is back after 3 s.
     bool death_screen = false;

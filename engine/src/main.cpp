@@ -51,6 +51,7 @@
 #include "game/scene.h"
 #include "game/pause_menu.h"
 #include "game/settings.h"
+#include "game/save_game.h"
 #include "game/shop.h"
 #include "game/touch_controls.h"
 #include "render/renderer.h"
@@ -83,6 +84,8 @@ struct Options {
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
     int credits = -1;           // the credits to hold (the Military Shop), instead of the saved ones
     int difficulty = -1;        // 0 Easy, 1 Normal, 2 Hard, instead of the saved one
+    std::string save_file;      // the save file to write (also headless), instead of the preferences folder's
+    std::string continue_file;  // headless: resume from this save file after the level loads
     int loading_screen = -1;
     float death_screen = -1;    // headless: draw the death screen this long after it opened
     float end_screen = -1;      // headless: draw the end-of-level screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
@@ -160,6 +163,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--menu") o.menu_keys = next();
         else if (a == "--credits") o.credits = std::stoi(next());
         else if (a == "--difficulty") o.difficulty = std::stoi(next());
+        else if (a == "--save") o.save_file = next();
+        else if (a == "--continue") o.continue_file = next();
         else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
         else if (a == "--death-screen") o.death_screen = std::stof(next());
         else if (a == "--end-screen") o.end_screen = std::stof(next());
@@ -484,6 +489,24 @@ int main(int argc, char** argv) {
             Shop shop;   // the Military Shop on the pause page
             shop.load(gol);
             combat.set_difficulty(settings.difficulty), shop.difficulty = settings.difficulty;
+            // The save file (Application::Save): written while playing the furthest chapter
+            // reached (replaying an earlier one saves nothing, as the original's NoSave).
+            const std::string save_path = !opt.save_file.empty() ? opt.save_file : headless ? std::string() : SaveGame::default_path();
+            auto chapter_of = [&](const std::string& level) {
+                for (size_t c = 0; c < campaign.size(); ++c)
+                    if (level.find("/" + campaign[c].file + ".lvc") != std::string::npos) return int(c);
+                return -1;
+            };
+            auto saving = [&](const std::string& level) {
+                const int c = chapter_of(level);
+                return !save_path.empty() && c >= 0 && (c + 1 >= settings.chapters || !opt.save_file.empty());
+            };
+            logic.on_checkpoint = [&] {
+                if (!saving(opt.level)) return;
+                SaveGame g;
+                g.level = opt.level, g.checkpoint = logic.checkpoint_data();
+                if (!g.write(save_path)) std::fprintf(stderr, "could not write %s\n", save_path.c_str());
+            };
             if (!shop.items().empty()) menu.shop = &shop, menu.combat = &combat;
             LensFlares flares(scene, logic);
             DeathScreen death;
@@ -709,6 +732,32 @@ int main(int argc, char** argv) {
                 hud.start();
                 flares.start();
             };
+            // Continue (Application::Load): the save's level from its checkpoint (as a respawn
+            // there), or from its start with the arsenal carried in.
+            auto resume = [&](const SaveGame& g) {
+                if (!g.checkpoint.empty() && logic.load_checkpoint_data(g.checkpoint)) {
+                    opt.level = g.level;
+                    show_loading(g.level);
+                    if (window) SDL_SetWindowTitle(window, ("N.O.V.A. 3 - " + opt.level).c_str());
+                    scene.load_level(opt.level, logic.checkpoint_section());
+                    loading.loaded = true;
+                    player.spawn(scene.start_position, scene.start_yaw);
+                    logic.respawn_at_checkpoint();
+                    shop.apply_owned(combat, settings);
+                    viewmodel.start();
+                    hud.start();
+                    flares.start();
+                } else {
+                    load_level(g.level);
+                    if (g.has_arsenal) combat.restore_arsenal(g.arsenal), shop.apply_owned(combat, settings);
+                }
+                std::printf("continued %s%s\n", g.level.c_str(), g.checkpoint.empty() ? "" : " from its checkpoint");
+            };
+            if (!opt.continue_file.empty() && opt.scripts) {
+                SaveGame g;
+                if (!SaveGame::read(opt.continue_file, g)) throw std::runtime_error("cannot read the save " + opt.continue_file);
+                resume(g);
+            }
             // Level logic at a fixed step, so triggers and doors see every position.
             bool end_screen_done = false;   // dismissed with Continue: the level's end goes on
             auto step_logic = [&](float dt) {
@@ -760,6 +809,7 @@ int main(int argc, char** argv) {
                     end_screen_done = false;
                     const std::string next = logic.level_success ? next_campaign_level(campaign, opt.level) : opt.level;
                     if (next.empty()) {
+                        SaveGame::remove(save_path);   // Application::DeleteCampaign
                         logic.message("The campaign is complete.", 10);
                         logic.level_ended = false;
                         return;
@@ -768,6 +818,11 @@ int main(int argc, char** argv) {
                     for (size_t c = 0; c < campaign.size(); ++c)   // the next chapter is reached
                         if (next.find("/" + campaign[c].file + ".lvc") != std::string::npos && int(c) + 1 > settings.chapters)
                             settings.chapters = int(c) + 1, settings.save(settings_path);
+                    if (logic.level_success && saving(next)) {   // GS_EndLevel: Application::Save(next level)
+                        SaveGame g;
+                        g.level = next, g.has_arsenal = true, g.arsenal = combat.save();
+                        g.write(save_path);
+                    }
                     load_level(next);
                 }
             };
@@ -1268,13 +1323,20 @@ int main(int argc, char** argv) {
                 auto main_action = [&](MainMenu::Action a) {
                     using A = MainMenu::Action;
                     switch (a) {
-                        case A::Play:
+                        case A::Play: {
                             main_menu.open = false;
                             settings.difficulty = main_menu.difficulty, settings.save(settings_path);   // Menu_SetDifficulty
                             combat.set_difficulty(settings.difficulty), shop.difficulty = settings.difficulty;
-                            load_level("levels/" + campaign[size_t(main_menu.chosen)].file + ".lvc");
+                            const std::string level = "levels/" + campaign[size_t(main_menu.chosen)].file + ".lvc";
+                            SaveGame g;
+                            if (saving(level) && SaveGame::read(save_path, g) && chapter_of(g.level) == main_menu.chosen) {
+                                resume(g);
+                            } else {
+                                load_level(level);
+                            }
                             SDL_SetWindowRelativeMouseMode(window, !touch_mode);
                             break;
+                        }
                         case A::Options: menu.show_options(); break;
                         case A::Quit: running = false; break;
                         case A::None: break;

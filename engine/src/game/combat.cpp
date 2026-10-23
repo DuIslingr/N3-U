@@ -582,7 +582,7 @@ Combat::Saved Combat::save() const {
     s.owned = owned_, s.clip = clip_, s.reserve = reserve_;
     // In a vehicle, at a gun or in the mech: the player's own weapon is the one kept.
     s.current = special_weapon() ? before_special_ : current_;
-    s.grenades = grenades;
+    s.grenades = grenades, s.mines = mines;
     s.powers = powers_, s.power_index = power_index_;
     for (const Target& t : targets_) {
         if (!t.actor || t.spawned) continue;
@@ -593,13 +593,18 @@ Combat::Saved Combat::save() const {
     return s;
 }
 
-void Combat::restore(const Saved& s) {
-    if (s.owned.size() == owned_.size()) owned_ = s.owned, clip_ = s.clip, reserve_ = s.reserve;
-    if (s.current >= 0 && size_t(s.current) < owned_.size()) current_ = s.current;
+void Combat::restore_arsenal(const Saved& s) {
+    if (s.owned.size() == owned_.size() && s.clip.size() == owned_.size() && s.reserve.size() == owned_.size())
+        owned_ = s.owned, clip_ = s.clip, reserve_ = s.reserve;
+    if (s.current >= 0 && size_t(s.current) < owned_.size() && owned_[size_t(s.current)]) current_ = s.current;
     reload_left_ = 0, fire_cooldown_ = 0, spread_ = 0;
-    grenades = s.grenades;
+    grenades = s.grenades, mines = s.mines;
     if (!s.powers.empty()) powers_ = s.powers, power_index_ = std::clamp(s.power_index, 0, int(powers_.size()) - 1);
     power_cooldown_ = 0;
+}
+
+void Combat::restore(const Saved& s) {
+    restore_arsenal(s);
     // CLevelStatistics::Load on a respawn: the counts go back to the checkpoint's, but
     // the retries and the play time run on.
     const Stats now = stats_;
