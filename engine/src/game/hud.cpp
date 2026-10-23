@@ -84,12 +84,19 @@ float Hud::sprite_scale(const std::string& name) {
     return screen_min_ / (640.0f * (it == sprite_factor_.end() ? 1.0f : it->second));
 }
 
-void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color) {
+void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color,
+                     const glm::vec4& clip) {
     if (frame < 0 || size_t(frame) >= s.frames.size()) return;
     const Sprite::Frame& f = s.frames[size_t(frame)];
     const uint32_t rgba = pack_rgba(color);
     for (int k = f.first; k < f.first + f.count && size_t(k) < s.fmodules.size(); ++k) {
         const Sprite::FModule& fm = s.fmodules[size_t(k)];
+        const glm::vec2 pos = at + glm::vec2(float(fm.x), float(fm.y)) * scale;
+        if (fm.flags & 16) {   // a "hyper" piece: another frame, placed (and flipped) here
+            if (fm.module != frame)
+                draw_frame(out, s, fm.module, pos, scale * glm::vec2(fm.flags & 1 ? -1 : 1, fm.flags & 2 ? -1 : 1), color, clip);
+            continue;
+        }
         if (size_t(fm.module) >= s.modules.size()) continue;
         const Sprite::Module& m = s.modules[size_t(fm.module)];
         if (size_t(m.image) >= s.images.size()) continue;
@@ -99,8 +106,18 @@ void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at
         float u1 = float(m.x + m.w) / float(tex->width), v1 = float(m.y + m.h) / float(tex->height);
         if (fm.flags & 1) std::swap(u0, u1);
         if (fm.flags & 2) std::swap(v0, v1);
-        const float x0 = at.x + float(fm.x) * scale.x, y0 = at.y + float(fm.y) * scale.y;
-        const float x1 = x0 + float(m.w) * scale.x, y1 = y0 + float(m.h) * scale.y;
+        float x0 = pos.x, y0 = pos.y, x1 = x0 + float(m.w) * scale.x, y1 = y0 + float(m.h) * scale.y;
+        // Left to right and top to bottom whatever the mirroring, then cut to the clip.
+        if (x1 < x0) std::swap(x0, x1), std::swap(u0, u1);
+        if (y1 < y0) std::swap(y0, y1), std::swap(v0, v1);
+        auto cut = [](float& a0, float& a1, float& t0, float& t1, float lo, float hi) {
+            if (a1 <= lo || a0 >= hi || a1 <= a0) return false;
+            const float s0 = std::max(a0, lo), s1 = std::min(a1, hi);
+            const float d = t1 - t0, n0 = t0 + d * (s0 - a0) / (a1 - a0), n1 = t0 + d * (s1 - a0) / (a1 - a0);
+            a0 = s0, a1 = s1, t0 = n0, t1 = n1;
+            return true;
+        };
+        if (!cut(x0, x1, u0, u1, clip.x, clip.z) || !cut(y0, y1, v0, v1, clip.y, clip.w)) continue;
         const ParticleVertex v[4] = {{{x0, y0, 0}, {u0, v0}, rgba}, {{x1, y0, 0}, {u1, v0}, rgba},
                                      {{x1, y1, 0}, {u1, v1}, rgba}, {{x0, y1, 0}, {u0, v1}, rgba}};
         const uint32_t first = uint32_t(out.vertices.size());
@@ -131,9 +148,19 @@ glm::vec4 Hud::frame_bounds(const Sprite& s, int frame) {
     const Sprite::Frame& f = s.frames[size_t(frame)];
     for (int k = f.first; k < f.first + f.count && size_t(k) < s.fmodules.size(); ++k) {
         const Sprite::FModule& fm = s.fmodules[size_t(k)];
-        if (size_t(fm.module) >= s.modules.size()) continue;
-        const Sprite::Module& m = s.modules[size_t(fm.module)];
-        b = glm::vec4(std::min(b.x, float(fm.x)), std::min(b.y, float(fm.y)), std::max(b.z, float(fm.x + m.w)), std::max(b.w, float(fm.y + m.h)));
+        glm::vec4 m(0);
+        if (fm.flags & 16) {   // another frame's box, flipped as placed
+            if (fm.module == frame) continue;
+            m = frame_bounds(s, fm.module);
+            if (m == glm::vec4(0)) continue;
+            if (fm.flags & 1) m = glm::vec4(-m.z, m.y, -m.x, m.w);
+            if (fm.flags & 2) m = glm::vec4(m.x, -m.w, m.z, -m.y);
+        } else {
+            if (size_t(fm.module) >= s.modules.size()) continue;
+            m = glm::vec4(0, 0, float(s.modules[size_t(fm.module)].w), float(s.modules[size_t(fm.module)].h));
+        }
+        m += glm::vec4(float(fm.x), float(fm.y), float(fm.x), float(fm.y));
+        b = glm::vec4(std::min(b.x, m.x), std::min(b.y, m.y), std::max(b.z, m.z), std::max(b.w, m.w));
     }
     return b.x > b.z ? glm::vec4(0) : b;
 }

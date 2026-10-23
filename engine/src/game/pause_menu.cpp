@@ -17,12 +17,15 @@ void rect(Overlay& o, glm::vec4 r, const glm::vec4& color) {
 
 bool inside(const glm::vec4& r, glm::vec2 p) { return p.x >= r.x && p.x <= r.z && p.y >= r.y && p.y <= r.w; }
 
-const glm::vec4 kText(0.75f, 0.95f, 1.0f, 1.0f);   // the HUD's cyan
 const glm::vec4 kWhite(1);
+const glm::vec4 kLabel(0.88f, 0.94f, 1.0f, 1.0f);
+const glm::vec4 kHighlight(1.0f, 0.72f, 0.3f, 1.0f);   // the orange of the original's pressed buttons
 
 // Chatboard.bsprite frames (GS_InGameMenu).
-constexpr int kPauseButton = 187, kPauseButtonOn = 188, kButton = 29, kButtonOn = 30;
-constexpr int kToggleOn = 123, kToggleOff = 124, kSliderTrack = 127, kSliderKnob = 128, kSliderKnobOn = 129;
+constexpr int kWindow = 112, kPanelTop = 197, kPanelBottom = 198;
+constexpr int kPauseButton = 187, kPauseButtonOn = 188, kButton = 29, kButtonOn = 30, kSmallButton = 26, kSmallButtonOn = 27;
+constexpr int kToggleOn = 123, kToggleOff = 124, kSlider = 127, kSliderKnob = 128, kSliderKnobOn = 129;
+const glm::vec2 kSliderTrack(0.085f, 0.903f);   // the slider's track (between - and +), across its frame
 constexpr int kArrowLeft = 193, kArrowLeftOn = 194, kArrowRight = 195, kArrowRightOn = 196;
 
 // The display choices: 16:9 sizes, modes, frame-rate caps (0: unlocked).
@@ -33,7 +36,7 @@ constexpr Size kResolutions[] = {{1280, 720}, {1600, 900}, {1920, 1080}, {2560, 
 constexpr int kFrameRates[] = {0, 60, 75, 90, 120, 144, 165, 240};
 
 template <typename T, size_t N>
-int step(const T (&list)[N], int index, int direction) {
+int step(const T (&)[N], int index, int direction) {
     return (index + (direction == 0 ? 1 : direction) + int(N)) % int(N);
 }
 
@@ -42,7 +45,7 @@ int step(const T (&list)[N], int index, int direction) {
 void PauseMenu::show() {
     open = true;
     stack_ = {Page::Pause};
-    selected_ = 0, dragging_ = -1;
+    selected_ = -1, dragging_ = -1;
 }
 
 PauseMenu::Action PauseMenu::back() {
@@ -63,15 +66,15 @@ PauseMenu::Action PauseMenu::back() {
 
 std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) {
     std::vector<Row> out;
-    auto button = [&](const std::string& label, std::function<Action(Settings&, int)> f) {
+    auto button = [&](const std::string& label, std::function<Action(Settings&, int)> f, int slot = 0) {
         Row r;
-        r.kind = Row::Kind::Button, r.label = label, r.change = std::move(f);
+        r.kind = Row::Kind::Button, r.label = label, r.change = std::move(f), r.slot = slot;
         out.push_back(std::move(r));
     };
     auto go = [this](Page p) {
         return [this, p](Settings&, int d) {
             if (d != 0) return Action::None;
-            stack_.push_back(p), selected_ = 0;
+            stack_.push_back(p), selected_ = -1;
             return Action::None;
         };
     };
@@ -171,14 +174,16 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) {
             const Action a = confirm_action_;
             button(text("FPS_YES"), [this, a](Settings&, int d) {
                 if (d != 0) return Action::None;
-                stack_ = {Page::Pause}, selected_ = 0;
+                stack_ = {Page::Pause}, selected_ = -1;
                 return a;
-            });
-            button(text("FPS_NO"), [this](Settings&, int d) { return d == 0 ? back() : Action::None; });
+            }, 1);
+            button(text("FPS_NO"), [this](Settings&, int d) { return d == 0 ? back() : Action::None; }, 2);
             return out;
         }
     }
-    if (page() != Page::Pause) button(text("FPS_BACK"), [this](Settings&, int d) { return d == 0 ? back() : Action::None; });
+    // The original's pair at the bottom: Back and Resume (the pause page has only Resume).
+    if (page() != Page::Pause) button(text("FPS_BACK"), [this](Settings&, int d) { return d == 0 ? back() : Action::None; }, 1);
+    button(text("FPS_RESUME"), [](Settings&, int d) { return d == 0 ? Action::Resume : Action::None; }, 2);
     return out;
 }
 
@@ -189,12 +194,20 @@ PauseMenu::Action PauseMenu::activate(int row, int direction, Settings& s) {
 }
 
 PauseMenu::Action PauseMenu::key(Key k, Settings& s) {
-    const int n = int(rows(s).size());
+    const std::vector<Row> list = rows(s);
+    const int n = int(list.size());
     switch (k) {
-        case Key::Up: selected_ = n ? (selected_ + n - 1) % n : 0; return Action::None;
-        case Key::Down: selected_ = n ? (selected_ + 1) % n : 0; return Action::None;
-        case Key::Left: return activate(selected_, -1, s);
-        case Key::Right: return activate(selected_, 1, s);
+        case Key::Up: selected_ = n ? (selected_ < 0 ? 0 : (selected_ + n - 1) % n) : 0; return Action::None;
+        case Key::Down: selected_ = n ? (selected_ < 0 ? 0 : (selected_ + 1) % n) : 0; return Action::None;
+        case Key::Left:
+        case Key::Right:
+            // Across the bottom pair; on the page's rows, a step of the setting.
+            if (selected_ >= 0 && selected_ < n && list[size_t(selected_)].slot != 0) {
+                for (int i = 0; i < n; ++i)
+                    if (list[size_t(i)].slot == (k == Key::Left ? 1 : 2)) selected_ = i;
+                return Action::None;
+            }
+            return activate(selected_, k == Key::Left ? -1 : 1, s);
         case Key::Activate: return activate(selected_, 0, s);
         case Key::Back: return back();
     }
@@ -233,97 +246,144 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
     const float W = float(w), H = float(h);
     hud.set_screen(w, h);
     const Sprite* art = hud.sprite("Chatboard.bsprite");
-    const float k = hud.sprite_scale("Chatboard.bsprite");
-    rect(overlay, {0, 0, W, H}, {0, 0.02f, 0.04f, 0.72f});   // the game, dimmed behind
-    // The page's title, with the panel's frame line under it.
-    static const char* const kTitles[] = {"FPS_PAUSE", "FPS_OBJECTIVES", "FPS_OPTIONS", "FPS_SOUND", "FPS_CONTROLS", "", "FPS_ADVANCED", ""};
-    std::string heading = page() == Page::Display ? "DISPLAY" : page() == Page::Confirm ? confirm_text_ : text(kTitles[int(page())]);
-    if (page() != Page::Confirm)
-        for (char& c : heading) c = char(std::toupper(static_cast<unsigned char>(c)));
-    const float line = items.measure("Ag", 100000).y;
-    title.draw(out, heading, {W * 0.5f, H * 0.1f}, int(W * 0.8f), kText);
-    rect(overlay, {W * 0.2f, H * 0.1f + title.measure(heading, int(W * 0.8f)).y + line * 0.3f, W * 0.8f,
-                   H * 0.1f + title.measure(heading, int(W * 0.8f)).y + line * 0.3f + std::max(1.5f, H / 540.0f)},
-         {kText.r, kText.g, kText.b, 0.6f});
+    // Laid out as the original at 1280x720 (units `u` from the screen's centre), its art at 0.9u
+    // per pixel of the 960x640 sheet (the 2x sheets' pixels are half that).
+    const float u = std::min(H / 720.0f, W / 1280.0f);
+    const float art_scale = 0.905f * u * hud.sprite_scale("Chatboard.bsprite") * 640.0f / H;
+    const glm::vec2 centre(W * 0.5f, H * 0.5f);
+    auto at = [&](float x, float y) { return centre + glm::vec2(x, y) * u; };
+    // The game behind, dimmed, darker at the top and bottom.
+    rect(overlay, {0, 0, W, H}, {0, 0, 0, 0.3f});
+    rect(overlay, {0, 0, W, 65 * u}, {0, 0.01f, 0.02f, 0.5f});
+    rect(overlay, {0, H - 65 * u, W, H}, {0, 0.01f, 0.02f, 0.5f});
+    // A frame centred on `c`, its screen box returned.
+    auto frame = [&](int f, glm::vec2 c) {
+        if (!art) return glm::vec4(c, c);
+        const glm::vec4 b = Hud::frame_bounds(*art, f);
+        const glm::vec2 o = c - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f * art_scale;
+        hud.draw_frame(out, *art, f, o, art_scale, kWhite);
+        return glm::vec4(o + glm::vec2(b.x, b.y) * art_scale, o + glm::vec2(b.z, b.w) * art_scale);
+    };
+    auto say = [&](const std::string& t, glm::vec2 p, const glm::vec4& color, glm::vec2 anchor = {0.5f, 0.5f}, float wrap = 0) {
+        items.draw(out, t, p, int(wrap > 0 ? wrap : W), color, anchor);
+    };
 
     std::vector<Row> list = rows(s);
     rects_.assign(list.size(), Rect{});
-    const bool buttons_page = page() == Page::Pause || page() == Page::Options || page() == Page::Confirm;
-    float y = H * 0.27f;
-    if (page() == Page::Objectives) {   // the objectives box's lines, then Back
-        for (const Hud::ObjectiveLine& o : objectives) {
-            const std::string mark = o.primary ? "" : o.done ? "[x] " : "[ ] ";
-            y += items.draw(out, mark + o.text, {W * 0.25f, y}, int(W * 0.5f), o.done && !o.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite,
-                            {0.0f, 0.0f}) + line * 0.5f;
+    auto pair_button = [&](int i, glm::vec2 c) {   // Back / Resume / Yes / No: the slanted buttons
+        const bool sel = i == selected_;
+        const glm::vec4 box = frame(sel ? kSmallButtonOn : kSmallButton, c);
+        say(list[size_t(i)].label, c, kWhite);
+        rects_[size_t(i)].row = rects_[size_t(i)].control = box;
+    };
+
+    if (page() == Page::Pause) {
+        // On the left, where the original has its shop: the objectives, in the same panel.
+        if (art) {
+            const glm::vec4 a = Hud::frame_bounds(*art, kPanelTop), b = Hud::frame_bounds(*art, kPanelBottom);
+            const glm::vec2 mid((std::min(a.x, b.x) + std::max(a.z, b.z)) * 0.5f, (a.y + b.w) * 0.5f);
+            const glm::vec2 o = at(-207, 18) - mid * art_scale;
+            hud.draw_frame(out, *art, kPanelTop, o, art_scale, kWhite);
+            hud.draw_frame(out, *art, kPanelBottom, o, art_scale, kWhite);
+            title.draw(out, text("FPS_OBJECTIVES"), o + glm::vec2(mid.x, a.y + 26) * art_scale, int(W), kWhite, {0.5f, 0.5f});
+            float y = o.y + (a.y + 80) * art_scale;
+            for (const Hud::ObjectiveLine& line : objectives) {
+                const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
+                const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
+                y += items.draw(out, mark + line.text, {o.x + 40 * art_scale, y}, int((mid.x * 2 - 80) * art_scale), color, {0.0f, 0.0f}) +
+                     12 * u;
+            }
         }
-        y = std::max(y + line, H * 0.7f);
+        // The column of buttons on the right, Resume under it.
+        int n = 0;
+        for (int i = 0; i < int(list.size()); ++i) {
+            if (list[size_t(i)].slot != 0) {
+                pair_button(i, at(227, 205));
+                continue;
+            }
+            const glm::vec2 c = at(224, -149 + 66 * float(n++));
+            const glm::vec4 box = frame(i == selected_ ? kPauseButtonOn : kPauseButton, c);
+            say(list[size_t(i)].label, c, kWhite);
+            rects_[size_t(i)].row = rects_[size_t(i)].control = box;
+        }
+        return;
     }
-    const float row_h = line * (buttons_page ? 2.4f : 2.2f);
-    const float left = W * 0.5f - std::min(W * 0.36f, H * 0.62f), right = W * 0.5f + std::min(W * 0.36f, H * 0.62f);
+
+    // The other pages: the original's window, its title in the bar along the top.
+    if (art) {
+        const glm::vec4 b = Hud::frame_bounds(*art, kWindow);
+        const glm::vec2 o = centre - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f * art_scale;
+        hud.draw_frame(out, *art, kWindow, o, art_scale, kWhite);
+    }
+    static const char* const kTitles[] = {"FPS_PAUSE", "FPS_OBJECTIVES", "FPS_OPTIONS", "FPS_SOUND", "FPS_CONTROLS", "", "FPS_ADVANCED", ""};
+    const std::string heading = page() == Page::Display ? "Display" : page() == Page::Confirm ? "" : text(kTitles[int(page())]);
+    title.draw(out, heading, at(0, -229), int(W), kWhite, {0.5f, 0.5f});
+    if (page() == Page::Objectives) {
+        float y = (at(0, -170)).y;
+        for (const Hud::ObjectiveLine& line : objectives) {
+            const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
+            const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
+            y += items.draw(out, mark + line.text, {at(-300, 0).x, y}, int(600 * u), color, {0.0f, 0.0f}) + 12 * u;
+        }
+    }
+    if (page() == Page::Confirm) say(confirm_text_, at(0, -40), kWhite, {0.5f, 0.5f}, 560 * u);
+
+    float y = -185;   // the top of the page's rows
     for (int i = 0; i < int(list.size()); ++i) {
         const Row& r = list[size_t(i)];
         const bool sel = i == selected_;
-        if (!buttons_page && i + 1 == int(list.size()) && r.kind == Row::Kind::Button) y += row_h * 0.6f;   // Back, apart
-        const float cy = y + row_h * 0.5f;
         Rect& rc = rects_[size_t(i)];
-        if (r.kind == Row::Kind::Button) {
-            // The original's buttons: the pause page's slim bars, the options pages' others.
-            const int frame = page() == Page::Pause || page() == Page::Confirm ? (sel ? kPauseButtonOn : kPauseButton) : (sel ? kButtonOn : kButton);
-            float bw = W * 0.3f;
-            if (art) {
-                const glm::vec4 b = Hud::frame_bounds(*art, frame);
-                const float scale = k * 1.1f;
-                bw = (b.z - b.x) * scale;
-                hud.draw_frame(out, *art, frame, {W * 0.5f - (b.x + b.z) * 0.5f * scale, cy - (b.y + b.w) * 0.5f * scale}, scale, kWhite);
+        if (r.slot != 0) {
+            pair_button(i, at(r.slot == 1 ? -186 : 170, 205));
+            continue;
+        }
+        const glm::vec4 label_color = sel ? kHighlight : kLabel;
+        switch (r.kind) {
+            case Row::Kind::Button: {
+                const glm::vec2 c = at(-13, y + 33);
+                rc.row = rc.control = frame(sel ? kButtonOn : kButton, c);
+                say(r.label, c, kWhite);
+                y += 66;
+                break;
             }
-            items.draw(out, r.label, {W * 0.5f, cy - line * 0.5f}, int(W), sel ? kWhite : kText);
-            rc.row = rc.control = {W * 0.5f - bw * 0.5f, cy - row_h * 0.45f, W * 0.5f + bw * 0.5f, cy + row_h * 0.45f};
-        } else {
-            rc.row = {left, y, right, y + row_h};
-            if (sel) rect(overlay, rc.row, {0.15f, 0.45f, 0.6f, 0.28f});
-            items.draw(out, r.label, {left + line * 0.6f, cy - line * 0.5f}, int(W * 0.4f), sel ? kWhite : kText, {0.0f, 0.0f});
-            const float cx1 = right - line * 0.6f, cx0 = W * 0.5f + line;
-            rc.control = {cx0, y, cx1, y + row_h};
-            if (r.kind == Row::Kind::Toggle) {
-                // The original's switch: the lit box when on, the red one when off, with ON/OFF.
-                const int frame = r.on ? kToggleOn : kToggleOff;
-                float bw = line * 4;
-                if (art) {
-                    const glm::vec4 b = Hud::frame_bounds(*art, frame);
-                    const float scale = std::min(k, row_h * 0.85f / std::max(b.w - b.y, 1.0f));
-                    bw = (b.z - b.x) * scale;
-                    hud.draw_frame(out, *art, frame, {cx1 - b.z * scale, cy - (b.y + b.w) * 0.5f * scale}, scale, kWhite);
-                }
-                items.draw(out, r.value, {cx1 - bw * 0.5f, cy - line * 0.5f}, int(W), kWhite);
-            } else if (r.kind == Row::Kind::Slider) {
-                // The track, and its knob at the value.
-                if (art) {
-                    const glm::vec4 b = Hud::frame_bounds(*art, kSliderTrack);
-                    const float scale = (cx1 - cx0) / std::max(b.z - b.x, 1.0f);
-                    hud.draw_frame(out, *art, kSliderTrack, {cx0 - b.x * scale, cy - (b.y + b.w) * 0.5f * scale}, scale, kWhite);
-                    const int knob = sel ? kSliderKnobOn : kSliderKnob;
-                    const glm::vec4 kb = Hud::frame_bounds(*art, knob);
-                    const float ks = row_h * 0.7f / std::max(kb.w - kb.y, 1.0f);
-                    const float kx = cx0 + (cx1 - cx0) * r.fraction;
-                    hud.draw_frame(out, *art, knob, {kx - (kb.x + kb.z) * 0.5f * ks, cy - (kb.y + kb.w) * 0.5f * ks}, ks, kWhite);
-                } else {
-                    rect(overlay, {cx0, cy - 2, cx1, cy + 2}, kText);
-                }
-            } else if (r.kind == Row::Kind::Choice) {
-                // The value between the original's arrow brackets.
-                const float mid = (cx0 + cx1) * 0.5f;
-                items.draw(out, r.value, {mid, cy - line * 0.5f}, int(W * 0.4f), kWhite);
-                if (art) {
-                    const glm::vec4 b = Hud::frame_bounds(*art, kArrowLeft);
-                    const float scale = row_h * 0.6f / std::max(b.w - b.y, 1.0f);
-                    hud.draw_frame(out, *art, sel ? kArrowLeftOn : kArrowLeft, {cx0 - b.x * scale, cy - (b.y + b.w) * 0.5f * scale}, scale, kWhite);
-                    const glm::vec4 rb = Hud::frame_bounds(*art, kArrowRight);
-                    hud.draw_frame(out, *art, sel ? kArrowRightOn : kArrowRight, {cx1 - rb.z * scale, cy - (rb.y + rb.w) * 0.5f * scale}, scale,
-                                   kWhite);
-                }
+            case Row::Kind::Toggle: {
+                // The label on the left, the original's switch on the right: blue on, red off.
+                const float cy = y + 33;
+                say(r.label, at(-305, cy), label_color, {0.0f, 0.5f});
+                const glm::vec4 b = art ? Hud::frame_bounds(*art, kToggleOn) : glm::vec4(0, 0, 133, 60);
+                const glm::vec2 c = at(275, cy) - glm::vec2((b.z - b.x) * 0.5f * art_scale, 0);
+                rc.control = frame(r.on ? kToggleOn : kToggleOff, c);
+                say(r.value, c - glm::vec2(0, 2 * u), kWhite);
+                rc.row = {at(-320, cy - 33), at(290, cy + 33)};
+                y += 67;
+                break;
+            }
+            case Row::Kind::Choice: {
+                // The label on the left, the value between the original's arrow brackets.
+                const float cy = y + 33;
+                say(r.label, at(-305, cy), label_color, {0.0f, 0.5f});
+                frame(sel ? kArrowLeftOn : kArrowLeft, at(70, cy));
+                frame(sel ? kArrowRightOn : kArrowRight, at(265, cy));
+                say(r.value, at(167, cy), kWhite);
+                rc.control = {at(50, cy - 30), at(285, cy + 30)};
+                rc.row = {at(-320, cy - 33), at(290, cy + 33)};
+                y += 67;
+                break;
+            }
+            case Row::Kind::Slider: {
+                // The label above; the original's slider (- track +), its knob at the value.
+                say(r.label, at(-7, y + 13), label_color);
+                const glm::vec2 c = at(-7, y + 50);
+                const glm::vec4 box = frame(kSlider, c);
+                float x0 = c.x - 220 * u, x1 = c.x + 215 * u;
+                if (art) x0 = glm::mix(box.x, box.z, kSliderTrack.x), x1 = glm::mix(box.x, box.z, kSliderTrack.y);
+                frame(sel ? kSliderKnobOn : kSliderKnob, {x0 + (x1 - x0) * r.fraction, c.y});
+                rc.control = {x0, c.y - 25 * u, x1, c.y + 25 * u};
+                rc.row = {at(-320, y), at(290, y + 85)};
+                y += 85;
+                break;
             }
         }
-        y += row_h;
     }
 }
 

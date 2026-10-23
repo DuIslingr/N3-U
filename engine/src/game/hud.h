@@ -71,8 +71,10 @@ public:
     void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, const glm::vec4& color) {
         draw_frame(out, s, frame, at, glm::vec2(scale), color);
     }
-    // Scaled per axis; a negative x scale mirrors the frame about its anchor.
-    void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color);
+    // Scaled per axis; a negative x scale mirrors the frame about its anchor. Only what lies
+    // inside `clip` (x0, y0, x1, y1 in pixels) is drawn.
+    void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color,
+                    const glm::vec4& clip = glm::vec4(-1e9f, -1e9f, 1e9f, 1e9f));
     // An animation (ticks of 1/30 s, looping) at `seconds` into it.
     void draw_anim(ParticleList& out, const Sprite& s, int anim, glm::vec2 at, float scale, float seconds, const glm::vec4& color);
     // A frame's box relative to its anchor: min x, min y, max x, max y (sprite pixels).

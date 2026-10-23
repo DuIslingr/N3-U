@@ -52,6 +52,7 @@ private:
         float fraction = 0;                         // sliders, 0..1
         std::function<Action(Settings&, int)> change;   // -1/+1 left/right, 0 activate
         std::function<Action(Settings&, float)> set;    // sliders: to a fraction
+        int slot = 0;                               // buttons: 0 in the page, 1/2 the bottom pair (Back, Resume)
     };
     std::vector<Row> rows(const Settings& s);
     Action back();
@@ -61,7 +62,7 @@ private:
     Page page() const { return stack_.back(); }
     Action confirm_action_ = Action::None;
     std::string confirm_text_;
-    int selected_ = 0;
+    int selected_ = -1;                             // none until the keys pick one
     int dragging_ = -1;                             // a slider row held by the pointer
     struct Rect {
         glm::vec4 row{0}, control{0};               // x0, y0, x1, y1

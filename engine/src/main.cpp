@@ -70,9 +70,9 @@ struct Options {
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
     float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
     float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
-    float touch_test = 0;
-    std::string sprite_sheet;
-    std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back)   // debugging: draw every frame of this .bsprite (numbered) over the view       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
+    float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
+    std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
+    std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -455,13 +455,13 @@ int main(int argc, char** argv) {
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
                                     glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);
-                if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked()) {
+                if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked() && !menu.open) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
                     for (const auto& s : logic.objectives.secondary) lines.push_back({s.text, false, s.done});
                     hud.draw_objectives(hud_sprites, objective_text, lines, logic.objectives.alpha, w, h);
                 }
-                if (opt.scripts && !logic.messages().empty()) {
+                if (opt.scripts && !logic.messages().empty() && !menu.open) {
                     const LevelLogic::Message& m = logic.messages().back();
                     const float a = std::clamp(m.seconds_left / 0.4f, 0.0f, 1.0f);
                     if (m.text.find('^') != std::string::npos)   // touch prompts: button glyphs inline
@@ -476,7 +476,7 @@ int main(int argc, char** argv) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
                     for (const auto& o : logic.objectives.secondary) lines.push_back({o.text, false, o.done});
-                    menu.draw(overlay, hud_sprites, hud, menu_title, subtitles, lines, settings, w, h);
+                    menu.draw(overlay, hud_sprites, hud, subtitles, objective_text, lines, settings, w, h);
                 }
                 if (!opt.sprite_sheet.empty()) {   // NAME[:first:count]
                     std::string name = opt.sprite_sheet;
@@ -487,9 +487,10 @@ int main(int argc, char** argv) {
                     }
                     if (const Sprite* sp = hud.sprite(name)) {
                         fullscreen(overlay, w, h, glm::vec4(0.15f, 0.15f, 0.15f, 1));
-                        const int cols = 6, total = int(sp->frames.size());
+                        const int total = int(sp->frames.size());
                         if (count < 0) count = total - first;
                         count = std::max(0, std::min(count, total - first));
+                        const int cols = std::clamp(count, 1, 6);
                         const float cell_w = float(w) / cols, cell_h = float(h) / float(std::max((count + cols - 1) / cols, 1));
                         for (int j = 0; j < count; ++j) {
                             const int i = first + j;
@@ -850,6 +851,7 @@ int main(int argc, char** argv) {
                 if (!opt.menu_keys.empty()) {
                     menu.show();
                     for (char c : opt.menu_keys) {
+                        if (c == '.') continue;
                         using K = PauseMenu::Key;
                         const K k = c == 'u' ? K::Up : c == 'd' ? K::Down : c == 'l' ? K::Left : c == 'r' ? K::Right : c == 'b' ? K::Back : K::Activate;
                         menu.key(k, settings);
