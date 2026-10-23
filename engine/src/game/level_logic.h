@@ -136,6 +136,7 @@ public:
     std::function<void(const std::string&)> log = [](const std::string&) {};
     bool trace = false;              // log every started script function
     bool level_ended = false;        // EndLevel() was called
+    bool level_success = true;       // EndLevel(false): the mission failed
     bool fog_locked = false;         // Fog_SetLock: zone changes keep the current fog
     // LoadLevelSections(n): the level should reload with section bit n (0: none pending).
     // The caller reloads the scene and calls start(true).

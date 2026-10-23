@@ -245,6 +245,18 @@ bool save_bmp(const Image& img, const std::string& path) {
     return ok;
 }
 
+// The campaign's levels in story order (levels/locations.bin lists them by location).
+std::string next_campaign_level(const std::string& level) {
+    static const char* const kOrder[] = {"San_Francisco_1_FINAL", "San_Francisco_2_FINAL", "Ship_01", "therrius_2_prototype_Ciprian",
+                                         "Boreas_1", "Boreas_2", "13_volteron_1", "14_volteron_1", "08_volteron2", "09_volteron_3"};
+    const size_t slash = level.find_last_of('/');
+    std::string base = level.substr(slash == std::string::npos ? 0 : slash + 1);
+    if (base.size() > 4 && base.compare(base.size() - 4, 4, ".lvc") == 0) base.resize(base.size() - 4);
+    for (size_t i = 0; i + 1 < std::size(kOrder); ++i)
+        if (base == kOrder[i]) return level.substr(0, slash == std::string::npos ? 0 : slash + 1) + kOrder[i + 1] + ".lvc";
+    return {};
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -451,6 +463,29 @@ int main(int argc, char** argv) {
                     player.spawn(feet, yaw);
                     logic.start(true);
                     combat.start();
+                    viewmodel.start();
+                    hud.start();
+                }
+                // EndLevel: a moment on the faded screen, then the next campaign level (the
+                // same one again after a failure). The arsenal carries over.
+                static float ended_for = 0;
+                if (!logic.level_ended) {
+                    ended_for = 0;
+                } else if ((ended_for += dt) > 3.0f) {
+                    const std::string next = logic.level_success ? next_campaign_level(opt.level) : opt.level;
+                    if (next.empty()) {
+                        logic.message("The campaign is complete.", 10);
+                        logic.level_ended = false;
+                        return;
+                    }
+                    std::printf("[script] level over (%s): loading %s\n", logic.level_success ? "complete" : "failed", next.c_str());
+                    opt.level = next;
+                    if (window) SDL_SetWindowTitle(window, ("N.O.V.A. 3 - " + opt.level).c_str());
+                    scene.load_level(opt.level, 1);
+                    player.spawn(scene.start_position, scene.start_yaw);
+                    logic.start();
+                    combat.start();
+                    combat.campaign_loadout(opt.level);
                     viewmodel.start();
                     hud.start();
                 }

@@ -253,10 +253,17 @@ int api_load_level_sections(lua_State* L) {   // LoadLevelSections(n, effect): r
     if (n >= 1 && n <= 32 && !(ctx(L).scene.section() & (1u << (n - 1)))) ctx(L).pending_section = 1u << (n - 1);
     return 0;
 }
+// EndLevel([success]): the level is over; the next one loads (a failure restarts it).
 int api_end_level(lua_State* L) {
     LevelLogic& c = ctx(L);
     c.level_ended = true;
-    c.message("Level complete", 10);
+    c.level_success = lua_gettop(L) < 1 || lua_toboolean(L, 1) != 0;
+    return 0;
+}
+// StartEndLevelEffect(ms, r, g, b, ?): the screen fades out to a colour.
+int api_start_end_level_effect(lua_State* L) {
+    ctx(L).start_fade(false, float(lua_tonumber(L, 1)),
+                      glm::vec3(float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)), float(lua_tonumber(L, 4))));
     return 0;
 }
 int api_false(lua_State* L) {
@@ -856,6 +863,7 @@ const Entry kImplemented[] = {
     {"TeleportPlayerToZone", api_teleport_player},
     {"PlayerMoveToSpawnpoint", api_teleport_player},
     {"EndLevel", api_end_level},
+    {"StartEndLevelEffect", api_start_end_level_effect},
     {"IsLowDevice", api_false},
     {"IsLowDeviceForEffects", api_false},
     {"IsServer", api_false},
