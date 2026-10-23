@@ -159,6 +159,29 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                 }
             }
         }
+        // The fire rate is in the weapon's animation states (CStatesSetComponent): the
+        // looping attack clip carries a GameEvent per shot. Use the typical gap between them.
+        if (const Value* states = resolved_template(type, gol_, 0x0e); states && states->size() > 1) {
+            for (const char* want : {"Attack_Loop", "AimAttack"}) {
+                std::vector<float> times;
+                for (const Value& st : (*states)[1].list) {
+                    if (st.size() < 12 || st[0].s != want || st[11].size() == 0) continue;
+                    const Value& clip = st[11][0];
+                    if (clip.size() < 3) continue;
+                    for (const Value& group : clip[2].list)
+                        if (group.size() >= 3 && group[0].s == "GameEvent")
+                            for (const Value& ev : group[2].list)
+                                if (ev.size() >= 2 && ev[1].i >= 0) times.push_back(float(ev[1].i));
+                }
+                if (times.size() < 3) continue;
+                std::sort(times.begin(), times.end());
+                std::vector<float> gaps;
+                for (size_t i = 1; i < times.size(); ++i) gaps.push_back(times[i] - times[i - 1]);
+                std::nth_element(gaps.begin(), gaps.begin() + gaps.size() / 2, gaps.end());
+                w.interval = gaps[gaps.size() / 2] / 1000.0f;
+                break;
+            }
+        }
         w.reload_time = w.clip > 15 ? 1.8f : 1.3f;
         break;
     }
@@ -219,6 +242,12 @@ void Combat::start() {
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, nav mesh " +
         std::to_string(nav_.triangle_count()) + " triangles");
+    for (const WeaponDef& w : weapons_) {
+        char line[160];
+        std::snprintf(line, sizeof line, "weapon %s: %.0f ms between shots, clip %d, reserve %d, damage %.1f-%.1f", w.name.c_str(),
+                      w.interval * 1000, w.clip, w.reserve, w.damage_near, w.damage_far);
+        log(line);
+    }
 }
 
 void Combat::setup_actor(Target& t, const LevelObject& o) {
