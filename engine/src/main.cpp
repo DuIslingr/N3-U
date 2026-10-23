@@ -76,6 +76,7 @@ struct Options {
     bool log_player = false;    // print the player's state every second (interactive)
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
     float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
+    float mine_test = -1;       // headless: at this time, throw a mine at the nearest enemy; detonate 2 s later
     float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
@@ -153,6 +154,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--log-player") o.log_player = true;
         else if (a == "--combat-test") o.combat_test = std::stof(next());
         else if (a == "--grenade-test") o.grenade_test = std::stof(next());
+        else if (a == "--mine-test") o.mine_test = std::stof(next());
         else if (a == "--power-test") o.power_test = std::stof(next());
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
@@ -555,8 +557,8 @@ int main(int argc, char** argv) {
                     Hud::State hs;
                     hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open;
                     hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
-                    hs.grenades = combat.grenades_enabled && logic.controls.items;
-                    hs.grenade_count = combat.grenades;
+                    hs.grenades = (combat.grenades_enabled || combat.mines_picked()) && logic.controls.items;
+                    hs.grenade_count = combat.mines_picked() ? combat.mines : combat.grenades;
                     hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
                     hs.core = combat.core;
                     if (combat.core >= 0) hs.core_left = (hs.shield - 1) / std::max(combat.core_percent / 100, 1e-3f);
@@ -969,6 +971,22 @@ int main(int argc, char** argv) {
                             combat.give_ammo("Grenade", 1);
                             ci.grenade = true;
                             std::printf("t=%.2f grenade thrown, %d enemies alive\n", t, combat.enemies_alive());
+                        }
+                        if (opt.mine_test >= 0 && t <= opt.mine_test && t + kPhysicsStep > opt.mine_test) {
+                            if (combat.nearest_enemy(player.eye(), target)) {
+                                const glm::vec3 d = target - player.eye();
+                                aim = glm::normalize(d + glm::vec3(0, 0, glm::length(d) * 0.25f));
+                            }
+                            ++combat.mines;
+                            player.pitch = -35;   // onto the ground ahead
+                            if (!combat.mines_picked()) ci.switch_throwable = true;
+                            ci.grenade = true;
+                            std::printf("t=%.2f mine thrown, %d enemies alive\n", t, combat.enemies_alive());
+                        }
+                        if (opt.mine_test >= 0 && t <= opt.mine_test + 2 && t + kPhysicsStep > opt.mine_test + 2) {
+                            ci.detonate = true;
+                            std::printf("t=%.2f detonate (%s), %d enemies alive\n", t, combat.mines_placed() ? "placed" : "none placed",
+                                        combat.enemies_alive());
                         }
                         if (opt.power_test >= 0 && t <= opt.power_test && t + kPhysicsStep > opt.power_test) {
                             if (combat.nearest_enemy(player.eye(), target)) aim = glm::normalize(target - player.eye());
@@ -1419,6 +1437,10 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
+                        // Grenades or mines on the grenade button (the original's swipe), and the
+                        // detonation of the mines placed.
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_H && !e.key.repeat && logic.controls.items) combat_in.switch_throwable = true;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_X && !e.key.repeat && logic.controls.items) combat_in.detonate = true;
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                             fire_held = true, logic.qte_press("fire"), logic.limited_tap();
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_TAB && !e.key.repeat && logic.controls.powers) combat.cycle_power();

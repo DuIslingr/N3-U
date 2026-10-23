@@ -189,6 +189,7 @@ Combat::GrenadeDef Combat::read_grenade(const Gol& gol, int id) {
         d.damage = num(*g, 1, 40);
         d.radius = num(*g, 3, 10);
         d.speed = num(*g, 4, 25);
+        d.sticky = (*g)[6].i != 0;
         if (!str(*g, 10).empty()) d.effect = str(*g, 10);
         d.bounce_sound = str(*g, 15);
         d.explode_sounds = sound_list((*g)[18]);
@@ -202,6 +203,7 @@ void Combat::load_grenade() {
     for (const auto& [id, type] : gol_) {
         if (type.name == "Grenade_Player") grenade_def_ = read_grenade(gol_, id);
         if (type.name == "NPC_Grenade") npc_grenade_def_ = read_grenade(gol_, id);
+        if (type.name == "Mine_Player") mine_def_ = read_grenade(gol_, id);
     }
 }
 
@@ -211,7 +213,27 @@ void Combat::throw_grenade(const glm::vec3& eye, const glm::vec3& aim) {
     glm::vec3 at = eye + aim * 0.4f + right * 0.2f - glm::vec3(0, 0, 0.15f);
     float t = 1;
     if (scene_.collision().raycast(eye, at, t)) at = eye;   // too close to a wall
-    launch_grenade(grenade_def_, at, aim * (grenade_def_.speed * 0.6f) + glm::vec3(0, 0, 3.5f), false);
+    const GrenadeDef& def = throwing_mine_ ? mine_def_ : grenade_def_;
+    launch_grenade(def, at, aim * (def.speed * 0.6f) + glm::vec3(0, 0, 3.5f), false);
+    if (logic_.trace) log(std::string(throwing_mine_ ? "mine" : "grenade") + " thrown (type " + std::to_string(def.type) + ")");
+}
+
+bool Combat::mines_placed() const {
+    for (const Grenade& g : live_grenades_)
+        if (g.live && g.def == &mine_def_) return true;
+    return false;
+}
+
+void Combat::detonate() {
+    // CWeaponComponent::Detonate raises EvDetonate; every mine of the player's goes off.
+    ++detonations_;
+    for (Grenade& g : live_grenades_) {
+        if (!g.live || g.def != &mine_def_) continue;
+        g.live = false;
+        scene_.set_object_visible(g.object, false);
+        if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
+        explode(g);
+    }
 }
 
 void Combat::launch_grenade(const GrenadeDef& def, const glm::vec3& at, const glm::vec3& vel, bool npc) {
@@ -227,7 +249,7 @@ void Combat::launch_grenade(const GrenadeDef& def, const glm::vec3& at, const gl
     g->def = &def, g->npc = npc;
     g->pos = at, g->vel = vel;
     g->fuse = def.fuse;
-    g->bounce_wait = 0;
+    g->bounce_wait = 0, g->stuck = false;
     g->live = true;
     scene_.set_object_visible(g->object, true);
     scene_.move_object(g->object, g->pos);
@@ -259,7 +281,7 @@ std::vector<glm::vec3> Combat::grenade_threats() const {
 void Combat::update_grenades(float dt) {
     constexpr float kGravity = 12.0f;
     for (Grenade& g : live_grenades_) {
-        if (!g.live) continue;
+        if (!g.live || g.stuck) continue;
         g.bounce_wait = std::max(g.bounce_wait - dt, 0.0f);
         g.vel.z -= kGravity * dt;
         const glm::vec3 to = g.pos + g.vel * dt;
@@ -267,6 +289,20 @@ void Combat::update_grenades(float dt) {
         glm::vec3 n(0, 0, 1);
         if (glm::length(g.vel) > 1e-3f && scene_.collision().raycast(g.pos, to, t, nullptr, &n)) {
             g.pos = glm::mix(g.pos, to, t) + n * 0.05f;
+            if (g.def->sticky) {   // a mine: set on the surface, turned to face out of it
+                g.stuck = true, g.vel = glm::vec3(0);
+                const glm::vec3 side = std::abs(n.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
+                const glm::vec3 x = glm::normalize(glm::cross(side, n)), y = glm::cross(n, x);
+                scene_.set_object_transform(g.object, glm::mat4(glm::vec4(x, 0), glm::vec4(y, 0), glm::vec4(n, 0), glm::vec4(g.pos, 1)));
+                if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
+                sound(g.def->bounce_sound, &g.pos);   // sfx_detonator_hit_ground_attach
+                if (logic_.trace) {
+                    char line[128];
+                    std::snprintf(line, sizeof line, "mine stuck at (%.1f %.1f %.1f), facing (%.2f %.2f %.2f)", g.pos.x, g.pos.y, g.pos.z, n.x, n.y, n.z);
+                    log(line);
+                }
+                continue;
+            }
             const float speed = glm::length(g.vel);
             g.vel = glm::reflect(g.vel, n) * 0.4f;
             if (n.z > 0.7f && glm::length(g.vel) < 1.0f) g.vel = glm::vec3(0);   // at rest
@@ -277,7 +313,7 @@ void Combat::update_grenades(float dt) {
         g.spin += glm::length(g.vel) * dt * 4.0f;
         scene_.set_object_transform(g.object, glm::rotate(glm::translate(glm::mat4(1), g.pos), g.spin, glm::vec3(1, 0, 0)));
         if (g.trail >= 0) scene_.particles().move(g.trail, glm::translate(glm::mat4(1), g.pos));
-        if ((g.fuse -= dt) <= 0) {
+        if (!g.def->sticky && (g.fuse -= dt) <= 0) {
             g.live = false;
             scene_.set_object_visible(g.object, false);
             if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
@@ -1835,8 +1871,14 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
 
     // Grenades: the throw animation starts, the grenade leaves the hand a moment later.
     grenade_cooldown_ = std::max(grenade_cooldown_ - dt, 0.0f);
-    if (in.grenade && grenades_enabled && grenades > 0 && grenade_cooldown_ <= 0 && throw_delay_ < 0) {
-        --grenades;
+    if (in.switch_throwable && mines_enabled) throw_mines_ = !throw_mines_, ++switches_;
+    if (!mines_enabled) throw_mines_ = false;
+    if (in.detonate) detonate();
+    int& ammo = throw_mines_ ? mines : grenades;
+    if (in.grenade && (throw_mines_ || grenades_enabled) && ammo > 0 && grenade_cooldown_ <= 0 && throw_delay_ < 0 &&
+        (throw_mines_ ? mine_def_ : grenade_def_).type >= 0) {
+        --ammo;
+        throwing_mine_ = throw_mines_, ++throws_;
         throw_delay_ = 0.35f;
         grenade_cooldown_ = 1.0f;
         throw_started_ = true;

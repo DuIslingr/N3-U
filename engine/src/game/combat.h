@@ -69,7 +69,9 @@ struct NpcGoal {
 
 struct CombatInput {
     bool fire = false, reload = false;
-    bool grenade = false;              // throw a grenade
+    bool grenade = false;              // throw a grenade (or a mine, when they are picked)
+    bool switch_throwable = false;     // grenades <-> mines
+    bool detonate = false;             // set off the mines placed
     bool power = false;                // use the selected special power (Repel)
     int select = -1;                   // weapon slot to switch to
 };
@@ -222,10 +224,17 @@ public:
     // and reserve; allowed while one is short.
     bool can_refill() const;
     void refill_weapons();
-    // Mines: counted (pick-ups, the Mine Pack) once unlocked (UnlockWeapon("Mines")), but
-    // not yet thrown in this port.
-    bool mines_enabled = false;
+    // Mines (PowerManager ThrowMine, Mine_Player), there from the start as grenades are (SF1
+    // teaches them; Lock/UnlockWeapon("Mines")): the grenade button throws them instead when
+    // switched to; they stick where they land and go off together when detonated (EvDetonate).
+    bool mines_enabled = true;
     int mines = 0;
+    bool mines_picked() const { return throw_mines_; }
+    // Counts for the tutorial steps: throws (grenades or mines), switches, detonations.
+    int throws() const { return throws_; }
+    int switches() const { return switches_; }
+    int detonations() const { return detonations_; }
+    bool mines_placed() const;
     // The last pick-up taken (CLevelInterfaceNormal::ShowPowerUpInfo): its icon (frame 0 of
     // the .bsprite) and what it gave, for 2 s.
     struct PickupInfo {
@@ -477,6 +486,7 @@ private:
     struct GrenadeDef {
         int type = -1;
         float fuse = 2.3f, damage = 40, radius = 10, speed = 25;
+        bool sticky = false;           // a mine: stuck where it lands, set off by the detonation
         std::string effect = "explosion", trail, bounce_sound;
         std::vector<std::string> explode_sounds;
     };
@@ -484,6 +494,7 @@ private:
         size_t object = size_t(-1);
         const GrenadeDef* def = nullptr;
         bool npc = false;              // an enemy's (NPC_Grenade): it hurts the player, the HUD warns of it
+        bool stuck = false;            // a mine on a surface, waiting for the detonation
         glm::vec3 pos{0}, vel{0};
         float fuse = 0, bounce_wait = 0, spin = 0;
         int trail = -1;
@@ -498,7 +509,10 @@ private:
     GrenadeDef npc_grenade_def_;
     void update_grenades(float dt);
     void explode(const Grenade& g);
-    GrenadeDef grenade_def_;
+    GrenadeDef grenade_def_, mine_def_;
+    bool throw_mines_ = false, throwing_mine_ = false;
+    int throws_ = 0, switches_ = 0, detonations_ = 0;
+    void detonate();
     std::vector<Grenade> live_grenades_;
     float throw_delay_ = -1, grenade_cooldown_ = 0;
     static constexpr float kPowerCooldown = 5.0f;

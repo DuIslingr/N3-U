@@ -468,6 +468,7 @@ private:
         glm::vec3 start{0};
         float last_yaw = 0, last_pitch = 0;
         std::string weapon;
+        int count = 0;          // the combat count the step waits on, at its start
         bool active = false;
     } tutorial_;
     void update_tutorial(float dt);

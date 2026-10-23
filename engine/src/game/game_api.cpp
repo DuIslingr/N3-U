@@ -599,7 +599,9 @@ int api_player_look_to(lua_State* L) {
 // Tutorials: Start<Kind>Tutorial([ms]); TutorialMessage(id, ms) (0 hides it).
 template <const char* Kind>
 int api_tutorial_step(lua_State* L) {
-    ctx(L).start_tutorial_step(Kind, lua_gettop(L) >= 1 ? float(lua_tointeger(L, 1)) : 0.0f);
+    // StartGrenadeTutorial(ms, true) is the one for switching between grenades and mines.
+    const std::string kind = std::string(Kind) == "Grenade" && lua_toboolean(L, 2) ? "GrenadeSwitch" : Kind;
+    ctx(L).start_tutorial_step(kind, lua_gettop(L) >= 1 ? float(lua_tointeger(L, 1)) : 0.0f);
     return 0;
 }
 constexpr char kRotate[] = "Rotate", kMove[] = "Move", kJump[] = "Jump", kReload[] = "Reload", kShoot[] = "Shoot",

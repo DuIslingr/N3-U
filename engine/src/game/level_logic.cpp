@@ -1056,7 +1056,11 @@ void LevelLogic::start_tutorial_step(const std::string& kind, float ms) {
     tutorial_.time_left = ms > 0 ? ms / 1000.0f : -1;
     tutorial_.start = player.center;
     tutorial_.last_yaw = player.yaw, tutorial_.last_pitch = player.pitch;
-    if (combat) tutorial_.weapon = combat->weapon_type();
+    if (combat) {
+        tutorial_.weapon = combat->weapon_type();
+        tutorial_.count = kind == "Grenade" ? combat->throws() : kind == "GrenadeSwitch" ? combat->switches()
+                        : kind == "Detonate" ? combat->detonations() : 0;
+    }
     tutorial_.active = true;
     if (trace) log("tutorial step " + kind);
 }
@@ -1080,6 +1084,12 @@ void LevelLogic::update_tutorial(float dt) {
         done = combat && combat->since_shot() < 0.1f;
     } else if (t.kind == "ChangeWeapon") {
         done = combat && combat->weapon_type() != t.weapon;
+    } else if (t.kind == "Grenade") {   // a grenade (or mine) thrown
+        done = !combat || combat->throws() != t.count;
+    } else if (t.kind == "GrenadeSwitch") {   // grenades and mines swapped
+        done = !combat || !combat->mines_enabled || combat->switches() != t.count;
+    } else if (t.kind == "Detonate") {   // the mines set off
+        done = !combat || !combat->mines_placed() || combat->detonations() != t.count;
     }
     // Steps for things this port does not have yet (sprint, aiming, grenades, powers)
     // end with their time (or at once without one).
