@@ -43,6 +43,8 @@
 #include "game/player.h"
 #include "game/level_logic.h"
 #include "game/scene.h"
+#include "game/pause_menu.h"
+#include "game/settings.h"
 #include "game/touch_controls.h"
 #include "render/renderer.h"
 #include "render/text.h"
@@ -68,7 +70,9 @@ struct Options {
     float combat_test = 0;      // headless: aim at the nearest enemy and fire for this many seconds
     float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
     float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
-    float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
+    float touch_test = 0;
+    std::string sprite_sheet;
+    std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back)   // debugging: draw every frame of this .bsprite (numbered) over the view       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -89,6 +93,7 @@ struct Options {
     int section = 1;
     bool trace_zones = false;
     int width = 1600, height = 900;
+    bool size_given = false;    // --size: the window as asked, not the saved display settings
 };
 
 Options parse(int argc, char** argv) {
@@ -132,11 +137,13 @@ Options parse(int argc, char** argv) {
         else if (a == "--combat-test") o.combat_test = std::stof(next());
         else if (a == "--grenade-test") o.grenade_test = std::stof(next());
         else if (a == "--power-test") o.power_test = std::stof(next());
+        else if (a == "--sprite-sheet") o.sprite_sheet = next();
+        else if (a == "--menu") o.menu_keys = next();
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
         else if (a == "--audit") o.audit = std::stoi(next());
-        else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height);
+        else if (a == "--size") std::sscanf(next().c_str(), "%dx%d", &o.width, &o.height), o.size_given = true;
         else if (a == "--eye") {
             float v[5] = {0, 0, 0, 0, 0};
             const int n = std::sscanf(next().c_str(), "%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4]);
@@ -369,6 +376,22 @@ int main(int argc, char** argv) {
             Hud hud(scene);
             TextRenderer hud_numbers(vfs, renderer, "neuropol.ttf", std::max(14.0f, float(opt.height) * 0.04f));
             TouchControls touch(hud);   // the Touch scheme's on-screen controls
+            const std::string settings_path = headless ? std::string() : Settings::default_path();
+            Settings settings = Settings::load(settings_path);
+            PauseMenu menu;
+            menu.text = [&logic](const std::string& id) {
+                const std::string t = logic.strings.find(id);
+                return t.empty() ? id : t;
+            };
+            menu.touch = logic.input == InputScheme::Touch;
+            // Settings that act on the game: sound levels (the menu's Sound page).
+            auto apply_sound = [&] {
+                if (!logic.audio) return;
+                logic.audio->master = settings.sound ? 0.8f : 0.0f;
+                logic.audio->sfx = logic.audio->voices = settings.sfx_volume;
+                logic.audio->music = 0.6f * settings.music_volume;
+            };
+            TextRenderer menu_title(vfs, renderer, "Days.ttf", std::max(20.0f, float(opt.height) * 0.06f));
             TextRenderer objective_text(vfs, renderer, "Days.ttf", std::max(13.0f, float(opt.height) * 0.026f));
             // HUD_StartFrost / HUD_StopFrost: the frost spreads or melts over time.
             uint32_t frost_serial = 0;
@@ -381,12 +404,21 @@ int main(int argc, char** argv) {
                 hud.frost_max = logic.frost.max;
                 hud.update_frost(dt);
             };
+            int fonts_for = opt.height;   // the screen height the fonts are sized for
             auto draw_text = [&](FrameParams& f, int w, int h) {
+                hud.set_screen(w, h);   // which sprite sheets (1x or 2x) suit this screen
+                if (h != fonts_for) {   // resized: the text keeps its share of the screen
+                    fonts_for = h;
+                    subtitles.set_size(std::max(16.0f, float(h) * 0.032f));
+                    hud_numbers.set_size(std::max(14.0f, float(h) * 0.04f));
+                    menu_title.set_size(std::max(20.0f, float(h) * 0.06f));
+                    objective_text.set_size(std::max(13.0f, float(h) * 0.026f));
+                }
                 hud_sprites.vertices.clear();
                 hud_sprites.batches.clear();
                 if (opt.scripts) {
                     Hud::State hs;
-                    hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic);
+                    hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open;
                     hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
                     hs.grenades = combat.grenades_enabled && logic.controls.items;
                     hs.grenade_count = combat.grenades;
@@ -409,8 +441,8 @@ int main(int argc, char** argv) {
                 }
                 if (opt.scripts && !logic.qte_kind().empty()) {
                     // CQTEFire: tutorial.bsprite's animation 1 over the button to press.
-                    if (const Sprite* ts = hud.sprite("tutorial.bsprite")) {
-                        const float scale = float(std::min(w, h)) / 640.0f;
+                    if (const Sprite* ts = hud.sprite("tutorial.bsprite"); ts) {
+                        const float scale = hud.sprite_scale("tutorial.bsprite");
                         const bool touch_qte = logic.input == InputScheme::Touch;
                         const glm::vec2 at = touch_qte ? touch.fire_anchor() : glm::vec2(float(w) * 0.5f, float(h) * 0.72f);
                         hud.draw_anim(hud_sprites, *ts, 1, at, scale, logic.qte_time(), glm::vec4(1));
@@ -422,7 +454,7 @@ int main(int argc, char** argv) {
                 }
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
-                                    glm::distance(f.camera, logic.path_marker.position), w, h);
+                                    glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);
                 if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked()) {
                     std::vector<Hud::ObjectiveLine> lines;
                     if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
@@ -438,6 +470,36 @@ int main(int argc, char** argv) {
                         const int wrap = int(float(w) * 0.7f);
                         const float y = std::min(float(h) * 0.8f, float(h) * 0.97f - subtitles.measure(m.text, wrap).y);
                         subtitles.draw(hud_sprites, m.text, {float(w) * 0.5f, y}, wrap, {1, 1, 1, a});
+                    }
+                }
+                if (menu.open) {
+                    std::vector<Hud::ObjectiveLine> lines;
+                    if (!logic.objectives.primary.empty()) lines.push_back({logic.objectives.primary, true, logic.objectives.primary_done});
+                    for (const auto& o : logic.objectives.secondary) lines.push_back({o.text, false, o.done});
+                    menu.draw(overlay, hud_sprites, hud, menu_title, subtitles, lines, settings, w, h);
+                }
+                if (!opt.sprite_sheet.empty()) {   // NAME[:first:count]
+                    std::string name = opt.sprite_sheet;
+                    int first = 0, count = -1;
+                    if (const size_t c = name.find(':'); c != std::string::npos) {
+                        std::sscanf(name.c_str() + c + 1, "%d:%d", &first, &count);
+                        name.resize(c);
+                    }
+                    if (const Sprite* sp = hud.sprite(name)) {
+                        fullscreen(overlay, w, h, glm::vec4(0.15f, 0.15f, 0.15f, 1));
+                        const int cols = 6, total = int(sp->frames.size());
+                        if (count < 0) count = total - first;
+                        count = std::max(0, std::min(count, total - first));
+                        const float cell_w = float(w) / cols, cell_h = float(h) / float(std::max((count + cols - 1) / cols, 1));
+                        for (int j = 0; j < count; ++j) {
+                            const int i = first + j;
+                            const glm::vec4 b = Hud::frame_bounds(*sp, i);
+                            const float fw = std::max(b.z - b.x, 1.0f), fh = std::max(b.w - b.y, 1.0f);
+                            const float k = std::min((cell_w - 4) / fw, (cell_h - 16) / fh);
+                            const glm::vec2 cell(float(j % cols) * cell_w, float(j / cols) * cell_h);
+                            hud.draw_frame(hud_sprites, *sp, i, cell + glm::vec2(2 - b.x * k, 14 - b.y * k), k, glm::vec4(1));
+                            objective_text.draw(hud_sprites, std::to_string(i), cell, w, glm::vec4(1, 1, 0, 1), {0.0f, 0.0f});
+                        }
                     }
                 }
                 f.sprites = &hud_sprites;
@@ -466,6 +528,18 @@ int main(int argc, char** argv) {
             }
             for (const std::string& code : opt.exec) logic.exec(code);
             for (const std::string& h : opt.hide_models) std::printf("hid %zu placements of *%s*\n", scene.hide_models(h), h.c_str());
+            // A level from its start (the next campaign level, Restart Level); the arsenal carries over.
+            auto load_level = [&](const std::string& level) {
+                opt.level = level;
+                if (window) SDL_SetWindowTitle(window, ("N.O.V.A. 3 - " + opt.level).c_str());
+                scene.load_level(opt.level, 1);
+                player.spawn(scene.start_position, scene.start_yaw);
+                logic.start();
+                combat.start();
+                combat.campaign_loadout(opt.level);
+                viewmodel.start();
+                hud.start();
+            };
             // Level logic at a fixed step, so triggers and doors see every position.
             auto step_logic = [&](float dt) {
                 if (!opt.scripts) return;
@@ -495,15 +569,7 @@ int main(int argc, char** argv) {
                         return;
                     }
                     std::printf("[script] level over (%s): loading %s\n", logic.level_success ? "complete" : "failed", next.c_str());
-                    opt.level = next;
-                    if (window) SDL_SetWindowTitle(window, ("N.O.V.A. 3 - " + opt.level).c_str());
-                    scene.load_level(opt.level, 1);
-                    player.spawn(scene.start_position, scene.start_yaw);
-                    logic.start();
-                    combat.start();
-                    combat.campaign_loadout(opt.level);
-                    viewmodel.start();
-                    hud.start();
+                    load_level(next);
                 }
             };
             constexpr float kPhysicsStep = 1.0f / 120.0f;
@@ -781,6 +847,14 @@ int main(int argc, char** argv) {
                 }
                 FrameParams shot = frame(shot_cam, opt.width, opt.height);
                 overlay.clear();
+                if (!opt.menu_keys.empty()) {
+                    menu.show();
+                    for (char c : opt.menu_keys) {
+                        using K = PauseMenu::Key;
+                        const K k = c == 'u' ? K::Up : c == 'd' ? K::Down : c == 'l' ? K::Left : c == 'r' ? K::Right : c == 'b' ? K::Back : K::Activate;
+                        menu.key(k, settings);
+                    }
+                }
                 if (opt.scripts && !logic.player_locked()) combat.draw(overlay, shot.camera, opt.width, opt.height);
                 if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
                 shot.overlay = &overlay;
@@ -842,7 +916,7 @@ int main(int argc, char** argv) {
                 bool flying = false;
                 float accumulator = 0;
                 CombatInput combat_in;
-                bool fire_held = false, aim_held = false;
+                bool fire_held = false, aim_held = false, aim_toggled = false;
                 // Touch: fingers drive the on-screen controls, and the mouse stands in for a
                 // finger (a free pointer); else the mouse looks around.
                 const bool touch_mode = opt.scripts && logic.input == InputScheme::Touch;
@@ -855,6 +929,57 @@ int main(int argc, char** argv) {
                                       : glm::vec2(x * float(pw) / float(std::max(ww, 1)), y * float(ph) / float(std::max(wh, 1)));
                 };
                 bool running = true;
+                // The pause menu: the game stands still, the pointer is free, the sound stops.
+                // Display settings: the window's size or fullscreen mode, V-Sync.
+                auto apply_display = [&] {
+                    if (settings.display == Settings::DisplayMode::Windowed) {
+                        SDL_SetWindowFullscreen(window, false);
+                        SDL_SetWindowBordered(window, true);
+                        // A window larger than the desktop's room becomes the largest 16:9 that fits.
+                        int ww = settings.width, wh = settings.height;
+                        if (SDL_Rect room; SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &room) && (ww > room.w || wh > room.h)) {
+                            const float k = std::min(float(room.w) / float(ww), float(room.h - 40) / float(wh));
+                            ww = int(float(ww) * k), wh = int(float(wh) * k);
+                        }
+                        SDL_SetWindowSize(window, ww, wh);
+                        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+                    } else {
+                        SDL_DisplayMode mode{};
+                        const bool exclusive = settings.display == Settings::DisplayMode::Fullscreen &&
+                                               SDL_GetClosestFullscreenDisplayMode(SDL_GetDisplayForWindow(window), settings.width,
+                                                                                   settings.height, 0.0f, true, &mode);
+                        SDL_SetWindowFullscreenMode(window, exclusive ? &mode : nullptr);   // null: borderless desktop
+                        SDL_SetWindowFullscreen(window, true);
+                    }
+                    renderer.set_vsync(settings.vsync);
+                };
+                touch.mirror = settings.left_handed;
+                if (!opt.size_given) apply_display();
+                else renderer.set_vsync(settings.vsync);
+                apply_sound();
+                auto set_menu = [&](bool on) {
+                    if (on) menu.show();
+                    else menu.open = false;
+                    SDL_SetWindowRelativeMouseMode(window, !on && !touch_mode);
+                    fire_held = aim_held = false;
+                    touch.release_all();
+                    if (logic.audio) logic.audio->set_paused(on);
+                };
+                auto menu_action = [&](PauseMenu::Action a) {
+                    using A = PauseMenu::Action;
+                    switch (a) {
+                        case A::Resume: set_menu(false); break;
+                        case A::Exit: running = false; break;
+                        case A::Changed:
+                            settings.save(settings_path), aim_toggled = false, apply_sound();
+                            touch.mirror = settings.left_handed, touch.relayout();
+                            break;
+                        case A::DisplayChanged: settings.save(settings_path), apply_display(); break;
+                        case A::RestartCheckpoint: set_menu(false), logic.respawn_player(); break;
+                        case A::RestartLevel: set_menu(false), load_level(opt.level); break;
+                        case A::None: break;
+                    }
+                };
                 auto last = std::chrono::steady_clock::now();
                 while (running) {
                     if (touch_mode) {
@@ -864,6 +989,38 @@ int main(int argc, char** argv) {
                     }
                     SDL_Event e;
                     while (SDL_PollEvent(&e)) {
+                        if (e.type == SDL_EVENT_QUIT) running = false;
+                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE && !e.key.repeat) {
+                            if (menu.open) menu_action(menu.key(PauseMenu::Key::Back, settings));   // back a page, or resume
+                            else set_menu(true);
+                            continue;
+                        }
+                        if (menu.open) {   // everything goes to the menu
+                            using K = PauseMenu::Key;
+                            using P = PauseMenu::Pointer;
+                            if (e.type == SDL_EVENT_KEY_DOWN) {
+                                switch (e.key.key) {
+                                    case SDLK_BACKSPACE: menu_action(menu.key(K::Back, settings)); break;
+                                    case SDLK_UP: case SDLK_W: menu_action(menu.key(K::Up, settings)); break;
+                                    case SDLK_DOWN: case SDLK_S: menu_action(menu.key(K::Down, settings)); break;
+                                    case SDLK_LEFT: case SDLK_A: menu_action(menu.key(K::Left, settings)); break;
+                                    case SDLK_RIGHT: case SDLK_D: menu_action(menu.key(K::Right, settings)); break;
+                                    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: menu_action(menu.key(K::Activate, settings)); break;
+                                    default: break;
+                                }
+                            } else if (e.type == SDL_EVENT_MOUSE_MOTION && e.motion.which != SDL_TOUCH_MOUSEID) {
+                                menu_action(menu.pointer(to_pixels(e.motion.x, e.motion.y, false), P::Move, settings));
+                            } else if ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                                       e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT) {
+                                menu_action(menu.pointer(to_pixels(e.button.x, e.button.y, false),
+                                                         e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? P::Press : P::Release, settings));
+                            } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP) {
+                                menu_action(menu.pointer(to_pixels(e.tfinger.x, e.tfinger.y, true),
+                                                         e.type == SDL_EVENT_FINGER_DOWN ? P::Press : e.type == SDL_EVENT_FINGER_UP ? P::Release : P::Move,
+                                                         settings));
+                            }
+                            continue;
+                        }
                         if (touch_mode) {
                             constexpr int64_t kMouseFinger = -1;
                             switch (e.type) {
@@ -895,7 +1052,6 @@ int main(int argc, char** argv) {
                             if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP || e.type == SDL_EVENT_MOUSE_MOTION) continue;
                         }
                         if (e.type == SDL_EVENT_QUIT) running = false;
-                        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
                         // Debug: F1 free flight, F2 zone culling, F3 built-in shaders.
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F1 && !e.key.repeat) {
                             flying = !flying;
@@ -911,7 +1067,11 @@ int main(int argc, char** argv) {
                             if (!logic.qte_press("repel") && logic.controls.powers) combat_in.power = true;
                         }
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) fire_held = false;
-                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) aim_held = true;
+                        // Aim: hold the right button, or (settings) click it to switch aim mode on and off.
+                        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) {
+                            if (settings.aim_toggle) aim_toggled = !aim_toggled;
+                            else aim_held = true;
+                        }
                         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) aim_held = false;
                         if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) fire_held = false, aim_held = false;
                         // Weapons: number keys pick the n-th weapon the player has; the wheel cycles.
@@ -923,9 +1083,10 @@ int main(int argc, char** argv) {
                         if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
                             combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
                         if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || !logic.controls.rotate))) {
-                            const float k = 0.12f * cam.fov / kFov;   // slower while aiming (and zoomed in)
+                            // Slower while aiming (zoomed in); the Sensitivity and Invert Y-Axis settings.
+                            const float k = 0.12f * cam.fov / kFov * settings.sensitivity;
                             cam.yaw -= e.motion.xrel * k;
-                            cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k, -89.0f, 89.0f);
+                            cam.pitch = glm::clamp(cam.pitch - e.motion.yrel * k * (settings.invert_y ? -1.0f : 1.0f), -89.0f, 89.0f);
                         }
                     }
                     const auto now = std::chrono::steady_clock::now();
@@ -940,6 +1101,7 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
+                    if (menu.open) dt = 0;   // paused
                     if (opt.scripts) {   // bullet time: the game runs slower for a while of real time
                         logic.advance_real_time(dt);
                         dt *= logic.time_scale();
@@ -960,8 +1122,10 @@ int main(int argc, char** argv) {
                     player.eye_height = mech ? 7.4f : 0.75f;
                     player.walk_speed = mech ? 3.5f : 5.0f, player.run_speed = mech ? 3.5f : 9.0f;
                     // Aim mode: the view narrows (right mouse button held, or the aim button).
-                    const bool aiming = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead && logic.controls.aim &&
-                                        (touch_mode ? touch_in.aim : aim_held);
+                    if (touch_in.pause) set_menu(true);
+                    const bool can_aim = opt.scripts && !flying && !logic.player_locked() && !combat.player_dead && logic.controls.aim;
+                    if (!can_aim) aim_toggled = false;   // a toggled aim ends with cinematics and deaths
+                    const bool aiming = can_aim && (touch_mode ? touch_in.aim : settings.aim_toggle ? aim_toggled : aim_held);
                     {
                         const float base = opt.scripts ? logic.game_fov() : kFov;
                         const float target = aiming ? base * kAimZoom : base;
@@ -993,10 +1157,13 @@ int main(int argc, char** argv) {
                             }
                             in.jump = lc.jump && !mech && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
                             in.run = lc.rush && logic.player_rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
+                            // Auto-leveling (touch): walking without turning, the view comes back level.
+                            if (touch_mode && settings.auto_leveling && touch_in.look == glm::vec2(0) && (in.forward != 0 || in.right != 0))
+                                cam.pitch -= std::clamp(cam.pitch, -40.0f * dt, 40.0f * dt);
                             if (lc.rotate) {
-                                const float k = cam.fov / kFov;
+                                const float k = cam.fov / kFov * settings.sensitivity;
                                 cam.yaw += touch_in.look.x * k;
-                                cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k, -89.0f, 89.0f);
+                                cam.pitch = glm::clamp(cam.pitch + touch_in.look.y * k * (settings.invert_y ? -1.0f : 1.0f), -89.0f, 89.0f);
                             }
                         }
                         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) cam.yaw = ly, cam.pitch = lp;   // PlayerLookTo
@@ -1033,6 +1200,7 @@ int main(int argc, char** argv) {
                             } else {
                                 combat_in.fire = !locked && (fire_held || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0);
                             }
+                            combat.aim_assist = settings.aim_assist, combat.auto_switch = settings.auto_switch;
                             combat.update(dt, combat_in, player.eye(), cam.forward());
                             combat.push_player_out();
                             combat_in = {};
@@ -1096,6 +1264,12 @@ int main(int argc, char** argv) {
                     f.overlay = &overlay;
                     draw_text(f, w, h);
                     renderer.render_to_window(scene.draws(), f);
+                    // The frame-rate limit (Display settings): wait out the rest of the frame.
+                    if (settings.fps_limit > 0) {
+                        const auto frame_end = last + std::chrono::nanoseconds(1000000000LL / settings.fps_limit);
+                        const auto left = frame_end - std::chrono::steady_clock::now();
+                        if (left.count() > 0) SDL_DelayPrecise(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(left).count()));
+                    }
                 }
             }
         }

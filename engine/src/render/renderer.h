@@ -167,6 +167,9 @@ public:
 
     GpuModel* upload_model(const Model& model);
     const GpuTexture* upload_texture(const Image& image);
+    // V-Sync on: presents wait for the display; off: the lowest-latency mode there is
+    // (mailbox, else immediate), the frame rate as high as it goes.
+    void set_vsync(bool on);
     const GpuTexture* white() const { return &white_; }
     const GpuTexture* white_cube() const { return &white_cube_; }
     const GpuProgram* create_program(const CompiledProgram& compiled);

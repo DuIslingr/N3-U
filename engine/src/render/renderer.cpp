@@ -631,6 +631,16 @@ GpuModel* Renderer::upload_model(const Model& model) {
     return models_.back().get();
 }
 
+void Renderer::set_vsync(bool on) {
+    if (!window_) return;
+    SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (!on)
+        mode = SDL_WindowSupportsGPUPresentMode(device_, window_, SDL_GPU_PRESENTMODE_MAILBOX) ? SDL_GPU_PRESENTMODE_MAILBOX
+               : SDL_WindowSupportsGPUPresentMode(device_, window_, SDL_GPU_PRESENTMODE_IMMEDIATE) ? SDL_GPU_PRESENTMODE_IMMEDIATE
+                                                                                                    : SDL_GPU_PRESENTMODE_VSYNC;
+    SDL_SetGPUSwapchainParameters(device_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+}
+
 const GpuTexture* Renderer::upload_texture(const Image& image) {
     auto tex = std::make_unique<GpuTexture>();
     tex->has_alpha = image.has_alpha();

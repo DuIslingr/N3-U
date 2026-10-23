@@ -24,6 +24,7 @@ public:
     TextRenderer(const TextRenderer&) = delete;
     TextRenderer& operator=(const TextRenderer&) = delete;
     bool ok() const { return font_ != nullptr; }
+    void set_size(float size);   // in pixels; drops the rendered lines
 
     // Draw `text` (UTF-8, wrapped at `wrap` pixels) into `out`, `at` (pixels) being the point
     // `anchor` of its box (0,0 top left, 0.5,0 top centre, 0.5,0.5 centre); returns its height.

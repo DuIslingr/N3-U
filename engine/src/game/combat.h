@@ -114,6 +114,8 @@ public:
     void splash_damage(const glm::vec3& at, float damage, float radius, bool by_player);
 
     bool shoot_enabled = true;         // EnableShootControl
+    bool aim_assist = true;            // settings: shots snap to an enemy a few degrees off the crosshair
+    bool auto_switch = true;           // settings: an emptied weapon gives way to one with ammunition
     void set_max_shooters(int n) { max_shooters_ = std::max(n, 0); }
     // SetGlobalAwarenessFactor: how fast NPCs notice their enemies (0: not at all).
     float awareness_factor = 1;

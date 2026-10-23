@@ -1290,13 +1290,28 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const WeaponDef& w = weapon();
     since_shot_ = 0;
     --clip_[size_t(current_)];
+    // Aim assist (the original's magnetic cursor): the enemy nearest the crosshair, within
+    // three degrees and in sight, takes the shot.
+    glm::vec3 aimed = aim;
+    if (aim_assist) {
+        float best = std::cos(glm::radians(3.0f));
+        for (const Target& t : targets_) {
+            if (!t.actor || !t.hostile || !alive(t)) continue;
+            const glm::vec3 to = t.pos + glm::vec3(0, 0, t.height * 0.6f) - eye;
+            const float d = glm::length(to);
+            if (d < 1e-3f || d > 150.0f) continue;
+            const float c = glm::dot(to / d, aim);
+            if (c > best && line_clear(eye, eye + to * 0.98f)) best = c, aimed = to / d;
+        }
+    }
+    const glm::vec3& aim_dir = aimed;
     ++stats_.shots;
     // Spread: a cone that widens while firing.
     std::normal_distribution<float> n(0.0f, glm::radians(0.3f + spread_) * 0.5f);
-    glm::vec3 right = glm::cross(aim, glm::vec3(0, 0, 1));
+    glm::vec3 right = glm::cross(aim_dir, glm::vec3(0, 0, 1));
     right = glm::length(right) > 1e-4f ? glm::normalize(right) : glm::vec3(1, 0, 0);
-    const glm::vec3 up = glm::normalize(glm::cross(right, aim));
-    const glm::vec3 dir = glm::normalize(aim + right * n(rng_) + up * n(rng_));
+    const glm::vec3 up = glm::normalize(glm::cross(right, aim_dir));
+    const glm::vec3 dir = glm::normalize(aim_dir + right * n(rng_) + up * n(rng_));
     spread_ = std::min(spread_ + w.spread_step * 0.35f, 4.0f);
 
     const float range = 300;
@@ -1308,7 +1323,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     glm::vec3 point;
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
     const glm::vec3 end = hit >= 0 ? point : eye + dir * (wall ? wall_t * range : range);
-    const glm::vec3 muzzle = eye + aim * 0.6f + right * 0.18f - up * 0.16f;
+    const glm::vec3 muzzle = eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f;
     tracers_.push_back({muzzle, end, 0.06f});
     if (hit >= 0) {
         Target& t = targets_[size_t(hit)];
@@ -1488,6 +1503,15 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             const int take = reserve < 0 ? want : std::min(want, reserve);
             clip += take;
             if (reserve >= 0) reserve -= take;
+        }
+    } else if (auto_switch && clip <= 0 && reserve == 0 && !special_weapon()) {
+        // Out of ammunition: the next weapon that has some (Auto-Switch).
+        for (int k = 1; k < int(weapons_.size()); ++k) {
+            const int i = (current_ + k) % int(weapons_.size());
+            if (owned_[size_t(i)] && (clip_[size_t(i)] > 0 || reserve_[size_t(i)] != 0)) {
+                current_ = i, fire_cooldown_ = 0.4f;
+                break;
+            }
         }
     } else if ((in.reload && clip < w.clip) || (clip <= 0 && in.fire)) {
         if (reserve != 0) {

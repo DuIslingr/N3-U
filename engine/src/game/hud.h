@@ -45,7 +45,8 @@ public:
     void draw_objectives(ParticleList& out, TextRenderer& text, const std::vector<ObjectiveLine>& lines, float alpha, int w, int h);
     // CLevel::RenderObjective: the guide marker (Chatboard.bsprite) over a point with its
     // distance; off screen, an arrow at the edge pointing its way.
-    void draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w, int h);
+    void draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w, int h,
+                     bool metric = true);
     // CHud frost (HUD_Frost: hud_frost.bdae in the HUD scene): it grows over `ms`
     // (StartFrost) up to the max factor of its clip, and melts back (StopFrost).
     void start_frost(float ms) { frost_target_ = 1, frost_rate_ = 1000.0f / std::max(ms, 1.0f); }
@@ -60,9 +61,18 @@ private:
     void place(const std::string& node, glm::vec2 px, const glm::mat4& view_proj, int w, int h);
 
 public:
+    // A sprite sheet: on large screens (min side 960+ px) the 2x variant the game ships
+    // (<name>_1720x1280 or _2560x1504), else the 960x640 one. set_screen() picks which.
     const Sprite* sprite(const std::string& name);
+    void set_screen(int w, int h) { screen_min_ = float(std::min(w, h)), large_ = screen_min_ >= 960; }
+    // Screen pixels per pixel of that sheet (its frames are laid out for a 640-high screen at 1x).
+    float sprite_scale(const std::string& name);
     // Draw a sprite frame with its anchor at `at` (pixels), scaled.
-    void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, const glm::vec4& color);
+    void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, const glm::vec4& color) {
+        draw_frame(out, s, frame, at, glm::vec2(scale), color);
+    }
+    // Scaled per axis; a negative x scale mirrors the frame about its anchor.
+    void draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color);
     // An animation (ticks of 1/30 s, looping) at `seconds` into it.
     void draw_anim(ParticleList& out, const Sprite& s, int anim, glm::vec2 at, float scale, float seconds, const glm::vec4& color);
     // A frame's box relative to its anchor: min x, min y, max x, max y (sprite pixels).
@@ -71,7 +81,10 @@ public:
 private:
 
     Scene& scene_;
-    std::unordered_map<std::string, Sprite> sprites_;
+    std::unordered_map<std::string, Sprite> sprites_;          // by name, plus "@2x" for the large ones
+    std::unordered_map<std::string, float> sprite_factor_;     // 1 or 2
+    float screen_min_ = 640;
+    bool large_ = false;
     size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1), shield_ = size_t(-1);
     float shield_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip

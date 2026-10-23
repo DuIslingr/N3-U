@@ -37,6 +37,7 @@ public:
         glm::vec2 look{0};              // degrees to turn: yaw (left +), pitch (up +)
         bool fire = false, jump = false, run = false, aim = false;
         bool reload = false, grenade = false, power = false, power_switch = false;
+        bool pause = false;             // the HUD's pause button was tapped
         int weapon_step = 0;            // +1 next weapon, -1 previous
     };
     // This frame's input; turning and taps are consumed.
@@ -49,11 +50,13 @@ public:
     } shown;
     glm::vec2 pad_anchor() const { return pad_; }
     bool power_ready = true;   // else the power's icon shows red (recharging)
+    bool mirror = false;       // left-handed layout (set before layout(); w_ = 0 forces it again)
+    void relayout() { w_ = h_ = 0; }
     std::string power = "Repel";   // the selected power, for its icon
     glm::vec2 fire_anchor() const { return cluster_; }   // the fire, power, aim and jump buttons
 
 private:
-    enum class Part { None, Pad, Look, Fire, Aim, Jump, Power, Sprint, Weapons, Grenades };
+    enum class Part { None, Pad, Look, Fire, Aim, Jump, Power, Sprint, Weapons, Grenades, Pause };
     struct Touch {
         int64_t id = 0;
         Part part = Part::None;
@@ -66,7 +69,7 @@ private:
     Hud& hud_;
     int w_ = 0, h_ = 0;
     float sx_ = 1, sy_ = 1, scale_ = 1;      // base pixels -> screen; sprite pixels -> screen
-    glm::vec2 pad_{0}, cluster_{0}, weapons_{0}, grenades_{0};
+    glm::vec2 pad_{0}, cluster_{0}, weapons_{0}, grenades_{0}, pause_{0};
     float pad_radius_ = 1;
     glm::vec2 pad_center_{0};                // where the pad is while held (it follows a far touch)
     std::vector<Touch> touches_;

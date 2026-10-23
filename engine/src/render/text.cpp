@@ -25,6 +25,11 @@ TextRenderer::TextRenderer(const Vfs& vfs, Renderer& renderer, const std::string
     if (!font_) std::fprintf(stderr, "text: %s: %s\n", font_file.c_str(), SDL_GetError());
 }
 
+void TextRenderer::set_size(float size) {
+    if (!font_ || !TTF_SetFontSize(font_, size)) return;
+    cache_.clear();
+}
+
 TextRenderer::~TextRenderer() {
     if (font_) TTF_CloseFont(font_);
 }

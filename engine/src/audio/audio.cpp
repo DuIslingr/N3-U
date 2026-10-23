@@ -311,6 +311,12 @@ void Audio::stop(int handle, float fade_ms) {
     }
 }
 
+void Audio::set_paused(bool paused) {
+    if (!stream_) return;
+    if (paused) SDL_PauseAudioStreamDevice(stream_);
+    else SDL_ResumeAudioStreamDevice(stream_);
+}
+
 void Audio::stop_all() {
     Lock lock(mutex_);
     voices_.clear();

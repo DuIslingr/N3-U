@@ -54,15 +54,22 @@ void Hud::update_frost(float dt) {
 }
 
 const Sprite* Hud::sprite(const std::string& name) {
-    if (auto it = sprites_.find(name); it != sprites_.end()) return it->second.frames.empty() ? nullptr : &it->second;
-    Sprite& s = sprites_[name];
-    // The game picks a resolution variant (<name>_<w>x<h>.bsprite) by screen size.
+    const std::string key = large_ ? name + "@2x" : name;
+    if (auto it = sprites_.find(key); it != sprites_.end()) return it->second.frames.empty() ? nullptr : &it->second;
+    Sprite& s = sprites_[key];
+    // The game picks a resolution variant (<name>_<w>x<h>.bsprite) by screen size; the
+    // 1720x1280 and 2560x1504 ones are the 960x640 frames at twice the size.
     std::string base = name;
     if (base.size() > 8 && base.compare(base.size() - 8, 8, ".bsprite") == 0) base.resize(base.size() - 8);
-    for (const std::string& file : {base + "_1024x768.bsprite", base + "_960x640.bsprite", base + ".bsprite"}) {
+    std::vector<std::pair<std::string, float>> files;
+    if (large_) files = {{base + "_1720x1280.bsprite", 2.0f}, {base + "_2560x1504.bsprite", 2.0f}};
+    files.insert(files.end(), {{base + "_1024x768.bsprite", 1.0f}, {base + "_960x640.bsprite", 1.0f}, {base + ".bsprite", 1.0f}});
+    sprite_factor_[key] = 1;
+    for (const auto& [file, factor] : files) {
         if (!scene_.vfs().exists(file)) continue;
         try {
             s = load_sprite(scene_.vfs().read(file));
+            sprite_factor_[key] = factor;
         } catch (const FormatError&) {
         }
         break;
@@ -70,7 +77,14 @@ const Sprite* Hud::sprite(const std::string& name) {
     return s.frames.empty() ? nullptr : &s;
 }
 
-void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, const glm::vec4& color) {
+float Hud::sprite_scale(const std::string& name) {
+    sprite(name);
+    const std::string key = large_ ? name + "@2x" : name;
+    auto it = sprite_factor_.find(key);
+    return screen_min_ / (640.0f * (it == sprite_factor_.end() ? 1.0f : it->second));
+}
+
+void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, glm::vec2 scale, const glm::vec4& color) {
     if (frame < 0 || size_t(frame) >= s.frames.size()) return;
     const Sprite::Frame& f = s.frames[size_t(frame)];
     const uint32_t rgba = pack_rgba(color);
@@ -85,8 +99,8 @@ void Hud::draw_frame(ParticleList& out, const Sprite& s, int frame, glm::vec2 at
         float u1 = float(m.x + m.w) / float(tex->width), v1 = float(m.y + m.h) / float(tex->height);
         if (fm.flags & 1) std::swap(u0, u1);
         if (fm.flags & 2) std::swap(v0, v1);
-        const float x0 = at.x + float(fm.x) * scale, y0 = at.y + float(fm.y) * scale;
-        const float x1 = x0 + float(m.w) * scale, y1 = y0 + float(m.h) * scale;
+        const float x0 = at.x + float(fm.x) * scale.x, y0 = at.y + float(fm.y) * scale.y;
+        const float x1 = x0 + float(m.w) * scale.x, y1 = y0 + float(m.h) * scale.y;
         const ParticleVertex v[4] = {{{x0, y0, 0}, {u0, v0}, rgba}, {{x1, y0, 0}, {u1, v0}, rgba},
                                      {{x1, y1, 0}, {u1, v1}, rgba}, {{x0, y1, 0}, {u0, v1}, rgba}};
         const uint32_t first = uint32_t(out.vertices.size());
@@ -169,10 +183,11 @@ void Hud::draw_prompt(ParticleList& out, TextRenderer& text, const std::string& 
 }
 
 void Hud::draw_objectives(ParticleList& out, TextRenderer& text, const std::vector<ObjectiveLine>& lines, float alpha, int w, int h) {
+    set_screen(w, h);
     const Sprite* icons = sprite("controls.bsprite");   // 16 unchecked, 17 checked, 18 primary marker
     if (lines.empty() || alpha <= 0) return;
     const float sx = float(std::max(w, h)) / 480.0f, sy = float(std::min(w, h)) / 320.0f;
-    const float scale = float(std::min(w, h)) / 640.0f;
+    const float scale = sprite_scale("controls.bsprite");
     const float x0 = 40 * sx;
     float y = 100 * sy;
     const float line = text.measure("Ag", 100000).y;
@@ -196,11 +211,12 @@ void Hud::draw_objectives(ParticleList& out, TextRenderer& text, const std::vect
 }
 
 void Hud::draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& view_proj, const glm::vec3& at, float distance, int w,
-                      int h) {
+                      int h, bool metric) {
+    set_screen(w, h);
     const Sprite* s = sprite("Chatboard.bsprite");
     if (!s) return;
     // Frames: 226 on screen, 222 left edge, 223 right, 224 top, 225 bottom.
-    const float scale = float(std::min(w, h)) / 640.0f;
+    const float scale = sprite_scale("Chatboard.bsprite");
     glm::vec4 c = view_proj * glm::vec4(at, 1);
     const bool behind = c.w <= 1e-3f;
     if (behind) c = -c;   // mirrored: off screen the arrow still points the right way
@@ -216,7 +232,9 @@ void Hud::draw_marker(ParticleList& out, TextRenderer& text, const glm::mat4& vi
     const glm::vec4 white(1);
     draw_frame(out, *s, frame, p - glm::vec2(0, frame == 226 ? 9 * scale : 0), scale, white);
     char label[32];
-    std::snprintf(label, sizeof label, "%dm", int(distance * 0.5f));   // the game shows half the world distance
+    // The game shows half the world distance, in metres or (Metric off) feet.
+    if (metric) std::snprintf(label, sizeof label, "%dm", int(distance * 0.5f));
+    else std::snprintf(label, sizeof label, "%dft", int(distance * 0.5f * 3.2808f));
     // The distance above the marker (below it when the marker sits on the top edge).
     const glm::vec2 at_text = frame == 224 ? p + glm::vec2(0, 26 * scale) : p - glm::vec2(0, 26 * scale + text.measure(label, 1000).y);
     text.draw(out, label, at_text + glm::vec2(1), w, glm::vec4(0, 0, 0, 0.7f));

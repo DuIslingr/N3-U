@@ -54,6 +54,7 @@ public:
     void stop(const std::string& name, float fade_ms = 0);
     void stop(int handle, float fade_ms = 0);
     void stop_all();
+    void set_paused(bool paused);   // the pause menu: the device stops pulling sound
     void set_position(int handle, const glm::vec3& position);
     bool playing(int handle) const;
     // Any voice started from an event whose label starts with `prefix`.
