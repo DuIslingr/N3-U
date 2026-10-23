@@ -355,6 +355,13 @@ public:
     void teleport_object(Object& o, const glm::vec3& position);
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
     PostParams post;
+    // CLevel's timed screen effects (one at a time; CLevel::StartPostEffect, UpdatePostEffect):
+    // PostEffect_FlashbackStart(ms) turns the picture sepia over ms and holds it;
+    // PostEffect_FlashbackStop(ms) drops it and, given a time, comes back from overexposed
+    // (ColorLevels: white 0.1 -> 1 over ms); StartFlashEffect(ms) flashes white, the bright
+    // parts fading last (Flash: threshold -1 -> 1).
+    enum class ScreenEffect { None, Flash, Sepia, Levels };
+    void screen_effect(ScreenEffect kind, float ms);
     // A post-effect variable ("DOF"/"HEIGHTFOG" and fFocus, fRange, fBlurStep, FogTop, ...),
     // reaching `to` in `seconds`; false if unknown.
     bool set_post_var(const std::string& effect, const std::string& var, float to, float seconds, const float* from = nullptr);
@@ -507,6 +514,11 @@ private:
         float from = 0, to = 0, seconds = 1, elapsed = 0;
     };
     std::vector<ParamRamp> param_ramps_;
+    struct {
+        ScreenEffect kind = ScreenEffect::None;
+        float time = 0, length = 0;   // seconds
+    } screen_effect_;
+    void update_screen_effect(float dt);
     struct HeatHaze {
         float now = 0, max = 0;   // ms grown, ms to grow
         bool stopping = true;

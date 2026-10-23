@@ -1022,8 +1022,9 @@ void Renderer::encode(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPU
     }
     struct {
         glm::mat4 inv_view_proj;
-        glm::vec4 camera, forward, dof, fog, fog_color, grading, heat;
+        glm::vec4 camera, forward, dof, fog, fog_color, grading, heat, effects;
     } u;
+    u.effects = {post->sepia, post->levels_white, post->flash_threshold, 0};
     u.inv_view_proj = glm::inverse(frame.proj * frame.view);
     u.camera = glm::vec4(frame.camera, 1);
     u.forward = glm::vec4(-glm::vec3(glm::transpose(frame.view)[2]), 0);   // the view looks down -Z

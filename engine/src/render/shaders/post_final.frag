@@ -12,6 +12,8 @@
 //   HeatHaze (HeatHazeVS/FS.glsl): the image read shifted by two layers of the bump texture
 //     scrolling at the game's BumpScroll/BumpScale, mixed toward an orange-tinted grey by
 //     1 - blend and brightened by overbright. It runs first, on the scene.
+//   Sepia (SepiaFS.glsl), ColorLevels (ColorLevelsFS.glsl) and Flash (FlashFS.glsl, its
+//   bright pass added over the image) last.
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 out_color;
 
@@ -30,6 +32,7 @@ layout(set = 3, binding = 0) uniform PostUniforms {
     vec4 fog_color;
     vec4 grading;     // enabled
     vec4 heat;        // strength, overbright, blend, time (s; < 0: off)
+    vec4 effects;     // sepia (< 0 off), levels white (1 off), flash threshold (<= -2 off)
 };
 
 float smooth_edge(float e0, float e1, float x) {   // GLSL smoothstep, allowing e0 > e1
@@ -70,6 +73,15 @@ void main() {
         vec3 c = clamp(color.rgb, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
         color.rgb = vec3(texture(grading_curve, vec2(c.r, 0.5)).r, texture(grading_curve, vec2(c.g, 0.5)).g,
                          texture(grading_curve, vec2(c.b, 0.5)).b);
+    }
+    if (effects.x >= 0.0) {
+        const vec4 bw = vec4(0.3, 0.59, 0.11, 0.0), tone = vec4(0.9, 0.7, 0.3, 1.0) * 0.6;
+        color = mix(color, dot(color, bw) * tone, effects.x);
+    }
+    color.rgb /= max(effects.y, 1e-3);
+    if (effects.z > -2.0) {
+        vec4 c = color - vec4(effects.z);
+        color.rgb += vec3(max(0.0, (c.r + c.g + c.b) * 0.33));
     }
     out_color = vec4(color.rgb, 1.0);
 }

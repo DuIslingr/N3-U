@@ -277,6 +277,7 @@ void LevelLogic::start(StartMode mode) {
         const uint32_t version = post.grading_version;
         post = PostParams{}, post.grading_version = version + 1, post_fades_.clear();
         heat_ = HeatHaze{};
+        screen_effect_ = {};
         param_ramps_.clear();
         grading_.dirty = true;
     }
@@ -1382,6 +1383,31 @@ void LevelLogic::primary_objective_complete() {
     objectives.show = 5;
 }
 
+void LevelLogic::screen_effect(ScreenEffect kind, float ms) {
+    post.sepia = -1, post.levels_white = 1, post.flash_threshold = -2;   // CLevel::StopPostEffect
+    screen_effect_.kind = kind, screen_effect_.time = 0, screen_effect_.length = std::max(ms, 1.0f) / 1000.0f;
+    update_screen_effect(0);
+}
+
+void LevelLogic::update_screen_effect(float dt) {
+    auto& e = screen_effect_;
+    if (e.kind == ScreenEffect::None) return;
+    e.time += dt;
+    const float k = e.time / e.length;
+    switch (e.kind) {
+        case ScreenEffect::Sepia: post.sepia = std::clamp(k, 0.0f, 1.0f); break;   // held once full
+        case ScreenEffect::Levels:
+            post.levels_white = std::clamp(0.1f + k * 0.9f, 0.1f, 1.0f);
+            if (k >= 1) e.kind = ScreenEffect::None, post.levels_white = 1;
+            break;
+        case ScreenEffect::Flash:
+            post.flash_threshold = 2 * k - 1;
+            if (k >= 1) e.kind = ScreenEffect::None, post.flash_threshold = -2;
+            break;
+        default: break;
+    }
+}
+
 void LevelLogic::update_heat_haze(float dt) {
     HeatHaze& h = heat_;
     const float ms = dt * 1000.0f;
@@ -1412,6 +1438,7 @@ void LevelLogic::update(float dt) {
     std::erase_if(param_ramps_, [](const ParamRamp& r) { return r.elapsed >= r.seconds; });
     update_grading(dt);
     update_heat_haze(dt);
+    update_screen_effect(dt);
     update_vehicles(dt);
     if (timer >= 0 && !timer_paused) {   // ILevelInterface::UpdateTimer
         const int before = int(timer);

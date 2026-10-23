@@ -548,6 +548,19 @@ int api_player_set_position(lua_State* L) {   // PlayerSetPosition(x, y, z): the
     c.player.center = glm::vec3(float(lua_tonumber(L, 1)), float(lua_tonumber(L, 2)), float(lua_tonumber(L, 3)) + c.player.radius.z);
     return 0;
 }
+int api_flashback_start(lua_State* L) {   // PostEffect_FlashbackStart(ms)
+    ctx(L).screen_effect(LevelLogic::ScreenEffect::Sepia, float(lua_tonumber(L, 1)));
+    return 0;
+}
+int api_flashback_stop(lua_State* L) {   // PostEffect_FlashbackStop(ms)
+    const float ms = float(lua_tonumber(L, 1));
+    ctx(L).screen_effect(ms > 0 ? LevelLogic::ScreenEffect::Levels : LevelLogic::ScreenEffect::None, ms);
+    return 0;
+}
+int api_start_flash(lua_State* L) {   // StartFlashEffect(ms)
+    ctx(L).screen_effect(LevelLogic::ScreenEffect::Flash, float(lua_tonumber(L, 1)));
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1311,6 +1324,9 @@ const Entry kImplemented[] = {
     {"PlayerLimitedControlSetLimitPitch", api_limited_limit<1>},
     {"SetLimitedControlStrafeSpeed", api_limited_strafe},
     {"PlayerSetPosition", api_player_set_position},
+    {"PostEffect_FlashbackStart", api_flashback_start},
+    {"PostEffect_FlashbackStop", api_flashback_stop},
+    {"StartFlashEffect", api_start_flash},
     {"PlayerStartCrystalInteract", api_ignore},   // empty in the game too
     {"SetZNear", api_ignore},                     // reads its argument and does nothing
     {"AddObjective", api_add_objective},

@@ -136,7 +136,12 @@ struct PostParams {
     bool heat_haze = false;
     float heat_strength = 0, heat_overbright = 1, heat_blend = 1, heat_time = 0;   // time: seconds
     const struct GpuTexture* heat_texture = nullptr;
-    bool active() const { return dof || height_fog || grading || heat_haze; }
+    // Sepia (SepiaFS.glsl, the flashback): mix towards sepia by `sepia` (< 0: off).
+    // ColorLevels (ColorLevelsFS.glsl): the colour divided by `levels_white` (1: off).
+    // Flash (FlashFS.glsl): the image's grey brightness less `flash_threshold`, added
+    // (<= -2: off).
+    float sepia = -1, levels_white = 1, flash_threshold = -2;
+    bool active() const { return dof || height_fog || grading || heat_haze || sepia >= 0 || levels_white != 1 || flash_threshold > -2; }
 };
 
 struct FrameParams {
