@@ -38,6 +38,7 @@
 #include "core/vfs.h"
 #include "game/combat.h"
 #include "game/hud.h"
+#include "game/loading_screen.h"
 #include "game/viewmodel.h"
 #include "game/navmesh.h"
 #include "game/player.h"
@@ -73,6 +74,7 @@ struct Options {
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
+    int loading_screen = -1;    // headless: draw the level's loading screen, 0 loading, 1 loaded
     bool god = false;           // the player takes no damage
     bool list_actors = false;   // print combat targets after the level starts
     int audit = 0;              // walk this many random nav-mesh paths comparing zone culling on/off
@@ -139,6 +141,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--power-test") o.power_test = std::stof(next());
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
+        else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
         else if (a == "--touch-test") o.touch_test = std::stof(next()), o.touch = true;
         else if (a == "--god") o.god = true;
         else if (a == "--list-actors") o.list_actors = true;
@@ -254,15 +257,13 @@ bool save_bmp(const Image& img, const std::string& path) {
     return ok;
 }
 
-// The campaign's levels in story order (levels/locations.bin lists them by location).
-std::string next_campaign_level(const std::string& level) {
-    static const char* const kOrder[] = {"San_Francisco_1_FINAL", "San_Francisco_2_FINAL", "Ship_01", "therrius_2_prototype_Ciprian",
-                                         "Boreas_1", "Boreas_2", "13_volteron_1", "14_volteron_1", "08_volteron2", "09_volteron_3"};
+// The level after `level` in the campaign's story order (gol "GameLevels"); empty after the last.
+std::string next_campaign_level(const std::vector<CampaignLevel>& campaign, const std::string& level) {
     const size_t slash = level.find_last_of('/');
     std::string base = level.substr(slash == std::string::npos ? 0 : slash + 1);
     if (base.size() > 4 && base.compare(base.size() - 4, 4, ".lvc") == 0) base.resize(base.size() - 4);
-    for (size_t i = 0; i + 1 < std::size(kOrder); ++i)
-        if (base == kOrder[i]) return level.substr(0, slash == std::string::npos ? 0 : slash + 1) + kOrder[i + 1] + ".lvc";
+    for (size_t i = 0; i + 1 < campaign.size(); ++i)
+        if (base == campaign[i].file) return level.substr(0, slash == std::string::npos ? 0 : slash + 1) + campaign[i + 1].file + ".lvc";
     return {};
 }
 
@@ -306,7 +307,51 @@ int main(int argc, char** argv) {
         {
             Renderer renderer(window, shader_dir);
             Scene scene(vfs, renderer, gol);
+            // The loading screen (GS_Loading): the level's picture and story while it loads.
+            const std::vector<CampaignLevel> campaign = campaign_levels(vfs, gol);
+            auto campaign_level = [&campaign](const std::string& level) -> const CampaignLevel* {
+                for (const CampaignLevel& c : campaign)
+                    if (level.find("/" + c.file + ".lvc") != std::string::npos || level == c.file + ".lvc") return &c;
+                return nullptr;
+            };
+            StringTable main_strings;
+            main_strings.load(vfs, "MAIN");
+            LoadingScreen loading;
+            loading.touch = opt.touch;
+            Hud loading_hud(scene);
+            TextRenderer loading_title(vfs, renderer, "Days.ttf", std::max(14.0f, float(opt.height) * 0.03f));
+            TextRenderer loading_text(vfs, renderer, "Days.ttf", std::max(12.0f, float(opt.height) * 0.022f));
+            Overlay loading_overlay;
+            ParticleList loading_sprites;
+            int loading_fonts_for = opt.height;
+            auto draw_loading = [&](int w, int h) {
+                loading_hud.set_screen(w, h);
+                if (h != loading_fonts_for) {
+                    loading_fonts_for = h;
+                    loading_title.set_size(std::max(14.0f, float(h) * 0.03f));
+                    loading_text.set_size(std::max(12.0f, float(h) * 0.022f));
+                }
+                loading_overlay.clear();
+                loading_sprites.vertices.clear();
+                loading_sprites.batches.clear();
+                loading.draw(loading_overlay, loading_sprites, loading_hud, loading_title, loading_text, main_strings, w, h);
+                FrameParams f;
+                f.overlay = &loading_overlay;
+                f.sprites = &loading_sprites;
+                return f;
+            };
+            // A frame of it before a level is read (the window shows nothing new until then).
+            auto show_loading = [&](const std::string& level) {
+                loading.begin(campaign_level(level));
+                if (!window) return;
+                SDL_PumpEvents();
+                int w = 0, h = 0;
+                SDL_GetWindowSizeInPixels(window, &w, &h);
+                renderer.render_to_window({}, draw_loading(w, h));
+            };
+            if (!headless) show_loading(opt.level);
             scene.load_level(opt.level, 1u << (std::max(opt.section, 1) - 1));
+            loading.loaded = true;
             if (opt.builtin_shaders) scene.set_game_shaders(false);
             scene.zones().enabled = opt.zones;
             if (opt.skybox >= 0 && !scene.set_skybox(opt.skybox)) throw std::runtime_error("no skybox with that id");
@@ -532,8 +577,10 @@ int main(int argc, char** argv) {
             // A level from its start (the next campaign level, Restart Level); the arsenal carries over.
             auto load_level = [&](const std::string& level) {
                 opt.level = level;
+                show_loading(level);
                 if (window) SDL_SetWindowTitle(window, ("N.O.V.A. 3 - " + opt.level).c_str());
                 scene.load_level(opt.level, 1);
+                loading.loaded = true;
                 player.spawn(scene.start_position, scene.start_yaw);
                 logic.start();
                 combat.start();
@@ -563,7 +610,7 @@ int main(int argc, char** argv) {
                 if (!logic.level_ended) {
                     ended_for = 0;
                 } else if ((ended_for += dt) > 3.0f) {
-                    const std::string next = logic.level_success ? next_campaign_level(opt.level) : opt.level;
+                    const std::string next = logic.level_success ? next_campaign_level(campaign, opt.level) : opt.level;
                     if (next.empty()) {
                         logic.message("The campaign is complete.", 10);
                         logic.level_ended = false;
@@ -847,6 +894,7 @@ int main(int argc, char** argv) {
                     shot_cam.fov = glm::degrees(cv.fov), shot_cam.game_fov = false;
                 }
                 FrameParams shot = frame(shot_cam, opt.width, opt.height);
+                bool scene_hidden = false;
                 overlay.clear();
                 if (!opt.menu_keys.empty()) {
                     menu.show();
@@ -879,7 +927,15 @@ int main(int argc, char** argv) {
                                     zz.min.x, zz.min.y, zz.min.z, zz.max.x, zz.max.y, zz.max.z, zz.portals.size(), zz.children.size());
                     }
                 }
-                const Image img = renderer.render_to_image(scene.draws(), shot, opt.width, opt.height);
+                if (opt.loading_screen >= 0) {   // the level's loading screen instead of the view
+                    loading.begin(campaign_level(opt.level));
+                    for (int k = 0; k < 10; ++k) loading.update(0.1f);
+                    loading.loaded = opt.loading_screen > 0;
+                    for (int k = 0; k < 10 && loading.loaded; ++k) loading.update(0.1f);
+                    shot = draw_loading(opt.width, opt.height);
+                    scene_hidden = true;
+                }
+                const Image img = renderer.render_to_image(scene_hidden ? std::vector<DrawItem>{} : scene.draws(), shot, opt.width, opt.height);
                 if (!save_bmp(img, opt.screenshot)) throw std::runtime_error("cannot write " + opt.screenshot);
                 if (opt.bench > 0) {
                     const auto t0 = std::chrono::steady_clock::now();
@@ -992,6 +1048,12 @@ int main(int argc, char** argv) {
                     SDL_Event e;
                     while (SDL_PollEvent(&e)) {
                         if (e.type == SDL_EVENT_QUIT) running = false;
+                        if (loading.active) {   // the loading screen takes every input; a press dismisses it
+                            const bool pressed = (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                                                 e.type == SDL_EVENT_FINGER_DOWN;
+                            if (pressed && loading.press() && logic.audio) logic.audio->set_paused(menu.open);
+                            continue;
+                        }
                         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE && !e.key.repeat) {
                             if (menu.open) menu_action(menu.key(PauseMenu::Key::Back, settings));   // back a page, or resume
                             else set_menu(true);
@@ -1103,6 +1165,14 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
+                    if (loading.active) {   // the level waits behind the loading screen
+                        loading.update(raw_dt);
+                        if (logic.audio) logic.audio->set_paused(true);
+                        int lw = 0, lh = 0;
+                        SDL_GetWindowSizeInPixels(window, &lw, &lh);
+                        renderer.render_to_window({}, draw_loading(lw, lh));
+                        continue;
+                    }
                     if (menu.open) dt = 0;   // paused
                     if (opt.scripts) {   // bullet time: the game runs slower for a while of real time
                         logic.advance_real_time(dt);

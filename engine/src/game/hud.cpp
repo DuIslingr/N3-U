@@ -80,6 +80,46 @@ const Sprite* Hud::sprite(const std::string& name) {
     return s.frames.empty() ? nullptr : &s;
 }
 
+const Sprite* Hud::sprite_file(const std::string& file) {
+    const std::string key = "file:" + file;
+    if (auto it = sprites_.find(key); it != sprites_.end()) return it->second.frames.empty() ? nullptr : &it->second;
+    Sprite& s = sprites_[key];
+    if (scene_.vfs().exists(file)) {
+        try {
+            s = load_sprite(scene_.vfs().read(file));
+        } catch (const FormatError&) {
+        }
+    }
+    return s.frames.empty() ? nullptr : &s;
+}
+
+void Hud::draw_frame_rotated(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, float radians,
+                             const glm::vec4& color) {
+    if (frame < 0 || size_t(frame) >= s.frames.size()) return;
+    const Sprite::Frame& f = s.frames[size_t(frame)];
+    const uint32_t rgba = pack_rgba(color);
+    const float c = std::cos(radians), sn = std::sin(radians);
+    auto place = [&](float x, float y) { return glm::vec3(at.x + (x * c - y * sn) * scale, at.y + (x * sn + y * c) * scale, 0); };
+    for (int k = f.first; k < f.first + f.count && size_t(k) < s.fmodules.size(); ++k) {
+        const Sprite::FModule& fm = s.fmodules[size_t(k)];
+        if ((fm.flags & 16) || size_t(fm.module) >= s.modules.size()) continue;
+        const Sprite::Module& m = s.modules[size_t(fm.module)];
+        if (size_t(m.image) >= s.images.size()) continue;
+        const GpuTexture* tex = scene_.texture(s.images[size_t(m.image)]);
+        if (!tex || tex->width <= 0) continue;
+        float u0 = float(m.x) / float(tex->width), v0 = float(m.y) / float(tex->height);
+        float u1 = float(m.x + m.w) / float(tex->width), v1 = float(m.y + m.h) / float(tex->height);
+        if (fm.flags & 1) std::swap(u0, u1);
+        if (fm.flags & 2) std::swap(v0, v1);
+        const float x0 = float(fm.x), y0 = float(fm.y), x1 = x0 + float(m.w), y1 = y0 + float(m.h);
+        const ParticleVertex v[4] = {{place(x0, y0), {u0, v0}, rgba}, {place(x1, y0), {u1, v0}, rgba},
+                                     {place(x1, y1), {u1, v1}, rgba}, {place(x0, y1), {u0, v1}, rgba}};
+        const uint32_t first = uint32_t(out.vertices.size());
+        out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+        out.batches.push_back({tex, false, first, 6});
+    }
+}
+
 float Hud::sprite_scale(const std::string& name) {
     sprite(name);
     const std::string key = large_ ? name + "@2x" : name;

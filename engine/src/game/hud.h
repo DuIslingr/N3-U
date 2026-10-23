@@ -83,6 +83,11 @@ public:
                     const glm::vec4& clip = glm::vec4(-1e9f, -1e9f, 1e9f, 1e9f));
     // An animation (ticks of 1/30 s, looping) at `seconds` into it.
     void draw_anim(ParticleList& out, const Sprite& s, int anim, glm::vec2 at, float scale, float seconds, const glm::vec4& color);
+    // Turned by `radians` (clockwise on screen) about its anchor.
+    void draw_frame_rotated(ParticleList& out, const Sprite& s, int frame, glm::vec2 at, float scale, float radians,
+                            const glm::vec4& color);
+    // A sprite file by its exact name (no resolution variant chosen); null if missing.
+    const Sprite* sprite_file(const std::string& file);
     // A frame's box relative to its anchor: min x, min y, max x, max y (sprite pixels).
     static glm::vec4 frame_bounds(const Sprite& s, int frame);
 
