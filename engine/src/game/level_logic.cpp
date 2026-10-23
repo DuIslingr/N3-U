@@ -341,6 +341,17 @@ void LevelLogic::message(const std::string& id, float seconds) {
         if (!t.empty()) text = prefix + t;
     }
     if (text.empty()) text = id;
+    // ^NN^: the touch buttons' glyphs; this port shows its keys instead.
+    static const std::unordered_map<std::string, std::string> keys = {
+        {"28", "[Space]"}, {"29", "[Left mouse]"}, {"30", "[Q]"}, {"31", "[Shift]"}, {"32", "[Q]"}, {"33", "[Right mouse]"},
+        {"34", "[G]"}, {"35", "[1]/[2]"}, {"36", "[G]"}, {"37", "[G]"}, {"38", "[W][A][S][D]"}};
+    for (size_t at = text.find('^'); at != std::string::npos; at = text.find('^', at + 1)) {
+        const size_t end = text.find('^', at + 1);
+        if (end == std::string::npos) break;
+        auto k = keys.find(text.substr(at + 1, end - at - 1));
+        if (k == keys.end()) continue;
+        text.replace(at, end - at + 1, k->second);
+    }
     messages_.push_back({id, text, seconds});
     while (messages_.size() > 8) messages_.pop_front();
     log("message: " + id + (text != id ? " \"" + text + "\"" : ""));
@@ -831,7 +842,8 @@ void LevelLogic::update_dialog(float dt) {
     dialog_voice_ = audio ? audio->play(line) : -1;
     // Without a voice the line stays up for a few seconds; after one, a short pause.
     dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : 3.0f;
-    message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
+    // Lines with text show it while the voice plays; voice-only barks (VFX_...) show nothing.
+    if (!strings.find(line).empty() || dialog_voice_ < 0) message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
 }
 
 void LevelLogic::update_music(float dt) {
