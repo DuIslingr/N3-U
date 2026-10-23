@@ -6,6 +6,10 @@
 // A layout frame places its parts as other frames; each part carries invisible markers
 // (modules 3 and 4: its touch rectangle's corners, 5: its text's centre, 17 and 18: its
 // text's left and right). The layouts' own marker frames (3, 4, 5, 7) are not drawn.
+//
+// A chapter picked, the difficulty comes next (menus.lvc's page 31042: Easy, Normal, Hard,
+// Hard only once unlocked), as the sheet's own buttons (695, pressed 696) in its dialog
+// window (layout 14).
 #pragma once
 
 #include <functional>
@@ -27,6 +31,8 @@ public:
     bool open = false;
     const std::vector<CampaignLevel>* campaign = nullptr;
     int unlocked = 1;   // chapters the player has reached
+    int difficulty = 1;           // 0 Easy, 1 Normal, 2 Hard: the last chosen, and the choice
+    bool hard_unlocked = false;   // Menu_IsHardDiffUnlocked
     // String lookup (MAIN table ids such as "FPS_CAMPAIGN").
     std::function<std::string(const std::string&)> text = [](const std::string& id) { return id; };
 
@@ -41,10 +47,10 @@ public:
     void draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer& large, TextRenderer& small, int w, int h);
 
 private:
-    enum class Page { Main, Chapters } page_ = Page::Main;
+    enum class Page { Main, Chapters, Difficulty } page_ = Page::Main;
     int selected_ = 0, first_ = 0;   // chapters: the selection, the top card's chapter
     // What the pointer is over, and the touch rectangles as last drawn.
-    enum class Part { None, Campaign, Multiplayer, Options, Back, Up, Down, Card0, Card1, Card2 };
+    enum class Part { None, Campaign, Multiplayer, Options, Back, Up, Down, Card0, Card1, Card2, Easy, Normal, Hard };
     Part hover_ = Part::None, pressed_ = Part::None;
     struct Hit {
         Part part;

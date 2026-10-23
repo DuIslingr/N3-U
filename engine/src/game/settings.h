@@ -23,6 +23,10 @@ struct Settings {
     int fps_limit = 0;          // frames per second; 0: unlocked
     // Campaign progress: how many chapters the player has reached (chapter select).
     int chapters = 1;
+    // The difficulty (0 Easy, 1 Normal, 2 Hard), and whether Hard is offered (the campaign
+    // finished once).
+    int difficulty = 1;
+    bool hard_unlocked = false;
     // Credits (the shop's currency), earned at the end of each level.
     int credits = 0;
     // The Military Shop's lasting purchases (weapons, the Repel and Paralyze upgrades), a bit

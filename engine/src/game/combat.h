@@ -174,6 +174,11 @@ public:
     bool set_idle_state(int npc, const std::string& state);
     bool player_invulnerable = false;  // debugging (--god)
     float player_health = 150, player_max_health = 150;
+    // The difficulty (0 Easy, 1 Normal, 2 Hard; Menu_SetDifficulty): gol 4509 DifficultyLevels
+    // scales the player's shield ([1]: 1.2, 1, 0.8) and the pause before it regenerates
+    // ([3]: 0.8, 1, 1.2). Set before the level starts.
+    void set_difficulty(int d);
+    int difficulty() const { return difficulty_; }
     bool player_dead = false;
 
     const Stats& stats() const { return stats_; }
@@ -463,6 +468,9 @@ private:
     std::vector<std::string> player_hurt_sounds_;
     float player_hurt_wait_ = 0;
     bool critical_ = false;   // below 30% of the shield at the last hit
+    int difficulty_ = 1;
+    float base_max_health_ = 150, base_regen_pause_ = 3;
+    float difficulty_factor_[7][3] = {};   // DifficultyLevels' lists by difficulty
     void fire_player(const glm::vec3& eye, const glm::vec3& aim);
     // Grenades (CGrenadeComponent of Grenade_Player): thrown along the view, they bounce
     // off the level and explode when the fuse runs out, hurting everything in the radius.

@@ -154,8 +154,27 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
             regen_pause_ = num(*b, 2, 3000) / 1000.0f;
         }
     }
+    base_max_health_ = player_max_health, base_regen_pause_ = regen_pause_;
+    for (auto& row : difficulty_factor_) row[0] = row[1] = row[2] = 1;
+    if (auto it = gol_.find(4509); it != gol_.end())
+        if (const Value* v = resolved_template(it->second, gol_, 0x3d))
+            for (size_t list = 0; list < 7 && list < v->size(); ++list)
+                for (size_t d = 0; d < 3 && d < (*v)[list].size(); ++d) {
+                    const Value& f = (*v)[list][d];
+                    difficulty_factor_[list][d] = f.size() > 0 ? f[0].as_float() : f.as_float();
+                }
     player_health = player_max_health;
     load_grenade();
+}
+
+void Combat::set_difficulty(int d) {
+    // CHealthComponent::ReInit (the player's maximum) and CPlayerBaseComponent::Init /
+    // StopHealthRegeneration (the pause before regenerating).
+    difficulty_ = std::clamp(d, 0, 2);
+    const bool full = player_health >= player_max_health;
+    player_max_health = base_max_health_ * difficulty_factor_[1][difficulty_];
+    regen_pause_ = base_regen_pause_ * difficulty_factor_[3][difficulty_];
+    if (full || player_health > player_max_health) player_health = player_max_health;
 }
 
 Combat::GrenadeDef Combat::read_grenade(const Gol& gol, int id) {

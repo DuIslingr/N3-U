@@ -29,7 +29,8 @@ public:
     const std::vector<Item>& items() const { return items_; }
 
     // CUpgradesManager::GetUpgradeCost: the list's cost by the difficulty's factor
-    // (DifficultyLevels [3]; this port plays the normal difficulty).
+    // (DifficultyLevels [4]: 1 at every difficulty).
+    int difficulty = 1;
     int cost(int i) const;
     bool owned(int i, const Settings& s) const;
     // CUpgradesManager::CanUpgrade: affordable, not owned, and of use now.
@@ -41,7 +42,7 @@ public:
 
 private:
     std::vector<Item> items_;
-    float cost_factor_ = 1;
+    float cost_factor_[3] = {1, 1, 1};
     const Item* find(int i) const { return i >= 0 && i < int(items_.size()) ? &items_[size_t(i)] : nullptr; }
     void apply(const Item& it, Combat& combat) const;
 };

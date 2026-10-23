@@ -16,6 +16,7 @@ constexpr int kCard = 135, kCardSelected = 136, kCardLock = 142;
 constexpr int kUp = 140, kUpPressed = 141, kDown = 148, kDownPressed = 149, kBack = 151, kBackPressed = 152;
 constexpr int kOptions = 117, kOptionsPressed = 118, kInfo = 113;
 constexpr int kCampaign = 132, kMultiplayer = 130;
+constexpr int kDialogLayout = 14, kButton = 695, kButtonPressed = 696;
 // Layout marker frames and modules: positions only.
 bool marker_frame(int f) { return f == 1 || f == 3 || f == 4 || f == 5 || f == 7; }
 // Gameloft's online services in the main menu (the currency button, its logo, Live!).
@@ -88,9 +89,18 @@ MainMenu::Action MainMenu::act(Part p) {
             return Action::None;
         case Part::Options: return Action::Options;
         case Part::Back:
-            if (page_ == Page::Chapters) page_ = Page::Main;
+            if (page_ == Page::Difficulty) page_ = Page::Chapters;
+            else if (page_ == Page::Chapters) page_ = Page::Main;
             else return Action::Quit;
             return Action::None;
+        case Part::Easy:
+        case Part::Normal:
+        case Part::Hard: {
+            const int d = int(p) - int(Part::Easy);
+            if (d == 2 && !hard_unlocked) return Action::None;
+            difficulty = d;
+            return Action::Play;
+        }
         case Part::Up: first_ = std::max(first_ - 1, 0), select(std::clamp(selected_, first_, first_ + 2)); return Action::None;
         case Part::Down: first_ = std::clamp(first_ + 1, 0, std::max(chapters() - 3, 0)), select(std::clamp(selected_, first_, first_ + 2)); return Action::None;
         case Part::Card0:
@@ -101,7 +111,9 @@ MainMenu::Action MainMenu::act(Part p) {
             if (c != selected_) return select(c), Action::None;   // the first press picks the card
             if (c >= unlocked) return Action::None;               // not reached yet
             chosen = c;
-            return Action::Play;
+            page_ = Page::Difficulty;                             // then the difficulty
+            hover_ = Part(int(Part::Easy) + std::clamp(difficulty, 0, hard_unlocked ? 2 : 1));
+            return Action::None;
         }
         default: return Action::None;
     }
@@ -117,6 +129,20 @@ MainMenu::Action MainMenu::key(Key k) {
             case Key::Activate: return act(hover_ == Part::None ? Part::Campaign : hover_);
             case Key::Back: return Action::Quit;
         }
+        return Action::None;
+    }
+    if (page_ == Page::Difficulty) {
+        const int top = hard_unlocked ? 2 : 1;
+        int d = hover_ >= Part::Easy ? int(hover_) - int(Part::Easy) : std::clamp(difficulty, 0, top);
+        switch (k) {
+            case Key::Up:
+            case Key::Left: d = std::max(d - 1, 0); break;
+            case Key::Down:
+            case Key::Right: d = std::min(d + 1, top); break;
+            case Key::Activate: return act(Part(int(Part::Easy) + d));
+            case Key::Back: return act(Part::Back);
+        }
+        hover_ = Part(int(Part::Easy) + d);
         return Action::None;
     }
     switch (k) {
@@ -163,7 +189,7 @@ void MainMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer&
     } restore{hud};
     // The 960x640 layout scaled to the screen's height, centred.
     const float k = hud.sprite_scale(kSprite);
-    const int layout = page_ == Page::Main ? kMainLayout : kChaptersLayout;
+    const int layout = page_ == Page::Main ? kMainLayout : page_ == Page::Chapters ? kChaptersLayout : kDialogLayout;
     const glm::vec4 lb = Hud::frame_bounds(*s, layout);
     const glm::vec2 origin(W * 0.5f - (lb.x + lb.z) * 0.5f * k, H * 0.5f - (lb.y + lb.w) * 0.5f * k);
     auto px = [&](glm::vec2 p) { return origin + p * k; };
@@ -205,6 +231,24 @@ void MainMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer&
                 part(pressed(Part::Options) ? kOptionsPressed : kOptions, at, Part::Options);
             }
         }
+        return;
+    }
+    if (page_ == Page::Difficulty) {
+        // The window's title, the three choices down its middle, Back below.
+        large.draw(out, say("FPS_DIFFICULTY"), px({560, 57}), int(W), kWhite, {0.0f, 0.5f});   // in the header's text markers
+        static const char* const kNames[] = {"FPS_DIFFICULTY_EASY", "FPS_DIFFICULTY_NORMAL", "FPS_DIFFICULTY_HARD"};
+        const glm::vec4 bb = Hud::frame_bounds(*s, kButton);
+        for (int d = 0; d < 3; ++d) {
+            const Part p = Part(int(Part::Easy) + d);
+            const bool locked = d == 2 && !hard_unlocked;
+            const glm::vec2 c(480, 190 + 85 * float(d));   // between the window's rules (124, 424)
+            const glm::vec2 at = c - glm::vec2(bb.x + bb.z, bb.y + bb.w) * 0.5f;
+            part(pressed(p) && !locked ? kButtonPressed : kButton, at, locked ? Part::None : p, locked ? glm::vec4(0.5f, 0.5f, 0.55f, 1) : kWhite);
+            large.draw(out, say(kNames[d]), px(c), int(W), locked ? kDim : kWhite, {0.5f, 0.5f});
+            if (locked) hud.draw_frame(out, *s, kCardLock, px(c + glm::vec2((bb.z - bb.x) * 0.5f - 30, -20)), k * 0.4f, kWhite);
+        }
+        for (const auto& [frame, at] : placed)
+            if (frame == kBack) part(pressed(Part::Back) ? kBackPressed : kBack, at, Part::Back);
         return;
     }
     // Chapter select: the three cards, top to bottom in story order.

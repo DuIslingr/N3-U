@@ -10,7 +10,6 @@ namespace nova {
 namespace {
 
 constexpr int kUpgradesManager = 4510, kDifficultyLevels = 4509;
-constexpr int kNormal = 1;            // the difficulty's index in DifficultyLevels' lists
 constexpr int kMaxGrenades = 300;     // PowerManager: ThrowGrenade's maximum ammo
 const char* const kWeapons[] = {"ExecutorPlasmaGun", "AlienLightningGun", "RailGun"};   // upgrades 6, 7, 8
 
@@ -29,15 +28,16 @@ void Shop::load(const Gol& gol) {
                 items_.push_back(item);
             }
     if (auto it = gol.find(kDifficultyLevels); it != gol.end())
-        if (const Value* v = resolved_template(it->second, gol, 0x3d); v && v->size() > 3 && (*v)[3].size() > kNormal) {
-            const Value& f = (*v)[3][kNormal];
-            cost_factor_ = f.size() > 0 ? f[0].as_float() : f.as_float();
-        }
+        if (const Value* v = resolved_template(it->second, gol, 0x3d); v && v->size() > 4)
+            for (size_t d = 0; d < 3 && d < (*v)[4].size(); ++d) {
+                const Value& f = (*v)[4][d];
+                cost_factor_[d] = f.size() > 0 ? f[0].as_float() : f.as_float();
+            }
 }
 
 int Shop::cost(int i) const {
     const Item* it = find(i);
-    return it ? int(float(it->cost) * cost_factor_) : 0;
+    return it ? int(float(it->cost) * cost_factor_[std::clamp(difficulty, 0, 2)]) : 0;
 }
 
 bool Shop::owned(int i, const Settings& s) const {

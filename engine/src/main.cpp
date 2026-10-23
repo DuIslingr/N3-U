@@ -81,6 +81,7 @@ struct Options {
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
     int credits = -1;           // the credits to hold (the Military Shop), instead of the saved ones
+    int difficulty = -1;        // 0 Easy, 1 Normal, 2 Hard, instead of the saved one
     int loading_screen = -1;
     float death_screen = -1;    // headless: draw the death screen this long after it opened
     float end_screen = -1;      // headless: draw the end-of-level screen this long after it opened    // headless: draw the level's loading screen, 0 loading, 1 loaded
@@ -156,6 +157,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
         else if (a == "--credits") o.credits = std::stoi(next());
+        else if (a == "--difficulty") o.difficulty = std::stoi(next());
         else if (a == "--loading-screen") o.loading_screen = std::stoi(next());
         else if (a == "--death-screen") o.death_screen = std::stof(next());
         else if (a == "--end-screen") o.end_screen = std::stof(next());
@@ -475,9 +477,11 @@ int main(int argc, char** argv) {
             const std::string settings_path = headless ? std::string() : Settings::default_path();
             Settings settings = Settings::load(settings_path);
             if (opt.credits >= 0) settings.credits = opt.credits;
+            if (opt.difficulty >= 0) settings.difficulty = opt.difficulty;
             PauseMenu menu;
             Shop shop;   // the Military Shop on the pause page
             shop.load(gol);
+            combat.set_difficulty(settings.difficulty), shop.difficulty = settings.difficulty;
             if (!shop.items().empty()) menu.shop = &shop, menu.combat = &combat;
             LensFlares flares(scene, logic);
             DeathScreen death;
@@ -742,7 +746,9 @@ int main(int argc, char** argv) {
                 } else if ((ended_for += dt) > 3.0f) {
                     // Complete: the end-of-level screen first; its Continue comes back here.
                     if (logic.level_success && !headless && !end_screen.open && !end_screen_done) {
-                        end_screen.show(end_stats(), end_rules(), next_campaign_level(campaign, opt.level).empty());
+                        const bool finished = next_campaign_level(campaign, opt.level).empty();
+                        end_screen.show(end_stats(), end_rules(), finished);
+                        if (finished) settings.hard_unlocked = true;   // Hard is offered from now on
                         // CUpgradesManager::GiveUpgradePoints, kept with the settings.
                         settings.credits = std::max(settings.credits + end_screen.earned().total, 0);
                         settings.save(settings_path);
@@ -1246,6 +1252,8 @@ int main(int argc, char** argv) {
                     switch (a) {
                         case A::Play:
                             main_menu.open = false;
+                            settings.difficulty = main_menu.difficulty, settings.save(settings_path);   // Menu_SetDifficulty
+                            combat.set_difficulty(settings.difficulty), shop.difficulty = settings.difficulty;
                             load_level("levels/" + campaign[size_t(main_menu.chosen)].file + ".lvc");
                             SDL_SetWindowRelativeMouseMode(window, !touch_mode);
                             break;
@@ -1452,7 +1460,8 @@ int main(int argc, char** argv) {
                     float dt = 0;
                     for (size_t k = 0; k < std::min(recent_n, recent.size()); ++k) dt += recent[k];
                     dt /= float(std::min(recent_n, recent.size()));
-                    main_menu.unlocked = settings.chapters;
+                    main_menu.unlocked = settings.chapters, main_menu.hard_unlocked = settings.hard_unlocked;
+                    if (!main_menu.open) main_menu.difficulty = settings.difficulty;
                     if (main_menu.open) {   // the main menu (with Options over it), the game paused behind
                         if (logic.audio) logic.audio->set_paused(true);
                         int mw = 0, mh = 0;
