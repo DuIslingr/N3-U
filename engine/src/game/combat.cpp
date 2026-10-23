@@ -816,6 +816,7 @@ bool Combat::set_projectile(Target& t, int type) {
     t.ranged = true;
     t.bolt_damage = num(*pr, 2, 3);
     t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
+    t.bolt_trail = pr->size() > 36 ? (*pr)[36].i : -1;
     if (lower(p->second.name).find("throw") != std::string::npos || lower(p->second.name).find("plasma") != std::string::npos)
         t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
     return true;
@@ -1548,7 +1549,13 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
         const glm::vec3 up = glm::cross(side, aim);
         aim = glm::normalize(aim + side * std::tan(glm::radians(u(rng_))) + up * std::tan(glm::radians(u(rng_))));
     }
-    bolts_.push_back({muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())});
+    Bolt b{muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())};
+    if (t.bolt_trail >= 0 && (b.trail = take_trail(t.bolt_trail, muzzle)) != size_t(-1)) {
+        b.trail_type = t.bolt_trail, b.from = muzzle;
+        scene_.play_clip(b.trail, "start", false);
+        scene_.set_object_visible(b.trail, true);
+    }
+    bolts_.push_back(b);
     if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
     ++stats_.enemy_shots;
 }
@@ -1919,6 +1926,14 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             b.life = 0;
         }
         b.pos = end;
+        if (b.trail == size_t(-1)) continue;
+        const glm::vec3 dir = glm::normalize(b.vel);
+        if (b.life > 0) {
+            pose_trail(b.trail, b.from, b.pos, dir);
+        } else {   // it stops here
+            if (Tracer t{b.trail, b.trail_type, b.from, b.pos, dir, b.pos, 0}; end_trail(t)) tracers_.push_back(t);
+            b.trail = size_t(-1);
+        }
     }
     bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
     update_trails(dt);
@@ -2039,14 +2054,8 @@ void Combat::push_player_out() {
 void Combat::launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to) {
     const float len = glm::distance(from, to);
     if (w.trail_type < 0 || w.bullet_speed <= 0 || len < 0.5f) return;
-    std::vector<size_t>& pool = trail_pool_[w.trail_type];
-    size_t object;
-    if (!pool.empty()) {
-        object = pool.back(), pool.pop_back();
-    } else {
-        object = scene_.spawn_object(w.trail_type, -4000 - int(tracers_.size()), from, 0);
-        if (object == size_t(-1)) return;
-    }
+    const size_t object = take_trail(w.trail_type, from);
+    if (object == size_t(-1)) return;
     scene_.play_clip(object, "start", false);
     scene_.set_object_visible(object, true);
     tracers_.push_back({object, w.trail_type, from, from, (to - from) / len, to, w.bullet_speed});
@@ -2056,31 +2065,59 @@ void Combat::update_trails(float dt) {
     for (Tracer& t : tracers_) {
         if (!t.ending) {
             t.pos += t.dir * t.speed * dt;
-            if (glm::dot(t.end - t.pos, t.dir) <= 0) t.pos = t.end, t.ending = true, scene_.play_clip(t.object, "end", false);
+            if (glm::dot(t.end - t.pos, t.dir) <= 0) {
+                t.pos = t.end;
+                if (!end_trail(t)) t.object = size_t(-1);
+                continue;
+            }
         } else if (scene_.clip_finished(t.object)) {
             scene_.set_object_visible(t.object, false);
             trail_pool_[t.type].push_back(t.object);
             t.object = size_t(-1);
             continue;
         }
-        // The streak lies along its -Y from the head, flat in its XY plane: turned about the
-        // flight to face the eye, and no longer than the way flown (it grows to 7 m).
-        const glm::vec3 to_eye = last_eye_ - t.pos;
-        glm::vec3 side = glm::cross(t.dir, to_eye);
-        side = glm::length(side) > 1e-4f ? glm::normalize(side) : glm::vec3(1, 0, 0);
-        const float flown = glm::distance(t.from, t.pos);
-        glm::mat4 m(1);
-        m[0] = glm::vec4(side, 0);
-        m[1] = glm::vec4(t.dir * std::min(1.0f, flown / 7.0f), 0);
-        m[2] = glm::vec4(glm::cross(side, t.dir), 0);
-        m[3] = glm::vec4(t.pos, 1);
-        scene_.set_object_transform(t.object, m);
+        pose_trail(t.object, t.from, t.pos, t.dir, t.ending ? t.length : -1);
     }
     std::erase_if(tracers_, [](const Tracer& t) { return t.object == size_t(-1); });
 }
 
+bool Combat::end_trail(Tracer& t) {
+    const float flown = glm::distance(t.from, t.pos);
+    if (flown < 3) {
+        scene_.set_object_visible(t.object, false);
+        trail_pool_[t.type].push_back(t.object);
+        return false;
+    }
+    t.ending = true, t.length = flown < 7.7f ? flown * 0.05f : 1.0f;
+    scene_.play_clip(t.object, "end", false);
+    pose_trail(t.object, t.from, t.pos, t.dir, t.length);
+    return true;
+}
+
+size_t Combat::take_trail(int type, const glm::vec3& at) {
+    std::vector<size_t>& pool = trail_pool_[type];
+    if (pool.empty()) return scene_.spawn_object(type, -4000 - int(tracers_.size() + bolts_.size()), at, 0);
+    const size_t object = pool.back();
+    pool.pop_back();
+    return object;
+}
+
+void Combat::pose_trail(size_t object, const glm::vec3& from, const glm::vec3& head, const glm::vec3& dir, float length) {
+    // The streak lies along its -Y from the head, flat in its XY plane: turned about the
+    // flight to face the eye, and in flight no longer than the way flown (it grows to 7 m).
+    glm::vec3 side = glm::cross(dir, last_eye_ - head);
+    side = glm::length(side) > 1e-4f ? glm::normalize(side) : glm::vec3(1, 0, 0);
+    glm::mat4 m(1);
+    m[0] = glm::vec4(side, 0);
+    m[1] = glm::vec4(dir * (length >= 0 ? length : std::min(1.0f, glm::distance(from, head) / 7.0f)), 0);
+    m[2] = glm::vec4(glm::cross(side, dir), 0);
+    m[3] = glm::vec4(head, 1);
+    scene_.set_object_transform(object, m);
+}
+
 void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const {
     for (const Bolt& b : bolts_) {
+        if (b.trail_type >= 0) continue;   // drawn by its streak
         const glm::vec3 tail = b.pos - glm::normalize(b.vel) * 1.2f;
         beam(o.world, tail, b.pos, 0.12f, glm::vec4(glm::vec3(b.color), 0), b.color, eye);
         glow(o.world, b.pos, 0.18f, b.color, eye);

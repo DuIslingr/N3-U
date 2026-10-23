@@ -318,6 +318,7 @@ private:
         float bolt_damage = 3, bolt_speed = 40, burst_gap = 0.1f, burst_pause = 1.6f, fire_range = 35;
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
+        int bolt_trail = -1;           // the object the bullet carries (its streak; -1: our glow)
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
         bool invulnerable = false;
@@ -441,6 +442,9 @@ private:
         float damage, life;
         glm::vec4 color;
         int owner;                     // target index
+        int trail_type = -1;           // its streak: object and where it started
+        size_t trail = size_t(-1);
+        glm::vec3 from{0};
     };
     // A bullet's streak (CProjectileComponent::LaunchBullet / UpdateBullet): its trail
     // object flies from the muzzle to where the shot ends at the bullet's speed, growing
@@ -451,9 +455,16 @@ private:
         glm::vec3 from, pos, dir, end;
         float speed;
         bool ending = false;
+        float length = 1;              // its scale along the flight once it stopped
     };
+    // A bullet stopped (CProjectileComponent::Die): its streak fades there, gone at once
+    // after under 3 m of flight, shortened under 7.7 m.
+    // False when it went at once (its object back in the pool).
+    bool end_trail(Tracer& t);
     void launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to);
     void update_trails(float dt);
+    size_t take_trail(int type, const glm::vec3& at);   // a hidden one of that type, or a new one
+    void pose_trail(size_t object, const glm::vec3& from, const glm::vec3& head, const glm::vec3& dir, float length = -1);
     struct Spark {
         glm::vec3 pos;
         float life;
