@@ -102,6 +102,13 @@ public:
         bool on = false;
         glm::vec3 position{0};
     } path_marker;
+    // AddObjective(object[, text, flag, node]) / RemoveObjective(object): markers on objects
+    // (CPlayerBaseComponent's objective list), drawn like the path marker.
+    struct ObjectiveMarker {
+        int id = -1;
+        std::string text, node;
+    };
+    std::vector<ObjectiveMarker> objective_markers;
     // Colour grading (CLevel: the level's LUT, level properties [38]; SetColorGrading(lut,
     // ms) blends to another over ms, DisableColorGrading turns it off). Fills post.grading.
     void set_color_grading(const std::string& lut, float ms);

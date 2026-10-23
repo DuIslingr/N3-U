@@ -272,7 +272,7 @@ void LevelLogic::start(bool keep_player) {
         grading_.dirty = true;
     }
     if (!keep_player) controls = Controls{}, hud_enabled = true, interface_in_cinematic = false, weapon_state.clear(), objectives = {},
-                      path_marker = {};
+                      path_marker = {}, objective_markers.clear();
     objects_.clear();
     triggers_.clear();
     doors_.clear();

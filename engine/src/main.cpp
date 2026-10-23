@@ -569,6 +569,14 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                if (opt.scripts && !logic.player_locked() && logic.hud_enabled)
+                    for (const LevelLogic::ObjectiveMarker& m : logic.objective_markers) {
+                        const LevelLogic::Object* o = logic.object(m.id);
+                        if (!o || !o->enabled) continue;
+                        glm::vec3 at = o->position;
+                        if (!m.node.empty()) scene.node_position(o->index, m.node, at);
+                        hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, at, glm::distance(f.camera, at), w, h, settings.metric);
+                    }
                 if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
                     hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
                                     glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);

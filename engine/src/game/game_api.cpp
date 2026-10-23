@@ -360,6 +360,23 @@ int api_motion_follow(lua_State* L) {
     ctx(L).motion_follow(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)), float(lua_tonumber(L, 3)));
     return 0;
 }
+int api_add_objective(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    LevelLogic::ObjectiveMarker m;
+    m.id = int(lua_tointeger(L, 1));   // ids also come as strings ("103153")
+    m.text = str_arg(L, 2);
+    m.node = str_arg(L, 4);
+    if (c.trace) c.log("objective marker on " + std::to_string(m.id) + (c.object(m.id) ? "" : " (no such object)"));
+    if (c.object(m.id)) c.objective_markers.push_back(m);
+    return 0;
+}
+int api_remove_objective(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    const int id = int(lua_tointeger(L, 1));
+    auto& v = c.objective_markers;
+    v.erase(std::remove_if(v.begin(), v.end(), [id](const LevelLogic::ObjectiveMarker& m) { return m.id == id; }), v.end());
+    return 0;
+}
 int api_player_look_to(lua_State* L) {
     LevelLogic& c = ctx(L);
     if (const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 1))))
@@ -1100,6 +1117,8 @@ const Entry kImplemented[] = {
     {"PlayCameraAnim", api_play_camera_anim},
     {"PlayerLookTo", api_player_look_to},
     {"PlayerLookToDirection", api_player_look_to_direction},
+    {"AddObjective", api_add_objective},
+    {"RemoveObjective", api_remove_objective},
     {"GameObject_MotionOnPathSetFollowTarget", api_motion_follow},
     {"ShowProgressSavedMessage", api_progress_saved},
     {"Fog_SetLock", api_fog_lock},
