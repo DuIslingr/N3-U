@@ -129,6 +129,15 @@ public:
     Combat* combat = nullptr;        // enemies and damage, if the game runs combat
     Audio* audio = nullptr;          // sound, when there is a device
     std::vector<glm::vec3> actor_positions;   // moving actors (doors open for them too)
+    // Screen fade (StartFadeIn/StartFadeOut: CLevel +0x29c..0x2a8) and camera shake
+    // (CameraShake -> CGameCamera::ShakeCamera).
+    void start_fade(bool in, float ms, glm::vec3 color) { fade_in_ = in, fade_total_ = fade_left_ = std::max(ms, 1.0f) / 1000.0f, fade_color = color; fading_ = true; }
+    float fade_alpha() const;
+    glm::vec3 fade_color{0};
+    void shake(float ms, float amount) { shake_total_ = shake_left_ = ms / 1000.0f, shake_amount_ = amount; }
+    glm::vec2 shake_offset() const;   // yaw, pitch (degrees) to add to the view
+    // TeleportToWaypoint: move an object (actors through combat) to a position.
+    void teleport_object(Object& o, const glm::vec3& position);
     // Post effects the scripts control (PostEffect_Enable / SetVar / SetParam).
     PostParams post;
     // A post-effect variable ("DOF"/"HEIGHTFOG" and fFocus, fRange, fBlurStep, FogTop, ...),
@@ -181,6 +190,9 @@ private:
     int dialog_voice_ = -1;
     float dialog_wait_ = 0;
     void update_dialog(float dt);
+    bool fading_ = false, fade_in_ = true;
+    float fade_total_ = 1, fade_left_ = 0;
+    float shake_total_ = 0, shake_left_ = 0, shake_amount_ = 0, shake_clock_ = 0;
     std::unique_ptr<class AnimSounds> anim_sounds_;
     int fog_zone_ = -2;              // zone whose fog is applied (-2: none yet)
     glm::vec4 level_fog_color_{0};

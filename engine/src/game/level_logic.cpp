@@ -9,6 +9,7 @@
 
 #include "audio/audio.h"
 #include "game/anim_sounds.h"
+#include "game/combat.h"
 #include "game/player.h"
 #include "game/scene.h"
 
@@ -226,6 +227,7 @@ void LevelLogic::start(bool keep_player) {
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
+    if (!keep_player) fading_ = false, shake_left_ = 0;
     anim_sounds_->clear();
     if (!keep_player) post = PostParams{}, post_fades_.clear();
     objects_.clear();
@@ -498,6 +500,25 @@ bool LevelLogic::use() {
     return true;
 }
 
+float LevelLogic::fade_alpha() const {
+    if (!fading_) return 0;
+    const float k = fade_left_ / fade_total_;   // 1 at the start, 0 at the end
+    return fade_in_ ? k : 1 - k;                // fading in leaves a clear screen; out, a covered one
+}
+
+glm::vec2 LevelLogic::shake_offset() const {
+    if (shake_left_ <= 0) return glm::vec2(0);
+    const float a = shake_amount_ * 4.0f * (shake_left_ / std::max(shake_total_, 1e-3f));
+    return glm::vec2(std::sin(shake_clock_ * 47.0f) + 0.5f * std::sin(shake_clock_ * 91.0f),
+                     std::cos(shake_clock_ * 53.0f) + 0.5f * std::sin(shake_clock_ * 77.0f)) * a;
+}
+
+void LevelLogic::teleport_object(Object& o, const glm::vec3& position) {
+    o.position = position;
+    if (combat && combat->place_actor(o.id, position)) return;
+    if (o.index != std::numeric_limits<size_t>::max()) scene.set_object_pose(o.index, position, o.yaw);
+}
+
 void LevelLogic::dialog(const std::vector<std::string>& lines) {
     for (const std::string& l : lines) dialog_.push_back(l);
     dialog_active_ = true;
@@ -543,6 +564,12 @@ void LevelLogic::update_music(float dt) {
 void LevelLogic::update(float dt) {
     update_music(dt);
     update_dialog(dt);
+    if (fading_) {
+        fade_left_ = std::max(fade_left_ - dt, 0.0f);
+        if (fade_left_ <= 0 && fade_in_) fading_ = false;   // faded out stays covered
+    }
+    shake_clock_ += dt;
+    shake_left_ = std::max(shake_left_ - dt, 0.0f);
     if (audio)
         for (const auto& [id, o] : objects_)
             if (o.index < scene.level().objects.size() && o.visible) anim_sounds_->update(scene, *audio, o.index, scene.level().objects[o.index].type);

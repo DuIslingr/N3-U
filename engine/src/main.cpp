@@ -191,6 +191,13 @@ struct Camera {
     }
 };
 
+// A screen-filling quad in the overlay (fades).
+void fullscreen(Overlay& o, int w, int h, const glm::vec4& c) {
+    const uint32_t rgba = pack_rgba(c);
+    const ColorVertex v[4] = {{{0, 0, 0}, rgba}, {{float(w), 0, 0}, rgba}, {{float(w), float(h), 0}, rgba}, {{0, float(h), 0}, rgba}};
+    o.screen.insert(o.screen.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+}
+
 // 16-bit stereo WAV from interleaved float samples.
 bool save_wav(const std::vector<float>& samples, int rate, const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "wb");
@@ -570,6 +577,7 @@ int main(int argc, char** argv) {
                 FrameParams shot = frame(cam, opt.width, opt.height);
                 overlay.clear();
                 if (opt.scripts) combat.draw(overlay, shot.camera, opt.width, opt.height);
+                if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, opt.width, opt.height, glm::vec4(logic.fade_color, logic.fade_alpha()));
                 shot.overlay = &overlay;
                 draw_text(shot, opt.width, opt.height);
                 scene.cull(shot.camera, shot.proj * shot.view);
@@ -719,10 +727,13 @@ int main(int argc, char** argv) {
                     int w = 0, h = 0;
                     SDL_GetWindowSizeInPixels(window, &w, &h);
                     clock += dt;
-                    FrameParams f = frame(cam, w, h);
+                    Camera view = cam;
+                    if (opt.scripts) view.yaw += logic.shake_offset().x, view.pitch += logic.shake_offset().y;
+                    FrameParams f = frame(view, w, h);
                     scene.cull(f.camera, f.proj * f.view);
                     overlay.clear();
                     if (opt.scripts && !flying) combat.draw(overlay, f.camera, w, h);
+                    if (opt.scripts && logic.fade_alpha() > 0) fullscreen(overlay, w, h, glm::vec4(logic.fade_color, logic.fade_alpha()));
                     f.overlay = &overlay;
                     draw_text(f, w, h);
                     renderer.render_to_window(scene.draws(), f);

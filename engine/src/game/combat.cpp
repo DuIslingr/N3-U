@@ -538,6 +538,20 @@ bool Combat::goal_pending(int actor, int goal_id) const {
     return false;
 }
 
+bool Combat::place_actor(int id, const glm::vec3& position) {
+    for (Target& t : targets_) {
+        if (t.id != id || !t.actor) continue;
+        t.pos = position;
+        t.tri = -1;
+        t.path.clear(), t.path_next = 0, t.leaping = false;
+        glm::vec3 on;
+        t.tri = nav_.nearest(position + glm::vec3(0, 0, 0.3f), 2.0f, on);
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return true;
+    }
+    return false;
+}
+
 void Combat::cancel_goals(int actor) {
     for (Target& t : targets_)
         if (t.id == actor) t.goals.clear();

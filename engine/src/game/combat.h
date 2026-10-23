@@ -94,6 +94,8 @@ public:
     bool push_goal(int actor, const NpcGoal& g);
     bool goal_pending(int actor, int goal_id) const;
     void cancel_goals(int actor);
+    // Put an actor at a position (TeleportToWaypoint); false if `id` is not an actor.
+    bool place_actor(int id, const glm::vec3& position);
     // A spawn manager with this id that has not ended (SpawnEnd_<id> is still to come).
     bool spawner_pending(int id) const;
     bool damage(int id, float amount);   // false if no such target

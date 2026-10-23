@@ -245,6 +245,27 @@ int api_false(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
+// StartFadeIn/StartFadeOut(ms[, colour]), CameraShake(ms, amount), TeleportToWaypoint(obj, wp).
+template <bool In>
+int api_fade(lua_State* L) {
+    const uint32_t c = lua_gettop(L) >= 2 ? uint32_t(lua_tointeger(L, 2)) : 0;   // SColor ARGB; 0: black
+    ctx(L).start_fade(In, float(lua_tointeger(L, 1)), glm::vec3(float((c >> 16) & 255), float((c >> 8) & 255), float(c & 255)) / 255.0f);
+    return 0;
+}
+
+int api_camera_shake(lua_State* L) {
+    ctx(L).shake(float(lua_tointeger(L, 1)), float(lua_tonumber(L, 2)));
+    return 0;
+}
+
+int api_teleport_to_waypoint(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    LevelLogic::Object* o = c.object(int(lua_tointeger(L, 1)));
+    const LevelLogic::Object* wp = c.object(int(lua_tointeger(L, 2)));
+    if (o && wp) c.teleport_object(*o, wp->position);
+    return 0;
+}
+
 // --- NPC commands (CAIComponent goals) -------------------------------------------------
 // NpcCmd_*(npc, goal id, waypoint, ...): queue a goal; WaitNpcCmdFinished(npc, goal id or
 // -1) waits while it is queued (Combat sends NpcCmdFinished_<npc>_<id> when it is done).
@@ -491,6 +512,10 @@ const Entry kImplemented[] = {
     {"WaitForEvent", api_wait_for_event},
     {"WaitForEnemiesDead", api_wait_for_enemies_dead},
     {"WaitNpcCmdFinished", api_wait_npc_cmd},
+    {"StartFadeIn", api_fade<true>},
+    {"StartFadeOut", api_fade<false>},
+    {"CameraShake", api_camera_shake},
+    {"TeleportToWaypoint", api_teleport_to_waypoint},
     {"NpcCmd_MoveToWp", api_npc_move},
     {"NpcCmd_TakeCover", api_npc_cover},
     {"NpcCmd_JumpToWp", api_npc_jump},
