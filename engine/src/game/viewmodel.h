@@ -47,18 +47,37 @@ public:
     const glm::mat4& camera_offset() const { return camera_offset_; }
 
 private:
+    // The weapon's states set (CStatesSetComponent): each state's type, whether it loops,
+    // the state that follows it, and its clips with their speeds (negative: backwards,
+    // e.g. GetUp is the switch clip reversed).
+    struct State {
+        std::string name;
+        int type = 0;
+        bool loop = false;
+        int next = -1;
+        std::vector<std::pair<std::string, float>> clips;
+    };
     struct Clips {
-        std::unordered_map<std::string, std::string> states;   // state name -> clip
-        std::unordered_map<std::string, std::vector<std::string>> variants;   // every clip of a state
+        std::vector<State> states;
+        std::unordered_map<std::string, int> index;
         std::string node;                                       // the WEAPON_* node shown for it
-        std::string get(const std::string& state) const {
-            auto it = states.find(state);
-            return it == states.end() ? std::string() : it->second;
+        const State* find(const std::string& name) const {
+            auto it = index.find(name);
+            return it == index.end() ? nullptr : &states[size_t(it->second)];
+        }
+        bool has(const std::string& name) const {
+            const State* s = find(name);
+            return s && !s->clips.empty();
+        }
+        std::string get(const std::string& name) const {   // the first clip
+            const State* s = find(name);
+            return s && !s->clips.empty() ? s->clips[0].first : std::string();
         }
     };
     const Clips& clips(const std::string& weapon);
-    // Play a clip once; others wait until it ends.
-    void play_once(const std::string& clip, bool reverse = false);
+    // Play a state (one of its clips at random); false if it has none. One that does not
+    // loop holds the others off until it ends (left_), then its next state follows.
+    bool play(const Clips& c, const std::string& state);
     void show_weapon(const std::string& node);
 
     Scene& scene_;
@@ -68,12 +87,14 @@ private:
     std::string cockpit_playing_;
     void place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg);
     std::unordered_map<std::string, Clips> clips_;
-    std::string weapon_, playing_;
+    std::string weapon_;
+    int current_ = -1;             // the state playing
+    float left_ = 0;               // seconds left of a state that does not loop
+    std::string base_;             // the looping state the input asks for (Idle, AimWalk, RushWalk, ...)
     bool visible_ = false;
-    float once_left_ = 0;          // seconds left of a clip played once
     bool lowered_ = false;         // GetDown: held lowered until GetUp
     bool was_reloading_ = false;
-    std::string requested_, queued_;   // queued_: a clip to play once after the current one
+    std::string requested_, queued_;   // queued_: a state to play after the current one
     std::string movement_;
     std::string camera_request_, camera_clip_;
     float camera_ms_ = 0;

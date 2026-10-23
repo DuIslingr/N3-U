@@ -1,6 +1,8 @@
 #include "game/viewmodel.h"
 
+#include <cmath>
 #include <cstdlib>
+#include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -30,12 +32,18 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
     const GolType* t = type_named(gol_, weapon);
     if (!t) return c;
     if (const Value* w = resolved_template(*t, gol_, kCompWeapon); w && w->size() > 1 && (*w)[1].type == Value::String) c.node = (*w)[1].s;
+    // Each state: [0] name, [1] type, [2] loops, [6] the next state's index, [11] clips
+    // ({name, speed, ...}).
     if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1)
         for (const Value& st : (*v)[1].list) {
-            if (st.size() < 12 || st[11].size() == 0 || st[11][0].size() == 0) continue;
-            c.states[st[0].s] = st[11][0][0].s;
-            for (const Value& clip : st[11].list)
-                if (clip.size() > 0 && clip[0].type == Value::String) c.variants[st[0].s].push_back(clip[0].s);
+            State s;
+            if (st.size() > 0 && st[0].type == Value::String) s.name = st[0].s;
+            if (st.size() > 6) s.type = int(st[1].as_float()), s.loop = st[2].as_float() != 0, s.next = int(st[6].as_float());
+            if (st.size() > 11)
+                for (const Value& clip : st[11].list)
+                    if (clip.size() > 1 && clip[0].type == Value::String) s.clips.emplace_back(clip[0].s, clip[1].as_float());
+            c.index.emplace(s.name, int(c.states.size()));
+            c.states.push_back(std::move(s));
         }
     return c;
 }
@@ -51,10 +59,10 @@ void ViewModel::start() {
         scene_.set_object_viewmodel(cockpit_);
         scene_.set_object_visible(cockpit_, false);
     }
-    weapon_.clear(), playing_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
+    weapon_.clear(), base_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
-    once_left_ = 0;
+    current_ = -1, left_ = 0;
 }
 
 void ViewModel::show_weapon(const std::string& node) {
@@ -64,11 +72,19 @@ void ViewModel::show_weapon(const std::string& node) {
 
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
 
-void ViewModel::play_once(const std::string& clip, bool reverse) {
-    if (clip.empty() || !scene_.play_clip(object_, clip, false, reverse)) return;
-    playing_ = clip;
+bool ViewModel::play(const Clips& c, const std::string& state) {
+    auto it = c.index.find(state);
+    if (it == c.index.end()) return false;
+    const State& s = c.states[size_t(it->second)];
+    if (s.clips.empty()) return false;
+    const auto& [clip, speed] = s.clips[s.clips.size() > 1 ? size_t(std::rand()) % s.clips.size() : 0];
+    const float rate = speed == 0 ? 1.0f : std::fabs(speed);   // 0: the postures, posed by the view's turn
+    if (!scene_.play_clip(object_, clip, s.loop, speed < 0)) return false;
+    scene_.set_clip_speed(object_, rate);
+    current_ = it->second;
     Scene::ClipState cs;
-    once_left_ = scene_.clip_state(object_, cs) ? cs.length / 1000.0f : 0.5f;
+    left_ = s.loop ? 0.0f : (scene_.clip_state(object_, cs) ? cs.length / 1000.0f : 0.5f) / rate;
+    return true;
 }
 
 void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitch_deg, const Input& in) {
@@ -93,57 +109,101 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     }
     const Clips& c = clips(in.weapon);
     update_camera_layer(dt, c);
-    once_left_ = std::max(once_left_ - dt, 0.0f);
+    // What is playing: a state that does not loop holds the rest off, except the moves
+    // between the input's own states (aiming, sprinting, the fire's start and end, jumps,
+    // landings), which the next of those cut short.
+    const State* cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
+    left_ = std::max(left_ - dt, 0.0f);
+    auto soft = [](const State* s) {
+        if (!s || s->loop) return true;
+        switch (s->type) {
+            case 3: case 4: case 10: case 11: case 24: case 26: case 37: case 38: case 42: return true;
+            default: return s->name == "Attack";
+        }
+    };
     if (in.weapon != weapon_) {   // switched: the new weapon comes up
         weapon_ = in.weapon;
         show_weapon(c.node);
-        lowered_ = false;
-        play_once(c.get("GetUp").empty() ? c.get("GetWeapon") : c.get("GetUp"));
+        lowered_ = false, queued_.clear();
+        if (!play(c, "GetUp")) play(c, "GetWeapon");
     }
     if (!requested_.empty()) {
-        const std::string r = requested_;
-        requested_.clear();
+        const std::string r = std::exchange(requested_, {});
         if (r == "GetDown") {
-            play_once(c.get("GetDown"), true);   // the switch clip backwards: the weapon goes down
-            lowered_ = true;
+            lowered_ = play(c, "GetDown");   // then Hidden: held down
         } else if (r == "ThrowGrenade") {   // the throw, then back to the weapon
             lowered_ = false;
-            play_once(c.get("ThrowGrenade"));
-            queued_ = c.get("ThrowGrenade_End");
-        } else if (r == "Idle" || r == "UnAim") {
-            lowered_ = false, once_left_ = 0;
-            if (r == "UnAim") play_once(c.get("UnAim"));
+            if (play(c, "ThrowGrenade")) queued_ = "ThrowGrenade_End";
+        } else if (r == "Idle") {
+            lowered_ = false, left_ = 0;
         } else {
             lowered_ = false;
-            play_once(c.get(r));
+            if (!play(c, r) && r == "UnAim") left_ = 0;
         }
     }
-    if (once_left_ <= 0 && !queued_.empty()) play_once(queued_), queued_.clear();
+    if (in.reloading && !was_reloading_) play(c, "Reload");
+    was_reloading_ = in.reloading;
+    cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
+    const bool busy = left_ > 0 && !soft(cur);
     if (!movement_.empty()) {
-        if (once_left_ <= 0 && !lowered_ && !in.reloading) play_once(c.get(movement_));
+        if (!busy && !lowered_ && !in.reloading) play(c, movement_);
         movement_.clear();
     }
-    if (in.reloading && !was_reloading_) play_once(c.get("Reload"));
-    was_reloading_ = in.reloading;
-    if (once_left_ <= 0 && !lowered_) {
-        std::string want;
-        if (in.aiming) want = in.firing ? c.get("AimAttack") : in.moving ? c.get("AimWalk") : c.get("AimIdle");
-        else if (in.firing) want = c.get("Attack_Loop");
-        else if (in.moving) want = in.running && !c.get("RushWalk").empty() ? c.get("RushWalk") : c.get("Walk");
-        if (want.empty()) want = c.get("Idle");
-        if (!want.empty() && want != playing_) {
-            scene_.play_clip(object_, want, true);
-            playing_ = want;
+
+    // The looping state the input asks for, and the move into it from the last one.
+    std::string base;
+    if (in.aiming) base = in.firing ? "AimAttack" : in.moving ? "AimWalk" : "AimIdle";
+    else if (in.firing) base = "Attack_Loop";
+    else if (in.moving && in.running && c.has("RushWalk")) base = "RushWalk";
+    else base = in.moving ? "Walk" : "Idle";
+    if (!c.has(base)) base = in.aiming && c.has("AimIdle") ? "AimIdle" : "Idle";
+    if (base != base_ && !base_.empty() && !lowered_ && !busy) {
+        const bool was_aim = base_.rfind("Aim", 0) == 0, aim = base.rfind("Aim", 0) == 0;
+        std::string move;
+        if (aim && !was_aim) move = "Aim";
+        else if (was_aim && !aim) move = base == "RushWalk" ? "AimToRush" : "UnAim";
+        else if (base == "Attack_Loop") move = "Attack";
+        else if (base == "RushWalk") move = "StartRush";
+        else if (base_ == "RushWalk") move = "EndRush";
+        else if (base_ == "Attack_Loop") move = "Attack_End";
+        if (!move.empty()) play(c, move);
+    }
+    base_ = base;
+    cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
+    if (lowered_ || (cur && !cur->loop && left_ > 0)) {
+        place(object_, eye, yaw_deg, pitch_deg);
+        return;
+    }
+    // A state that ended: a queued one, its next (a chain such as Attack -> Attack_Loop,
+    // when that is still wanted), or the input's.
+    if (!queued_.empty()) {
+        const std::string q = std::exchange(queued_, {});
+        if (play(c, q)) {
+            place(object_, eye, yaw_deg, pitch_deg);
+            return;
         }
     }
+    if (cur && !cur->loop && cur->next > 1 && size_t(cur->next) < c.states.size()) {
+        const State& n = c.states[size_t(cur->next)];
+        if (n.clips.empty()) {   // Hidden
+            lowered_ = true;
+            place(object_, eye, yaw_deg, pitch_deg);
+            return;
+        }
+        if ((!n.loop || n.name == base) && play(c, n.name)) {
+            place(object_, eye, yaw_deg, pitch_deg);
+            return;
+        }
+    }
+    if (!cur || cur->name != base || (!cur->loop && left_ <= 0)) play(c, base);
     place(object_, eye, yaw_deg, pitch_deg);
 }
 
 void ViewModel::update_camera_layer(float dt, const Clips& c) {
     if (!camera_request_.empty()) {
-        auto it = c.variants.find(camera_request_);
+        const State* s = c.find(camera_request_);
         camera_request_.clear();
-        if (it != c.variants.end() && !it->second.empty()) camera_clip_ = it->second[size_t(std::rand()) % it->second.size()], camera_ms_ = 0;
+        if (s && !s->clips.empty()) camera_clip_ = s->clips[size_t(std::rand()) % s->clips.size()].first, camera_ms_ = 0;
     }
     camera_offset_ = glm::mat4(1);
     if (camera_clip_.empty()) return;
