@@ -32,6 +32,7 @@ enum class Semantic : uint8_t {
     LightPositionObject, LightPositionWorld, LightAttenuation, LightDiffuse, LightAmbient, LightSpecular,
     IrradianceA, IrradianceB, IrradianceC, IrradiancePeakDirection, IrradiancePeakIntensity,   // `light`: channel
     Zero,
+    ViewportSizeInverse,   // 1 / the target's size in pixels (NV_Coronas' screen-space dust)
     // Material parameters the game overwrites per object (CNovaSceneManager::UpdateLights);
     // without lighting data the material's own value stays.
     SpecDirection, SpecColor, RimFactor, L0PositionObject, L0PositionWorld, L0Color, L0Attenuation, L0Scale,

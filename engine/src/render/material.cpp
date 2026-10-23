@@ -31,7 +31,7 @@ bool semantic_for(const std::string& uniform, Semantic& semantic, int& light) {
         {"wcameradir", S::CameraDirectionWorld},
         {"time", S::Time},
         {"fogcolor", S::FogColor}, {"fogstartend", S::FogStartEnd}, {"fogdensity", S::FogDensity},
-        {"sceneambientlight", S::SceneAmbient}, {"texlodbias", S::Zero},
+        {"sceneambientlight", S::SceneAmbient}, {"texlodbias", S::Zero}, {"viewportsizeinv", S::ViewportSizeInverse},
         {"ird_cc", S::IrradianceC}, {"ird_specdir", S::IrradiancePeakDirection},
         {"ird_specintensity", S::IrradiancePeakIntensity},
     };

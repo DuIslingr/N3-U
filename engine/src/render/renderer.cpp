@@ -76,6 +76,7 @@ struct DrawContext {
     glm::mat4 view_proj{1};
     const ObjectLighting* lighting = nullptr;
     glm::vec3 center{0};                        // draw bounds centre (world)
+    glm::vec2 viewport{1};                      // the target's size, pixels
     int lights[2] = {-2, -2};                   // Light0/Light1: indices into frame.lights, -1 none, -2 not chosen yet
 
     // The game's driver lights for an object: the nearest non-fake lights in range.
@@ -139,6 +140,7 @@ struct DrawContext {
             case Semantic::CameraPositionWorld: vec(glm::vec4(frame.camera, 1)); break;
             case Semantic::CameraDirectionWorld: vec(-glm::inverse(frame.view)[2]); break;
             case Semantic::Time: vec(glm::vec4(frame.time, 0, 0, 0)); break;
+            case Semantic::ViewportSizeInverse: vec(glm::vec4(1.0f / glm::max(viewport, glm::vec2(1)), 0, 0)); break;
             case Semantic::FogColor: vec(frame.fog_color); break;
             case Semantic::FogStartEnd: {
                 const float range = std::max(frame.fog_end - frame.fog_start, 1e-3f);
@@ -729,6 +731,9 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     std::sort(blended.begin(), blended.end(), [&](const DrawItem* a, const DrawItem* b) {
         return glm::distance(a->center, frame.camera) > glm::distance(b->center, frame.camera);
     });
+    // Glows drawn without a depth test (the "...NoZ" techniques: coronas, flares) go over the
+    // other translucent surfaces rather than under whatever is sorted after them.
+    std::stable_partition(blended.begin(), blended.end(), [](const DrawItem* it) { return !it->material || it->material->state.depth_test; });
 
     const GpuModel* bound = nullptr;
     SDL_GPUGraphicsPipeline* bound_pipe = nullptr;
@@ -748,7 +753,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
             SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
             bound = it.model;
         }
-        DrawContext ctx{frame, it.world, view_proj, it.lighting, it.center};
+        DrawContext ctx{frame, it.world, view_proj, it.lighting, it.center, glm::vec2(float(w), float(h))};
         vertex_block = m.vertex_uniforms;
         for (const SemanticSlot& s : m.vertex_semantics) ctx.write(vertex_block, s);
         fragment_block = m.fragment_uniforms;
