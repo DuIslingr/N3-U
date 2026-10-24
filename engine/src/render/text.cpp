@@ -61,6 +61,15 @@ glm::vec2 TextRenderer::measure(const std::string& text, int wrap) {
     return glm::vec2(float(l.width), float(l.height));
 }
 
+void TextRenderer::fill(ParticleList& out, glm::vec4 box, const glm::vec4& top, const glm::vec4& bottom) {
+    const uint32_t t = pack_rgba(top), b = pack_rgba(bottom);
+    const ParticleVertex v[4] = {{{box.x, box.y, 0}, {0, 0}, t}, {{box.z, box.y, 0}, {1, 0}, t},
+                                 {{box.z, box.w, 0}, {1, 1}, b}, {{box.x, box.w, 0}, {0, 1}, b}};
+    const uint32_t first = uint32_t(out.vertices.size());
+    out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+    out.batches.push_back({renderer_.white(), false, first, 6});
+}
+
 float TextRenderer::draw(ParticleList& out, const std::string& text, glm::vec2 at, int wrap, const glm::vec4& color,
                          glm::vec2 anchor) {
     if (!font_ || text.empty()) return 0;

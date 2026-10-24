@@ -32,6 +32,8 @@ public:
                glm::vec2 anchor = {0.5f, 0.0f});
     // Size of `text` (pixels) as draw() would lay it out.
     glm::vec2 measure(const std::string& text, int wrap);
+    // A plain box (x0, y0, x1, y1 pixels) shaded from `top` to `bottom`, for a backing under text.
+    void fill(ParticleList& out, glm::vec4 box, const glm::vec4& top, const glm::vec4& bottom);
 
 private:
     struct Line {

@@ -98,9 +98,21 @@ void LoadingScreen::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRend
             const float k = std::max(W / size.x, H / size.y);
             hud.draw_frame(out, *pic, 0, glm::vec2(W, H) * 0.5f - (glm::vec2(b.x, b.y) + size * 0.5f) * k, k, glm::vec4(1));
         }
-        // The title at the top; the story under the picture's middle, from the bottom up.
-        title.draw(out, say(level_.title), {W * 0.5f, H * 0.03f}, int(W), glm::vec4(1), {0.5f, 0.0f});
-        text.draw(out, say(level_.text), {W * 0.5f, H * 0.86f}, int(W * 0.94f), glm::vec4(1), {0.5f, 1.0f});
+        // The title at the top; the story under the picture's middle, from the bottom up; each on
+        // a dark band fading out at its edges, so they read over a bright picture.
+        auto band = [&](float y0, float y1, float alpha) {
+            const float fade = 24 * s;
+            const glm::vec4 clear(0, 0, 0, 0), dark(0, 0, 0, alpha);
+            text.fill(out, {0, y0 - fade, W, y0}, clear, dark);
+            text.fill(out, {0, y0, W, y1}, dark, dark);
+            text.fill(out, {0, y1, W, y1 + fade}, dark, clear);
+        };
+        const std::string heading = say(level_.title), story = say(level_.text);
+        const float story_bottom = H * 0.86f, story_h = text.measure(story, int(W * 0.9f)).y;
+        if (!heading.empty()) band(H * 0.03f - 6 * s, H * 0.03f + title.measure(heading, int(W)).y + 6 * s, 0.55f);
+        if (!story.empty()) band(story_bottom - story_h - 10 * s, story_bottom + 10 * s, 0.6f);
+        title.draw(out, heading, {W * 0.5f, H * 0.03f}, int(W), glm::vec4(1), {0.5f, 0.0f});
+        text.draw(out, story, {W * 0.5f, story_bottom}, int(W * 0.9f), glm::vec4(1), {0.5f, 1.0f});
     }
     if (!loaded || loaded_for_ < 0.25f) {
         // "LOADING" with dots counting up, and the rings beside it in the corner.
@@ -114,6 +126,9 @@ void LoadingScreen::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRend
         text.draw(out, label, {ring.x, ring.y}, int(W), glm::vec4(1), {0.5f, 0.5f});
     } else {
         const std::string prompt = touch ? say("FPS_LOADING_TOUCH_SCREEN") : "Press any key or click to continue";
+        const float ph = text.measure(prompt, int(W)).y;
+        text.fill(out, {0, H - 7.5f * s - ph - 16 * s, W, H - 7.5f * s - ph}, glm::vec4(0), glm::vec4(0, 0, 0, 0.55f));
+        text.fill(out, {0, H - 7.5f * s - ph, W, H}, glm::vec4(0, 0, 0, 0.55f), glm::vec4(0, 0, 0, 0.55f));
         text.draw(out, prompt, {W * 0.5f, H - 7.5f * s}, int(W), glm::vec4(1, 1, 1, 0.6f + 0.4f * std::abs(std::sin(loaded_for_ * 3))),
                   {0.5f, 1.0f});
     }
