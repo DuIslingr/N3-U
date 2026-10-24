@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 #include "game/combat.h"
 #include "game/level_logic.h"
@@ -178,6 +179,19 @@ bool Combat::update_root_motion(Target& t) {
     if (on && !scene_.clip_finished(t.object)) return true;
     const bool rolled = t.root_moves;
     t.root_clip.clear();
+    if (const int into = std::exchange(t.root_cover, -1); into >= 0 && t.cover == into) {   // in it, crouched
+        if (logic_.trace) {
+            char line[128];
+            std::snprintf(line, sizeof line, "%d rolled into cover %d, %.1f m from its point", t.id, into,
+                          glm::distance(glm::vec2(t.pos), glm::vec2(covers_[size_t(into)].pos)));
+            log(line);
+        }
+        t.cover_phase = Target::CoverPhase::Hidden;
+        t.cover_timer = std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
+        set_crouched(t, true);
+        play(t, logic_.state_clip(scene_.level().objects[t.object].type, t.cover_left ? "IdleCoverLeft" : "IdleCoverRight"), true);
+        return false;
+    }
     if (rolled) {
         if (logic_.trace) {
             char line[96];
@@ -194,10 +208,41 @@ bool Combat::update_root_motion(Target& t) {
     return false;
 }
 
+bool Combat::roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye) {
+    const CoverPoint& c = covers_[size_t(cover)];
+    if (!c.low || t.crouched) return false;
+    // The side: the clip that travels towards it (RollLowCoverLeft goes to the actor's
+    // right and ends in the left cover posture).
+    const glm::vec2 to(c.pos - t.pos);
+    const float y = glm::radians(t.yaw);
+    const bool to_right = glm::dot(to, glm::vec2(std::cos(y), std::sin(y))) > 0;
+    const std::string state = to_right ? "RollLowCoverLeft" : "RollLowCoverRight";
+    const std::string clip = logic_.state_clip(scene_.level().objects[t.object].type, state);
+    float length = 0;
+    glm::mat4 a, b;
+    if (clip.empty() || !scene_.sample_node(t.object, "Bip01", clip, 0, a, &length) || !scene_.sample_node(t.object, "Bip01", clip, length, b))
+        return false;
+    const glm::vec2 travel = glm::vec2(b[3]) - glm::vec2(a[3]);
+    const float l = glm::length(travel), d = glm::length(to);
+    // About a roll away (0.8 to 1.2 of it), a clear way there, still hidden from the enemy.
+    if (l < 1 || d < 0.8f * l || d > 1.2f * l) return false;
+    if (!line_clear(t.pos + glm::vec3(0, 0, 0.5f), c.pos + glm::vec3(0, 0, 0.5f)) || !cover_protects(c, enemy_eye)) return false;
+    // Turned so that the travel lands on the cover.
+    t.yaw = glm::degrees(std::atan2(to.y, to.x) - std::atan2(travel.y, travel.x));
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    t.cover_left = to_right;
+    t.cover_phase = Target::CoverPhase::Hidden;
+    start_root_motion(t, clip);
+    t.root_cover = cover;
+    if (logic_.trace) log(std::to_string(t.id) + " rolls into cover " + std::to_string(cover));
+    return true;
+}
+
 void Combat::leave_cover(Target& t) {
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
     t.cover_next.clear();
+    t.root_cover = -1;
     set_crouched(t, false);
     if (t.token) t.token = false;
 }
@@ -230,6 +275,7 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
         }
         t.cover_phase = Target::CoverPhase::Moving;
         t.state = Target::State::Chase;
+        if (roll_into_cover(t, c, enemy_eye)) return true;
     }
     const CoverPoint& c = covers_[size_t(t.cover)];
     const Target::Band* b = band(t);
