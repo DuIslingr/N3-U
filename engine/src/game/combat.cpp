@@ -901,6 +901,7 @@ void Combat::start(bool keep_stats) {
         if (targets_.back().hostile) ++stats_.hostile;
     }
     load_covers();
+    load_jump_points();
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, nav mesh " +
         std::to_string(nav_.triangle_count()) + " triangles");
@@ -1002,8 +1003,10 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if (!fires) t.attack_choices.clear();
     }
     t.cloak = Target::Cloak::Visible, t.script_cloak = false, t.recent_damage.clear();
-    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 32)   // super speed
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 53) {   // super speed, jumping
         t.dash_side = num(*npc, 30, 7), t.dash_min = num(*npc, 31, 5), t.dash_speed = std::max(num(*npc, 32, 12), 1.0f);
+        t.jump_reach = num(*npc, 52, 8), t.jump_walk = num(*npc, 53, 2);
+    }
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 69 && (*npc)[62].type == Value::String && !(*npc)[62].s.empty()) {
         t.cloak_model = (*npc)[62].s, t.cloak_material = (*npc)[63].s;
         t.cloak_fade = std::max(num(*npc, 64, 800) / 1000.0f, 0.05f);
@@ -1392,16 +1395,31 @@ void Combat::run_goal(Target& t, float dt) {
             done = t.path_next >= t.path.size() || g.timer > 40;
             break;
         case NpcGoal::Kind::Jump: {
-            if (first) g.length = std::clamp(glm::distance(t.pos, g.pos) / 8.0f, 0.4f, 1.2f), t.leap_from = t.pos;
-            const float k = std::min(g.timer / g.length, 1.0f);
-            t.pos = glm::mix(t.leap_from, g.pos, k) + glm::vec3(0, 0, 4 * k * (1 - k) * 1.5f);
+            // With the JumpUpDown states (the Alien Commander's): crouching, in the air, landing.
+            const int type = scene_.level().objects[t.object].type;
+            const std::string start = logic_.state_clip(type, "JumpUpDownStart"), air = logic_.state_clip(type, "JumpUpDownLoop"),
+                              land = logic_.state_clip(type, "JumpUpDownStop");
+            const bool staged = !start.empty() && !air.empty() && !land.empty();
+            const float before = staged ? scene_.clip_length(t.object, start) : 0.0f, after = staged ? scene_.clip_length(t.object, land) : 0.0f;
+            if (first) {
+                g.length = std::clamp(glm::distance(t.pos, g.pos) / 8.0f, 0.4f, 1.2f), t.leap_from = t.pos;
+                if (staged) play(t, start, false);
+            }
             face(t, g.pos, dt);
-            play(t, t.clip_jump.empty() ? t.clip_run : t.clip_jump, true);
-            if (k >= 1) {
+            if (g.timer < before) break;   // crouching
+            const float k = std::min((g.timer - before) / g.length, 1.0f);
+            if (k < 1) {
+                t.pos = glm::mix(t.leap_from, g.pos, k) + glm::vec3(0, 0, 4 * k * (1 - k) * 1.5f);
+                play(t, staged ? air : t.clip_jump.empty() ? t.clip_run : t.clip_jump, true);
+                break;
+            }
+            if (t.pos != g.pos) {   // down
+                t.pos = g.pos;
                 glm::vec3 on;
                 t.tri = nav_.nearest(t.pos + glm::vec3(0, 0, 0.3f), 2.0f, on);
-                done = true;
+                if (staged) play(t, land, false);
             }
+            done = g.timer >= before + g.length + after;
             break;
         }
         case NpcGoal::Kind::Turn:
@@ -1540,6 +1558,7 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
     t.dash_wait = std::max(t.dash_wait - dt, 0.0f);
+    t.jump_wait -= dt;
     if (t.dashing) {
         update_dash(t, dt);
         if (t.dashing || t.goals.empty()) return;
@@ -1612,6 +1631,13 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
 
+    // CAIComponent::HideFromThreats: a jumper not busy attacking or reloading may jump.
+    const bool between_attacks = t.attack_choices.empty() ? t.shots_left <= 0 : t.attack_state.empty();
+    if ((t.state == S::Chase || (t.state == S::Attack && between_attacks)) && t.reload_left <= 0 && t.cover < 0 &&
+        try_jump(t, target, chest)) {
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
     // CAIComponent::CanAttack: the enemy out of sight, a dasher dashes aside to where it is in
     // sight (TrySSRandom), out of any cover.
     if (t.state != S::Hurt && t.state != S::Melee && !sees && t.lost_sight > 0.5f && try_dash_aside(t, target, chest)) {

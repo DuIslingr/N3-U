@@ -53,6 +53,9 @@ void Combat::read_ai(Target& t, const Value& ai) {
     // hidden in low cover; [51]-[65] the aggressiveness factors; [66] the bands.
     t.use_covers = ai.size() > 6 && ai[6].i != 0;
     t.can_dash = ai.size() > 9 && ai[9].i != 0;
+    t.can_jump = ai.size() > 11 && ai[11].i != 0;
+    t.jump_wait_min = field(ai, 39, 5000) / 1000.0f, t.jump_wait_max = field(ai, 40, 7000) / 1000.0f;
+    t.jump_wait = t.jump_wait_min;
     t.dash_wait_min = field(ai, 31, 5000) / 1000.0f, t.dash_wait_max = field(ai, 32, 10000) / 1000.0f;
     t.attack_min = field(ai, 21, 1000) / 1000.0f, t.attack_max = field(ai, 22, 3000) / 1000.0f;
     t.idle_in_cover_min = field(ai, 25, 1000) / 1000.0f, t.idle_in_cover_max = field(ai, 26, 2000) / 1000.0f;
@@ -70,6 +73,7 @@ void Combat::read_ai(Target& t, const Value& ai) {
             band.fire = field(b, 13, 100), band.lean = field(b, 14, 0), band.blind = field(b, 15, 0);
             band.peek = field(b, 16, 0), band.roll = field(b, 17, 0), band.grenade = field(b, 18, 0);
             band.crouch_min = field(b, 6, 0) / 1000.0f, band.crouch_max = field(b, 7, 0) / 1000.0f;
+            band.jump = field(b, 11, 0);
             t.bands.push_back(band);
         }
 }
@@ -305,6 +309,56 @@ void Combat::update_dash(Target& t, float dt) {
     const std::string clip = logic_.state_clip(scene_.level().objects[t.object].type, "SuperSpeedStop");
     play(t, clip.empty() ? t.clip_alert : clip, false);
     scene_.set_object_pose(t.object, t.pos, t.yaw);
+}
+
+void Combat::load_jump_points() {
+    jump_points_.clear();
+    std::unordered_map<int, size_t> by_id;
+    std::vector<int> next;
+    for (const LevelObject& o : scene_.level().objects) {
+        if (o.kind != "waypoint" || o.fields.size() < 10 || o.fields[9].i == 0) continue;
+        by_id[o.fields[0].i] = jump_points_.size();
+        jump_points_.push_back({o.fields[0].i, -1, {o.fields[2].as_float(), o.fields[3].as_float(), o.fields[4].as_float()}});
+        next.push_back(o.fields[5].i);
+    }
+    for (size_t i = 0; i < jump_points_.size(); ++i)
+        if (auto it = by_id.find(next[i]); it != by_id.end()) jump_points_[i].landing = int(it->second);
+}
+
+bool Combat::try_jump(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest) {
+    // Every few seconds, by the band's chance: the nearest take-off point within reach whose
+    // landing is in the band's range of the enemy, safe, and shows it; walked to if need be,
+    // then the leap (StartJumpToWaypoint).
+    if (!t.can_jump || jump_points_.empty() || t.jump_wait > 0) return false;
+    t.jump_wait = std::uniform_real_distribution<float>(t.jump_wait_min, std::max(t.jump_wait_max, t.jump_wait_min))(rng_);
+    const Target::Band* b = band(t);
+    if (!b || std::uniform_real_distribution<float>(0.0f, 100.0f)(rng_) >= b->jump) return false;
+    const JumpPoint* from = nullptr;
+    const JumpPoint* to = nullptr;
+    float best = t.jump_reach;
+    for (const JumpPoint& p : jump_points_) {
+        if (p.landing < 0) continue;
+        const float d = glm::distance(t.pos, p.pos);
+        if (d > best || std::abs(p.pos.z - t.pos.z) > 2.0f || !line_clear(t.pos + glm::vec3(0, 0, 0.5f), p.pos + glm::vec3(0, 0, 0.5f))) continue;
+        const JumpPoint& l = jump_points_[size_t(p.landing)];
+        const float r = glm::distance(l.pos, enemy_feet);
+        if (r < b->range_min || r > b->range_max) continue;
+        bool safe = true;
+        for (const Grenade& g : live_grenades_) safe = safe && !(g.live && glm::distance(g.pos, l.pos) < 5.0f);
+        if (!safe || !line_clear(l.pos + glm::vec3(0, 0, t.height * 0.85f), enemy_chest)) continue;
+        best = d, from = &p, to = &l;
+    }
+    if (!from) return false;
+    if (best > t.jump_walk) {
+        NpcGoal walk;
+        walk.kind = NpcGoal::Kind::Move, walk.pos = from->pos, walk.id = -1;
+        t.goals.push_back(walk);
+    }
+    NpcGoal leap;
+    leap.kind = NpcGoal::Kind::Jump, leap.pos = to->pos, leap.id = -1;
+    t.goals.push_back(leap);
+    if (logic_.trace) log(std::to_string(t.id) + " jumps from jump point " + std::to_string(from->id) + " to " + std::to_string(to->id));
+    return true;
 }
 
 void Combat::leave_cover(Target& t) {

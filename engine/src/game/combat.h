@@ -452,6 +452,7 @@ private:
         // blind fire, peek, roll out, throw a grenade.
         float fire = 100, lean = 0, blind = 0, peek = 0, roll = 0, grenade = 0;
         float crouch_min = 0, crouch_max = 0;   // seconds crouched in the open (after a roll out)
+        float jump = 0;                         // [11]: % to jump to a jump point when it may
         };
         std::vector<Band> bands;
         // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
@@ -470,6 +471,11 @@ private:
         float dash_side = 7, dash_min = 5, dash_speed = 12, dash_wait = 0, dash_wait_min = 5, dash_wait_max = 10;
         float dash_blend = 0, dash_blend_ms = 0;   // the blur material's BlendFactor (CGameObject::MatsUpdate)
         glm::vec3 dash_from{0}, dash_to{0};
+        // Jumping between jump points (CAIComponent::HideFromThreats, ChooseJumpPointInRange):
+        // AI [11] can; a chance every AI [39]-[40] ms (timer 4); the take-off point at most
+        // NPC [52] m of path away, walked to beyond NPC [53] m.
+        bool can_jump = false;
+        float jump_wait = 0, jump_wait_min = 5, jump_wait_max = 7, jump_reach = 8, jump_walk = 2;
         int cover = -1;
         enum class CoverPhase { Moving, Hidden, Acting } cover_phase = CoverPhase::Moving;
         // What it does out of hiding (UpdateLowCover's fuzzy actions), on which side of the
@@ -633,6 +639,15 @@ private:
     bool try_dash(Target& t, const glm::vec3& to, bool forced, const glm::vec3* enemy_chest = nullptr);
     bool try_dash_aside(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest);   // TrySSRandom
     void update_dash(Target& t, float dt);
+    // Waypoints flagged as jump points ([9], CWayPointObject::IsJumpPoint) and where each
+    // lands (its next waypoint).
+    struct JumpPoint {
+        int id = 0, landing = -1;   // landing: index into jump_points_
+        glm::vec3 pos{0};
+    };
+    std::vector<JumpPoint> jump_points_;
+    void load_jump_points();
+    bool try_jump(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest);
     // EnterLowCoverRoll: into a low cover about a roll away; false when it can't.
     bool roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye);
     void set_crouched(Target& t, bool on);
