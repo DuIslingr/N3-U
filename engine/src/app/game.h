@@ -92,6 +92,10 @@ private:
     void run_window();
     void handle_event(const SDL_Event& e);
     glm::vec2 to_pixels(float x, float y, bool normalized) const;
+    // The use button (controls.bsprite 35, CLevelInterfaceNormal): its box on a w x h screen
+    // (x0, y0, x1, y1), centred across, its top 100 (640-high) pixels below the middle.
+    glm::vec4 use_button(int w, int h);
+    float use_pressed_ = 0;   // seconds the button shows pressed (36)
     void apply_display();
     void set_menu(bool on);
     void menu_action(PauseMenu::Action a);

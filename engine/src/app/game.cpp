@@ -197,6 +197,15 @@ std::string Game::next_level(const std::string& level) const {
 }
 
 // A screen-filling quad in the overlay (fades).
+glm::vec4 Game::use_button(int w, int h) {
+    hud.set_screen(w, h);
+    const Sprite* cs = hud.sprite("controls.bsprite");
+    const glm::vec4 b = (cs ? Hud::frame_bounds(*cs, 35) : glm::vec4(0, 0, 64, 64)) * hud.sprite_scale("controls.bsprite");
+    const glm::vec2 size(b.z - b.x, b.w - b.y);
+    const float top = float(h) * 0.5f + 100.0f * float(h) / 640.0f;
+    return {(float(w) - size.x) * 0.5f, top, (float(w) + size.x) * 0.5f, top + size.y};
+}
+
 void Game::fullscreen(Overlay& o, int w, int h, const glm::vec4& c) {
     const uint32_t rgba = pack_rgba(c);
     const ColorVertex v[4] = {{{0, 0, 0}, rgba}, {{float(w), 0, 0}, rgba}, {{float(w), float(h), 0}, rgba}, {{0, float(h), 0}, rgba}};
@@ -379,6 +388,14 @@ void Game::draw_text(FrameParams& f, int w, int h) {
             }
         }
     }
+    if (opt.scripts && logic.hud_enabled && !menu.open && (logic.use_available() || use_pressed_ > 0))
+        if (const Sprite* cs = hud.sprite("controls.bsprite")) {
+            const glm::vec4 r = use_button(w, h), b = Hud::frame_bounds(*cs, 35);
+            const float scale = (r.z - r.x) / std::max(b.z - b.x, 1.0f);
+            hud.draw_frame(hud_sprites, *cs, use_pressed_ > 0 ? 36 : 35, glm::vec2(r.x, r.y) - glm::vec2(b.x, b.y) * scale, scale, glm::vec4(1));
+            if (logic.input != InputScheme::Touch)
+                objective_text.draw(hud_sprites, "[E]", {(r.x + r.z) * 0.5f, r.w + 14 * scale}, w, glm::vec4(1));
+        }
     if (opt.scripts && !logic.player_locked() && logic.hud_enabled)
         for (const LevelLogic::ObjectiveMarker& m : logic.objective_markers) {
             const LevelLogic::Object* o = logic.object(m.id);

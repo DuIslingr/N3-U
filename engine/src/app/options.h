@@ -80,6 +80,7 @@ struct Options {
     bool scripts = true, trace_scripts = false;
     float run = 0;            // headless: seconds of level logic before the screenshot
     float every = 0;          // headless: also save a frame every this many seconds of the run
+    float use_at = -1;        // headless: press "use" this far into the run
     float respawn_at = -1;    // headless: put the player at --spawn-at again this far into the run (after an intro)
     std::string spawn_at;
     std::vector<std::string> exec;

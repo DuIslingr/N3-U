@@ -31,6 +31,8 @@ public:
     // SetCrtWeaponState: play a weapon state once (GetDown lowers the weapon until GetUp,
     // Idle and UnAim go back to normal).
     void set_state(const std::string& state);
+    // The weapon state playing now (CWeaponComponent::GetWeaponState), e.g. Interact.
+    const std::string& state() const { return playing_; }
     // StartJump / StartLanding: a state played once only over the plain idle, walk or aim
     // clips (not over a reload, a switch or a throw).
     void movement_state(const std::string& state) { movement_ = state; }
@@ -118,6 +120,7 @@ private:
     std::unordered_map<std::string, Clips> clips_;
     std::string weapon_;
     int current_ = -1;             // the state playing
+    std::string playing_;          // its name
     float left_ = 0;               // seconds left of a state that does not loop
     std::string base_;             // the looping state the input asks for (Idle, AimWalk, RushWalk, ...)
     bool visible_ = false;

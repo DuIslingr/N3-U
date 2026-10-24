@@ -53,6 +53,7 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
             if (clip.size() < 3 || clip[0].type != Value::String) continue;
             if (state.clip.empty()) state.clip = clip[0].s;
             state.clips.push_back(clip[0].s);
+            state.speeds.push_back(clip[1].as_float());
             std::vector<Event> list;
             for (size_t gi = 2; gi < clip.size(); ++gi)
                 for (const Value& group : clip[gi].list) {

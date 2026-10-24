@@ -252,9 +252,19 @@ void Game::handle_event(const SDL_Event& e) {
     }
     if (touch_mode) {
         constexpr int64_t kMouseFinger = -1;
+        // A tap on the use button uses (CLevelInterfaceNormal's interact button).
+        auto use_tap = [&](glm::vec2 at) {
+            int pw = 1, ph = 1;
+            SDL_GetWindowSizeInPixels(window, &pw, &ph);
+            const glm::vec4 r = use_button(pw, ph);
+            if (!opt.scripts || !logic.use_available() || at.x < r.x || at.x > r.z || at.y < r.y || at.y > r.w) return false;
+            use_pressed_ = 0.15f;
+            logic.use();
+            return true;
+        };
         switch (e.type) {
             case SDL_EVENT_FINGER_DOWN:
-                touch.down(int64_t(e.tfinger.fingerID), to_pixels(e.tfinger.x, e.tfinger.y, true));
+                if (const glm::vec2 at = to_pixels(e.tfinger.x, e.tfinger.y, true); !use_tap(at)) touch.down(int64_t(e.tfinger.fingerID), at);
                 break;
             case SDL_EVENT_FINGER_MOTION:
                 touch.move(int64_t(e.tfinger.fingerID), to_pixels(e.tfinger.x, e.tfinger.y, true));
@@ -266,7 +276,7 @@ void Game::handle_event(const SDL_Event& e) {
             // Mouse events made from touches are already handled above.
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 if (e.button.which != SDL_TOUCH_MOUSEID && e.button.button == SDL_BUTTON_LEFT)
-                    touch.down(kMouseFinger, to_pixels(e.button.x, e.button.y, false));
+                    if (const glm::vec2 at = to_pixels(e.button.x, e.button.y, false); !use_tap(at)) touch.down(kMouseFinger, at);
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 if (e.motion.which != SDL_TOUCH_MOUSEID) touch.move(kMouseFinger, to_pixels(e.motion.x, e.motion.y, false));
@@ -286,7 +296,10 @@ void Game::handle_event(const SDL_Event& e) {
         flying = !flying;
         if (!flying) player.spawn(cam.position - glm::vec3(0, 0, player.radius.z + player.eye_height), cam.yaw);
     }
-    if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts && !logic.limited_tap()) logic.use();
+    if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_E && !e.key.repeat && opt.scripts && !logic.limited_tap()) {
+        if (logic.use_available()) use_pressed_ = 0.15f;
+        logic.use();
+    }
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && !e.key.repeat) scene.zones().enabled = !scene.zones().enabled;
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_R && !e.key.repeat) combat_in.reload = true;
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_G && !e.key.repeat && logic.controls.items) combat_in.grenade = true;
@@ -316,7 +329,7 @@ void Game::handle_event(const SDL_Event& e) {
     }
     if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
         combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
-    if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || !logic.controls.rotate))) {
+    if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || logic.interacting() || !logic.controls.rotate))) {
         // Slower while aiming (zoomed in); the Sensitivity and Invert Y-Axis settings.
         const float k = 0.12f * cam.fov / kFov * settings.sensitivity * logic.look_sensitivity;
         cam.yaw -= e.motion.xrel * k;
@@ -437,7 +450,7 @@ void Game::run_window() {
             step_logic(dt);
         } else {
             PlayerInput in;
-            const bool locked = opt.scripts && logic.player_locked();   // cinematics
+            const bool locked = opt.scripts && (logic.player_locked() || logic.interacting());   // cinematics, stepping up to use
             if (!locked) {
                 const LevelLogic::Controls& lc = logic.controls;   // all on without scripts
                 if (lc.move) {   // SetMoveSensitivity scales walking
@@ -521,7 +534,8 @@ void Game::run_window() {
         if (opt.scripts) {
             ViewModel::Input vm;
             vm.weapon = combat.weapon_type();
-            vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || mech);
+            vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !logic.limited_active() && !logic.weapon_hidden() &&
+                         (!combat.special_weapon() || mech);
             vm.cockpit = mech;
             if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
             arms_distort();
@@ -540,11 +554,13 @@ void Game::run_window() {
             Camera v = cam;
             v.yaw += logic.shake_offset().x, v.pitch += logic.shake_offset().y;
             viewmodel.update(dt, v.position, v.yaw, v.pitch, vm);
+            logic.weapon_playing = viewmodel.state();
         }
         if (logic.audio) logic.audio->set_listener(cam.position, cam.forward(), glm::vec3(0, 0, 1));
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window, &w, &h);
         clock += dt;
+        use_pressed_ = std::max(use_pressed_ - dt, 0.0f);
         Camera view = cam;
         if (opt.scripts) view.yaw += logic.shake_offset().x, view.pitch += logic.shake_offset().y;
         Scene::CameraView cv;

@@ -131,7 +131,7 @@ int api_set_health(lua_State* L) {
     return 0;
 }
 int api_set_state(lua_State* L) {
-    if (auto* o = obj(L, 1)) o->state = str_arg(L, 2);
+    if (auto* o = obj(L, 1)) ctx(L).set_state(*o, str_arg(L, 2));
     return 0;
 }
 int api_get_state(lua_State* L) {
@@ -1044,7 +1044,7 @@ int api_ignore(lua_State*) { return 0; }   // LoadTexture (preloading), SetDSPPr
 // Vehicle_SetMaxSpeed(vehicle, km/h), Vehicle_SetSteeringMax(vehicle, degrees),
 // Vehicle_SetSteeringSpeed(vehicle, degrees/s), Vehicle_SetYawLimits(vehicle, min, max, ms),
 // Vehicle_Activate() (the player gets into the vehicle whose script this is),
-// SwitchToMachineGun(gun), SwitchToPlayerOnFoot().
+// SwitchToMachineGun([gun]), SwitchToPlayerOnFoot().
 int api_vehicle_move_on_path(lua_State* L) {
     ctx(L).vehicle_move_on_path(int(lua_tointeger(L, 1)), int(lua_tointeger(L, 2)));
     return 0;
@@ -1071,8 +1071,14 @@ int api_vehicle_activate(lua_State* L) {
     if (const LevelLogic::Object* o = c.object(owner); o && o->type.find("_Player") != std::string::npos) c.enter_vehicle(owner);
     return 0;
 }
-int api_switch_to_machine_gun(lua_State* L) {
-    ctx(L).man_gun(int(lua_tointeger(L, 1)));
+int api_switch_to_machine_gun(lua_State* L) {   // without a gun: the one whose script this is
+    int gun = int(lua_tointeger(L, 1));
+    if (lua_gettop(L) < 1 || lua_isnil(L, 1)) {
+        lua_getglobal(L, "this");
+        gun = int(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+    }
+    ctx(L).man_gun(gun);
     return 0;
 }
 int api_switch_to_mech(lua_State* L) {   // SwitchToMech(): the mech whose script this is

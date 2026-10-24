@@ -86,7 +86,7 @@ void ViewModel::start() {
     sway_ = sway_start_ = glm::vec2(0), sway_left_ = 0, sway_view_ = false, sway_layer_ = false;
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
-    current_ = -1, left_ = 0;
+    current_ = -1, left_ = 0, playing_.clear();
     distort_ = false;
 }
 
@@ -128,7 +128,7 @@ bool ViewModel::play(const Clips& c, const std::string& state) {
     const float rate = speed == 0 ? 1.0f : std::fabs(speed);   // 0: the postures, posed by the view's turn
     if (!scene_.play_clip(object_, clip, s.loop, speed < 0)) return false;
     scene_.set_clip_speed(object_, rate);
-    current_ = it->second;
+    current_ = it->second, playing_ = state;
     Scene::ClipState cs;
     left_ = s.loop ? 0.0f : (scene_.clip_state(object_, cs) ? cs.length / 1000.0f : 0.5f) / rate;
     return true;

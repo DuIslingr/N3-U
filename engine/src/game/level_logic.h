@@ -47,8 +47,19 @@ public:
     void start(bool keep_player = false) { start(keep_player ? StartMode::Section : StartMode::New); }
     // Advance scripts, triggers and doors by `dt` seconds.
     void update(float dt);
-    // The player pressed "use": interact with the nearest usable object, if any.
+    // The player pressed "use": interact with the object whose use capsule the player is in
+    // (else the nearest usable one in front), if any.
     bool use();
+    // Stepping up to an object to use it (PlayerComponent states 6 and 7): for half a second
+    // the player walks and looks where the object says, then it is used; the input waits.
+    bool interacting() const { return interaction_.object >= 0; }
+    // The interface's use button is up (CLevel::ShowInteractButton): in range of an object
+    // with a use left.
+    bool use_available() const;
+    // CWeaponManager::Hide for a use that puts the weapon away, until the weapon is changed
+    // or something else takes over the view.
+    bool weapon_hidden() const { return weapon_hidden_; }
+    std::string weapon_playing;            // the view model's weapon state (GetWeaponState), from the front end
     // Run a Lua snippet as a script (with the game API), e.g. for testing.
     bool exec(const std::string& code);
 
@@ -214,6 +225,7 @@ public:
         float yaw = 0;               // degrees
         bool enabled = true, visible = true, dead = false;
         bool interactive = false, interact_enabled = true;
+        bool spent = false;          // used, and its use runs once ([2] of CInteractiveComponent unset)
         float health = 100;
         std::string state;
         int trigger = -1, door = -1;
@@ -227,6 +239,10 @@ public:
         std::vector<EffectSlot> effects;
     };
     Object* object(int id);
+    // SetState (CStatesSetComponent::SetBlendedState; an actor: its idle): the state's clip
+    // (one of them, backwards for a negative speed), and once a clip that does not loop has
+    // played, the state that follows it.
+    void set_state(Object& o, const std::string& state);
     // The player as an object for StartEffect(0, n) / StopEffect(0, n): its type's effects.
     Object& player_object() { return player_object_; }
     // Register an object created at runtime (spawned enemies); it starts disabled.
@@ -521,6 +537,33 @@ private:
     std::vector<Cinematic> cinematics_;
     void update_cinematics(float dt);
     const Value* object_component(const Object& o, int comp) const;
+    struct StateChain {
+        int id = 0;
+        uint32_t serial = 0;           // the clip set_state played (another one cuts the chain)
+        std::string next;
+    };
+    std::vector<StateChain> state_chains_;
+    void update_state_chains();
+    // Using objects. A use capsule (CInteractiveComponent::ReInit, from CComponentInteractive_Global
+    // [0]: length, radius, centre, rotation, node) in the world; whether the player is in one
+    // of the object's (`has`: it has any).
+    bool in_use_capsule(const Object& o, bool& has) const;
+    int in_range_ = -1;                // the object the player is in range of (PlayerComponent +0x1a0)
+    void update_use_range();
+    void show_interface(Object& o, bool show);   // CInteractiveComponent::ShowInteractInterface
+    void activate(Object& o);                    // CInteractiveComponent::Activate
+    struct Interaction {
+        int object = -1;
+        bool crystal = false;          // state 6: the crystal held up to it (Crystal_ItemWeapon's Interact)
+        float left = 0;                // seconds of the step up left
+        glm::vec2 from{0}, to{0};      // the player's centre, across
+        bool asked = false;            // the weapon's Interact asked for
+        float wait = 0;
+        std::string weapon, crystal_type;   // the weapon before the crystal, and the crystal's
+    } interaction_;
+    void update_interaction(float dt);
+    bool weapon_hidden_ = false;
+    int hidden_weapon_ = -1;
     glm::vec3 look_at_{0}, handover_{0};
     bool have_handover_ = false;
     float look_left_ = 0, look_total_ = 0;
@@ -629,6 +672,7 @@ private:
     int player_vehicle_ = -1, player_gun_ = -1, player_mech_ = -1;
     // An object's script for an event: Obj<id>_<event>, else its type's Templ<type>_<event>.
     bool start_object_script(const Object& o, const std::string& event);
+    bool has_object_script(const Object& o, const std::string& event) const;
     float gun_yaw_ = 0;   // the mounted gun's own heading
     struct Qte {
         std::string kind;                               // waiting for this button; "" none

@@ -36,6 +36,7 @@ public:
     struct State {
         std::string clip;
         std::vector<std::string> clips;                      // every clip of it (one is picked)
+        std::vector<float> speeds;                           // each clip's speed (negative: backwards)
         std::vector<Event> sounds;
         bool loop = false;
         std::string next;                                    // the state after its clip ("" none)

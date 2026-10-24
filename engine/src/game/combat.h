@@ -239,6 +239,7 @@ public:
     bool unlock_weapon(const std::string& name);
     bool lock_weapon(const std::string& name);
     bool use_weapon(const std::string& name);
+    bool has_weapon(const std::string& name) const;   // unlocked
     bool give_ammo(const std::string& name, int amount);
     // The weapons earlier campaign levels unlocked, when a later level is started directly.
     void campaign_loadout(const std::string& level);

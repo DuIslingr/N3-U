@@ -203,6 +203,9 @@ int Game::run_screenshot() {
             player.yaw += o.look.x;
         }
         if (opt.respawn_at >= 0 && t <= opt.respawn_at && t + kPhysicsStep > opt.respawn_at && !opt.spawn_at.empty()) spawn_at_option();
+        if (opt.scripts && opt.use_at >= 0 && t <= opt.use_at && t + kPhysicsStep > opt.use_at)
+            std::printf("t=%6.2fs use: %s\n", t, logic.use() ? "used" : "nothing in range");
+        if (opt.scripts && logic.interacting()) pin = PlayerInput{};   // stepping up to use
         if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) player.yaw = ly, player.pitch = lp;   // PlayerLookTo
         if (opt.scripts) player.eye_height = logic.in_mech() ? 7.4f : 0.75f;
@@ -270,7 +273,8 @@ int Game::run_screenshot() {
         if (opt.scripts) {
             ViewModel::Input vm;
             vm.weapon = combat.weapon_type();
-            vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || logic.in_mech());
+            vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && !logic.weapon_hidden() &&
+                     (!combat.special_weapon() || logic.in_mech());
             vm.cockpit = logic.in_mech();
             if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
             arms_distort();
@@ -279,6 +283,7 @@ int Game::run_screenshot() {
             vm.firing = combat.since_shot() < 0.2f;
             vm.reloading = combat.reloading();
             viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
+            logic.weapon_playing = viewmodel.state();
             update_frost(kPhysicsStep);
         }
         if (logic.audio && !opt.sound_render.empty()) {
@@ -323,7 +328,8 @@ int Game::run_screenshot() {
     if (opt.scripts) {
         ViewModel::Input vm;
         vm.weapon = combat.weapon_type();
-        vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && (!combat.special_weapon() || logic.in_mech());
+        vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && !logic.weapon_hidden() &&
+                     (!combat.special_weapon() || logic.in_mech());
         vm.cockpit = logic.in_mech();
         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
         arms_distort();

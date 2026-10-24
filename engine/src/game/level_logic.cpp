@@ -20,7 +20,11 @@ namespace {
 
 constexpr int kCompTrigger = 0x06;        // CTriggerComponent
 constexpr int kCompRunScript = 0x1E;      // CRunScriptComponent (OnDead)
-constexpr int kCompInteractive = 0x44;    // CInteractiveComponent
+constexpr int kCompInteractive = 0x44;    // CInteractiveComponent: enabled, script, reusable, minigame, ...
+// CComponentInteractive_Global: [0] use capsules, [5]-[7] the sounds of coming in range, leaving
+// it and using it, [9] the crystal is held up to it, [10] the player steps up to it first,
+// [11] that puts the weapon away, [12] the node the player steps to.
+constexpr int kCompInteractiveGlobal = 0x45;
 constexpr int kCompDoor = 0x61;           // CDoorAIComponent
 constexpr int kCompEffects = 0x92;        // CEffectsComponent: [[effect, node, autostart, ...], ...]
 constexpr int kCompEffectBuiltIn = 0xAE;  // CEffectBuiltInComponent: effect, ?, node, autostart, ?
@@ -31,6 +35,7 @@ constexpr int kCompPath = 0x15;            // CPathComponent: id, ?, first waypo
 constexpr int kCompMotionOnPath = 0x16;    // CMotionOnPathComponent: node, path id, max speed, accel, brake, loop
 
 constexpr float kUseRange = 2.5f;         // metres from the player's eye
+constexpr const char* kCrystalWeapon = "CrystalWeapon";   // Crystal_ItemWeapon (weapon id 0x3b03)
 
 // Every string in a value tree that holds script functions.
 void collect_scripts(const Value& v, std::vector<std::string>& out) {
@@ -279,6 +284,7 @@ void LevelLogic::start(StartMode mode) {
     if (mode == StartMode::New) checkpoint_ = -1, saved_.reset();
     cinematics_.clear(), cinematic_mode = false, look_left_ = 0;
     camera_held_ = restore_view_ = false;
+    state_chains_.clear(), interaction_ = Interaction{}, in_range_ = -1, weapon_hidden_ = false;
     tutorial_ = TutorialStep{};
     if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1, jetpack_sound_ = -1, breath_sound_ = -1;
     music_event_.clear();
@@ -830,6 +836,12 @@ bool LevelLogic::exec(const std::string& code) {
     return true;
 }
 
+bool LevelLogic::has_object_script(const Object& o, const std::string& event) const {
+    if (runtime_.has_function("Obj" + std::to_string(o.id) + "_" + event)) return true;
+    return o.index < scene.level().objects.size() &&
+           runtime_.has_function("Templ" + std::to_string(scene.level().objects[o.index].type) + "_" + event);
+}
+
 bool LevelLogic::start_object_script(const Object& o, const std::string& event) {
     const std::string own = "Obj" + std::to_string(o.id) + "_" + event;
     if (runtime_.has_function(own)) return start_script(own, o.id), true;
@@ -848,22 +860,225 @@ bool LevelLogic::use() {
         if (!o || !start_object_script(*o, "OnExit")) leave_vehicle();
         return true;
     }
-    const glm::vec3 eye = player.eye(), fwd = player.view_forward();
-    Object* best = nullptr;
-    float best_d = kUseRange;
-    for (auto& [id, o] : objects_) {
-        if (!o.interactive || !o.enabled || !o.interact_enabled) continue;
-        const glm::vec3 to = o.position + glm::vec3(0, 0, 1) - eye;
-        const float d = glm::length(to);
-        if (d > best_d || glm::dot(to, fwd) < 0) continue;
-        best = &o;
-        best_d = d;
+    if (interacting()) return true;
+    Object* best = object(in_range_);
+    if (best && (!best->enabled || !best->interact_enabled)) best = nullptr;
+    if (!best) {   // objects without use capsules: the nearest in front
+        const glm::vec3 eye = player.eye(), fwd = player.view_forward();
+        float best_d = kUseRange;
+        for (auto& [id, o] : objects_) {
+            if (!o.interactive || !o.enabled || !o.interact_enabled) continue;
+            if (bool has = false; in_use_capsule(o, has) || has) continue;
+            const glm::vec3 to = o.position + glm::vec3(0, 0, 1) - eye;
+            const float d = glm::length(to);
+            if (d > best_d || glm::dot(to, fwd) < 0) continue;
+            best = &o;
+            best_d = d;
+        }
     }
-    if (!best) return false;
-    // The original pushes its circuit minigame (GS_FaneMinigame) first when the instance's
-    // minigame flag ([3]) is set, but no campaign object sets it: the use is OnEnter alone.
-    start_object_script(*best, "OnEnter");
+    if (!best || best->spent) return false;
+    // CInteractiveComponent::OnEvent: the original pushes its circuit minigame (GS_FaneMinigame)
+    // first when the instance's minigame flag ([3]) is set, but no campaign object sets it.
+    const Value* g = object_component(*best, kCompInteractiveGlobal);
+    const bool crystal = g && g->size() > 9 && (*g)[9].i != 0, walk = g && g->size() > 10 && (*g)[10].i != 0;
+    if (!crystal && !walk) {
+        activate(*best);
+        return true;
+    }
+    // PlayerComponent::SetState(6 / 7): over 500 ms the player moves to the object's node and
+    // turns to look along its +Y (CinematicLookAt); the crystal comes out (ForceChangeWeapon),
+    // or the weapon is put away if the object says so.
+    Interaction& in = interaction_;
+    in = Interaction{};
+    in.object = best->id, in.crystal = crystal, in.left = 0.5f;
+    const glm::mat4 m = scene.object_matrix(best->index, g->size() > 12 ? (*g)[12].s : std::string());
+    const glm::vec3 dir = glm::vec3(m * glm::vec4(0, 1, 0, 0));
+    in.from = glm::vec2(player.center), in.to = glm::vec2(m[3]);
+    look_from_yaw_ = player.yaw, look_from_pitch_ = player.pitch;
+    look_to_yaw_ = glm::degrees(std::atan2(-dir.x, dir.y));
+    look_to_pitch_ = glm::degrees(std::atan2(dir.z, glm::length(glm::vec2(dir))));
+    look_total_ = look_left_ = in.left, look_aimed_ = true;
+    if (crystal && combat) {
+        in.weapon = combat->weapon_type();
+        combat->use_weapon(kCrystalWeapon);
+        in.crystal_type = combat->weapon_type();
+    } else if (g->size() > 11 && (*g)[11].i != 0) {
+        weapon_hidden_ = true, hidden_weapon_ = combat ? combat->current_weapon() : -1;
+    }
+    if (trace) log("stepping up to " + std::to_string(best->id) + (crystal ? " with the crystal" : ""));
     return true;
+}
+
+bool LevelLogic::use_available() const {
+    const auto it = objects_.find(in_range_);
+    if (it == objects_.end() || interacting() || player_locked() || player_gun_ >= 0 || player_mech_ >= 0 || player_vehicle_ >= 0)
+        return false;
+    const Object& o = it->second;
+    return o.enabled && o.interact_enabled && !o.spent && has_object_script(o, "OnEnter");
+}
+
+namespace {
+
+// The distance between the closest points of segments ab and cd.
+float segment_distance(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d) {
+    const glm::vec3 u = b - a, v = d - c, w = a - c;
+    const float uu = glm::dot(u, u), vv = glm::dot(v, v), uv = glm::dot(u, v), uw = glm::dot(u, w), vw = glm::dot(v, w);
+    const float den = uu * vv - uv * uv;
+    float s = den > 1e-6f ? std::clamp((uv * vw - vv * uw) / den, 0.0f, 1.0f) : 0.0f;
+    float t = vv > 1e-6f ? (uv * s + vw) / vv : 0.0f;
+    if (t < 0) t = 0, s = uu > 1e-6f ? std::clamp(-uw / uu, 0.0f, 1.0f) : 0.0f;
+    else if (t > 1) t = 1, s = uu > 1e-6f ? std::clamp((uv - uw) / uu, 0.0f, 1.0f) : 0.0f;
+    return glm::length(w + u * s - v * t);
+}
+
+}  // namespace
+
+bool LevelLogic::in_use_capsule(const Object& o, bool& has) const {
+    has = false;
+    const Value* g = object_component(o, kCompInteractiveGlobal);
+    if (!g || g->size() < 1 || o.index >= scene.level().objects.size()) return false;
+    // The player's capsule (PlayerComponent::CheckInteract): from the feet up its height.
+    const glm::vec3 feet = player.center - glm::vec3(0, 0, player.radius.z), head = player.center + glm::vec3(0, 0, player.radius.z);
+    for (const Value& c : (*g)[0].list) {
+        if (c.size() < 9) continue;
+        has = true;
+        // Along its Z, turned by its rotation (degrees), about its centre, in its node's frame.
+        glm::mat4 r = glm::rotate(glm::mat4(1), glm::radians(c[7].as_float()), glm::vec3(0, 0, 1));
+        r = glm::rotate(r, glm::radians(c[6].as_float()), glm::vec3(0, 1, 0));
+        r = glm::rotate(r, glm::radians(c[5].as_float()), glm::vec3(1, 0, 0));
+        const glm::vec3 half = glm::vec3(r * glm::vec4(0, 0, c[0].as_float() * 0.5f, 0));
+        const glm::vec3 centre(c[2].as_float(), c[3].as_float(), c[4].as_float());
+        const glm::mat4 m = scene.object_matrix(o.index, c[8].s);
+        const glm::vec3 a(m * glm::vec4(centre - half, 1)), b(m * glm::vec4(centre + half, 1));
+        if (segment_distance(a, b, feet, head) <= c[1].as_float() + player.radius.x) return true;
+    }
+    return false;
+}
+
+void LevelLogic::update_use_range() {
+    // PlayerComponent::CheckInteract (while the player is on foot and in control): the usable
+    // object whose capsule the player is in (the one it was, while it still is; else the
+    // nearest). One that wants the crystal only while the player has it.
+    if (interacting() || player_locked() || (combat && combat->player_dead) || player_gun_ >= 0 || player_mech_ >= 0 ||
+        player_vehicle_ >= 0)
+        return;
+    auto usable = [&](const Object& o) {
+        if (!o.interactive || !o.enabled || !o.interact_enabled || o.dead) return false;
+        if (const Value* g = object_component(o, kCompInteractiveGlobal); g && g->size() > 9 && (*g)[9].i != 0 &&
+                                                                         !(combat && combat->has_weapon(kCrystalWeapon)))
+            return false;
+        bool has = false;
+        return in_use_capsule(o, has);
+    };
+    int found = -1;
+    if (const Object* o = object(in_range_); o && usable(*o)) {
+        found = in_range_;
+    } else {
+        float best = std::numeric_limits<float>::max();
+        for (const auto& [id, o] : objects_) {
+            const float d = glm::distance(o.position, player.center);
+            if (d < best && usable(o)) best = d, found = id;
+        }
+    }
+    if (found == in_range_) return;
+    if (Object* o = object(in_range_)) show_interface(*o, false);
+    in_range_ = found;
+    if (Object* o = object(found)) show_interface(*o, true);
+}
+
+void LevelLogic::show_interface(Object& o, bool show) {
+    const Value* g = object_component(o, kCompInteractiveGlobal);
+    if (!g || g->size() < 8 || o.index >= scene.level().objects.size()) return;
+    // Coming in range or leaving it: its sound while it has a use left, and its states set
+    // from Idle (or ExitRange) to EnterRange, or from InRange (or EnterRange) to ExitRange.
+    const std::string& sound = (*g)[show ? 5 : 6].s;
+    if (audio && !sound.empty() && !o.spent && o.interact_enabled &&
+        has_object_script(o, "OnEnter")) {
+        Audio::Params p;
+        p.position = &o.position;
+        audio->play(sound, p);
+    }
+    const int type = scene.level().objects[o.index].type;
+    const std::string now = o.state.empty() ? "Idle" : o.state;
+    if (show && (now == "Idle" || now == "ExitRange") && anim_sounds_->state(type, "EnterRange")) set_state(o, "EnterRange");
+    if (!show && (now == "InRange" || now == "EnterRange") && anim_sounds_->state(type, "ExitRange")) set_state(o, "ExitRange");
+}
+
+void LevelLogic::activate(Object& o) {
+    // Its sound, its Interact state, and its script, once unless it may be used again.
+    const Value* g = object_component(o, kCompInteractiveGlobal);
+    if (audio && g && g->size() > 7 && !(*g)[7].s.empty()) {
+        Audio::Params p;
+        p.position = &o.position;
+        audio->play((*g)[7].s, p);
+    }
+    if (o.index < scene.level().objects.size() && anim_sounds_->state(scene.level().objects[o.index].type, "Interact"))
+        set_state(o, "Interact");
+    if (o.spent || !start_object_script(o, "OnEnter")) return;
+    const Value* it = object_component(o, kCompInteractive);
+    if (!(it && it->size() > 2 && (*it)[2].i != 0)) o.spent = true;
+}
+
+void LevelLogic::update_interaction(float dt) {
+    if (weapon_hidden_ && (player_locked() || limited_active() || !weapon_state.empty() ||
+                           (combat && combat->current_weapon() != hidden_weapon_)))
+        weapon_hidden_ = false;   // something else has the weapon now
+    Interaction& in = interaction_;
+    if (in.object < 0) return;
+    Object* o = object(in.object);
+    if (!o || (combat && combat->player_dead)) {
+        in = Interaction{};
+        return;
+    }
+    if (in.left > 0) {
+        in.left = std::max(in.left - dt, 0.0f);
+        const glm::vec2 at = glm::mix(in.from, in.to, 1 - in.left / 0.5f);
+        player.center.x = at.x, player.center.y = at.y;
+        return;
+    }
+    // The crystal: CWeaponManager::StartInteract, and the object is used as it goes in (the
+    // weapon's InteractEnd); then the weapon from before comes back.
+    if (in.crystal && weapon_playing != "InteractEnd" && (in.wait += dt) < 4.0f) {
+        if (!in.asked && weapon_playing != "Interact") weapon_state = "Interact", in.asked = true;
+        return;
+    }
+    const Interaction done = in;
+    in = Interaction{};
+    activate(*o);
+    if (done.crystal && combat && done.weapon != done.crystal_type) combat->use_weapon(done.weapon);
+}
+
+void LevelLogic::set_state(Object& o, const std::string& state) {
+    o.state = state;
+    std::erase_if(state_chains_, [&](const StateChain& c) { return c.id == o.id; });
+    if (combat && combat->is_actor(o.id)) {   // spiders and cyberteeth: SetIdleState
+        combat->set_idle_state(o.id, state);
+        return;
+    }
+    // Doors, movers and elevators play their own states.
+    if (o.index >= scene.level().objects.size() || o.door >= 0 || mover(o.id) || elevator(o.id)) return;
+    const AnimSounds::State* st = anim_sounds_->state(scene.level().objects[o.index].type, state);
+    if (!st || st->clips.empty()) return;
+    const float speed = st->speeds.empty() || st->speeds[0] == 0 ? 1.0f : st->speeds[0];
+    if (!scene.play_clip(o.index, st->clips[0], st->loop, speed < 0)) return;
+    scene.set_clip_speed(o.index, std::fabs(speed));
+    if (trace) log("state " + std::to_string(o.id) + " " + state + ": " + st->clips[0]);
+    Scene::ClipState cs;
+    if (!st->loop && !st->next.empty() && scene.clip_state(o.index, cs)) state_chains_.push_back({o.id, cs.serial, st->next});
+}
+
+void LevelLogic::update_state_chains() {
+    for (size_t i = 0; i < state_chains_.size();) {
+        const StateChain c = state_chains_[i];
+        Object* o = object(c.id);
+        Scene::ClipState cs;
+        if (o && scene.clip_state(o->index, cs) && cs.serial == c.serial && !scene.clip_finished(o->index)) {
+            ++i;
+            continue;
+        }
+        state_chains_.erase(state_chains_.begin() + std::ptrdiff_t(i));
+        if (o && cs.serial == c.serial) set_state(*o, c.next);   // played through (another clip cuts it)
+    }
 }
 
 float LevelLogic::fade_alpha() const {
@@ -1540,6 +1755,9 @@ void LevelLogic::update(float dt) {
     update_limited(dt);
     update_cinematics(dt);
     update_tutorial(dt);
+    update_state_chains();
+    update_use_range();
+    update_interaction(dt);
     look_left_ = std::max(look_left_ - dt, 0.0f);
     if (fading_) {
         fade_left_ = std::max(fade_left_ - dt, 0.0f);

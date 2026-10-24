@@ -657,6 +657,11 @@ bool Combat::use_weapon(const std::string& name) {
     return true;
 }
 
+bool Combat::has_weapon(const std::string& name) const {
+    const int i = find_weapon(name);
+    return i >= 0 && owned_[size_t(i)];
+}
+
 bool Combat::give_ammo(const std::string& name, int amount) {
     if (lower(name) == "grenade") {
         grenades = std::max(grenades + amount, 0);
