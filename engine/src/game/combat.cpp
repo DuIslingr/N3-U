@@ -3351,8 +3351,10 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     }
     // Flinch now and then: ducking from a blast, else by where the shot struck (the head,
     // a leg by its side, the front).
+    // A mech only from a blast of over 15% of its health (CMechAIComponent::OnEvent 0xb/0xd).
     if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee &&
-        std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f) {
+        (t.mech_ai ? damage_cause_ == Cause::Explosion && amount > t.max_health * 0.15f
+                   : std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f)) {
         std::string clip;
         if (damage_cause_ == Cause::Explosion) {
             clip = state_variant(t, "DuckExplosion" + std::to_string(std::uniform_int_distribution<int>(1, 4)(rng_)));
