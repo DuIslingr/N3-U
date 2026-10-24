@@ -846,6 +846,25 @@ void Combat::restore(const Saved& s) {
         t->yaw = a.yaw;
         place_actor(a.id, a.pos);
     }
+    // Breakables come back in the states they were in (the level logic's); their damage
+    // follows from those.
+    AnimSounds& states = logic_.anim_sounds();
+    for (Breakable& b : breakables_) {
+        const LevelLogic::Object* o = logic_.object(b.id);
+        if (!o || o->state.empty()) continue;
+        auto reached = [&](int index) {   // the state, or the one it leads to
+            const std::string name = states.state_name(b.type, index);
+            const AnimSounds::State* st = name.empty() ? nullptr : states.state(b.type, name);
+            return !name.empty() && (name == o->state || (st && st->next == o->state));
+        };
+        for (const Breakable::Stage& st : b.stages) {
+            if (st.below >= b.stage || !reached(st.state)) continue;
+            b.stage = st.below, b.health = b.max_health * st.below / 100.0f;
+            if (st.collision_off) scene_.set_object_collision(b.object, false);
+        }
+        for (const Breakable::Capsule& c : b.capsules)
+            if (reached(c.state)) b.capsule_health = 0;
+    }
 }
 
 bool Combat::is_actor(int id) const {

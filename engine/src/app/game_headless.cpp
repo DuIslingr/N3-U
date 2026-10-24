@@ -204,6 +204,7 @@ int Game::run_screenshot() {
             player.yaw += o.look.x;
         }
         if (opt.respawn_at >= 0 && t <= opt.respawn_at && t + kPhysicsStep > opt.respawn_at && !opt.spawn_at.empty()) spawn_at_option();
+        if (opt.checkpoint_at >= 0 && t <= opt.checkpoint_at && t + kPhysicsStep > opt.checkpoint_at) logic.respawn_player();
         if (opt.scripts && opt.use_at >= 0 && t <= opt.use_at && t + kPhysicsStep > opt.use_at)
             std::printf("t=%6.2fs use: %s\n", t, logic.use() ? "used" : "nothing in range");
         if (opt.scripts && logic.interacting()) pin = PlayerInput{};   // stepping up to use
