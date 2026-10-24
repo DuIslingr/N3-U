@@ -50,6 +50,11 @@ public:
     // clip's move of it from where it starts, the world seen through it while the hands
     // stay where the rig's unmoved camera puts them.
     const glm::mat4& camera_offset() const { return camera_offset_; }
+    // The current weapon's field of view aiming (game units), and what the view model's adds
+    // to the view's (CWeaponComponent::GetWeaponFovDiff: across Aim and UnAim, from one to the
+    // other).
+    float aim_fov();
+    float model_fov_add();
     // PlayerComponent::distort_push / distort_pop / distort_change_blend: the rig drawn with
     // hand_mesh_new_distort.bdae's armsDistort (the screen behind shows through it where its
     // noise texture plus BlendFactor is under 0.5), BlendFactor from -0.3 eased to `target`
@@ -78,6 +83,9 @@ private:
         std::vector<State> states;
         std::unordered_map<std::string, int> index;
         std::string node;                                       // the WEAPON_* node shown for it
+        // CComponentWeapon [45]: the view's field of view aiming; [70]/[71]: the view
+        // model's, normal and aiming (game units; drawn at the view's plus theirs less 70).
+        float aim_fov = 35, model_fov = 70, model_aim_fov = 70;
         // The fire mode's muzzle objects (gol types; -1: none) and the node under `node`
         // they sit at.
         int muzzle_type = -1, aim_muzzle_type = -1;
@@ -128,6 +136,7 @@ private:
     std::string base_;             // the looping state the input asks for (Idle, AimWalk, RushWalk, ...)
     bool visible_ = false;
     bool lowered_ = false;         // GetDown: held lowered until GetUp
+    bool aiming_ = false;
     bool was_reloading_ = false, was_firing_ = false;
     std::string requested_, queued_;   // queued_: a state to play after the current one
     std::string movement_;

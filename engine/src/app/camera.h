@@ -12,14 +12,15 @@
 namespace nova {
 
 // The game's field of view (CLevel::SetTargetFov: the camera gets fov * height / width
-// degrees vertically; 70 by default). Aim mode narrows it.
-constexpr float kFov = 70, kAimZoom = 0.65f;
+// degrees vertically; 70 by default). Aim mode narrows it to the weapon's.
+constexpr float kFov = 70;
 
 struct Camera {
     glm::vec3 position{0};
     float yaw = 0, pitch = 0;   // degrees; yaw 0 looks along +Y, positive yaw turns left (game convention)
     float fov = kFov;
     bool game_fov = true;       // fov in the game's units (else vertical degrees: cinematic cameras)
+    float viewmodel_fov = 0;    // added to fov for the view model (its weapon's), game units
     float zfar = 8000;
     // A camera that looks along a given direction (cinematics) instead of yaw/pitch.
     bool directed = false;
@@ -46,6 +47,9 @@ struct Camera {
         // evenly; near and far are swapped on purpose.
         const float vertical = game_fov ? fov * float(h) / float(std::max(w, 1)) : fov;
         f.proj = glm::perspectiveRH_ZO(glm::radians(vertical), float(w) / float(std::max(h, 1)), zfar, 0.05f);
+        if (game_fov && viewmodel_fov != 0)
+            f.viewmodel_proj = glm::perspectiveRH_ZO(glm::radians((fov + viewmodel_fov) * float(h) / float(std::max(w, 1))),
+                                                     float(w) / float(std::max(h, 1)), zfar, 0.05f);
         f.camera = position;
         return f;
     }

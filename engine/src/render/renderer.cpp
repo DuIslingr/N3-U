@@ -784,7 +784,9 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
 
-    const glm::mat4 view_proj = frame.proj * frame.view;
+    glm::mat4 view_proj = frame.proj * frame.view;
+    const FrameParams* fp = &frame;   // the view model's own projection swaps in for its draws
+    FrameParams viewmodel_frame;
     MaterialUniforms mu{};
     mu.sun_dir = glm::vec4(frame.sun_dir, 0);
     mu.sun_color = glm::vec4(frame.sun_color, 1);
@@ -833,7 +835,7 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
             SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
             bound = it.model;
         }
-        DrawContext ctx{frame, it.world, view_proj, it.lighting, it.center, glm::vec2(float(w), float(h))};
+        DrawContext ctx{*fp, it.world, view_proj, it.lighting, it.center, glm::vec2(float(w), float(h))};
         vertex_block = m.vertex_uniforms;
         for (const SemanticSlot& s : m.vertex_semantics) ctx.write(vertex_block, s);
         fragment_block = m.fragment_uniforms;
@@ -949,10 +951,17 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     if (!view_opaque.empty() || !view_blended.empty()) {
         // The first-person view model: depth squeezed into [0.9, 1] (reversed depth: the
         // nearest tenth), so it stays in front of walls it would otherwise poke into.
+        // Its field of view is its own (CNovaSceneManager::drawWeapons).
         SDL_GPUViewport vp{0, 0, float(w), float(h), 0.9f, 1.0f};
         SDL_SetGPUViewport(pass, &vp);
+        if (frame.viewmodel_proj != glm::mat4(0)) {
+            viewmodel_frame = frame;
+            viewmodel_frame.proj = frame.viewmodel_proj;
+            fp = &viewmodel_frame, view_proj = viewmodel_frame.proj * frame.view;
+        }
         for (const DrawItem* it : view_opaque) draw(*it, pipes.opaque);
         for (const DrawItem* it : view_blended) draw(*it, pipes.blend);
+        fp = &frame, view_proj = frame.proj * frame.view;
         vp.min_depth = 0;
         SDL_SetGPUViewport(pass, &vp);
     }

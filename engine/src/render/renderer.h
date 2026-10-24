@@ -157,6 +157,7 @@ struct PostParams {
 struct FrameParams {
     glm::mat4 view{1};
     glm::mat4 proj{1};
+    glm::mat4 viewmodel_proj{0};   // the first-person view model's projection (zero: proj's)
     glm::vec3 camera{0};
     glm::vec3 sun_dir = glm::normalize(glm::vec3(0.4f, 0.3f, -1.0f));
     glm::vec3 sun_color{0.75f};

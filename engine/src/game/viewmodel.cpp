@@ -16,6 +16,7 @@ namespace {
 constexpr int kCompStatesSet = 0x0e;
 constexpr int kCompEffects = 0x92;
 constexpr int kCompWeapon = 0x47;     // [1]: the rig's WEAPON_* node for this weapon
+constexpr float kDefaultAimFov = 35;   // CComponentWeapon [45] of most weapons
 
 const GolType* type_named(const Gol& gol, const std::string& name, int* id = nullptr) {
     for (const auto& [i, t] : gol)
@@ -35,6 +36,8 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
     if (!t) return c;
     if (const Value* w = resolved_template(*t, gol_, kCompWeapon); w && w->size() > 4) {
         if ((*w)[1].type == Value::String) c.node = (*w)[1].s;
+        if (w->size() > 71 && weapon != "Crystal_ItemWeapon")   // drawWeapons leaves the crystal's alone
+            c.aim_fov = (*w)[45].as_float(), c.model_fov = (*w)[70].as_float(), c.model_aim_fov = (*w)[71].as_float();
         // Fire mode: [9] muzzle object, [10] its ironsight one, [11] the node.
         if (const Value& modes = (*w)[4]; modes.size() > 0 && modes[0].size() > 11) {
             c.muzzle_type = modes[0][9].i, c.aim_muzzle_type = modes[0][10].i;
@@ -119,6 +122,21 @@ void ViewModel::show_weapon(const std::string& node) {
 
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
 
+float ViewModel::aim_fov() { return weapon_.empty() ? kDefaultAimFov : clips(weapon_).aim_fov; }
+
+float ViewModel::model_fov_add() {
+    if (weapon_.empty() || !visible_) return 0;
+    const Clips& c = clips(weapon_);
+    const float normal = c.model_fov - 70, aimed = c.model_aim_fov - 70;
+    const bool in = playing_ == "Aim", out = playing_ == "UnAim" || playing_ == "AimToRush";
+    Scene::ClipState cs;
+    if ((in || out) && left_ > 0 && scene_.clip_state(object_, cs) && cs.length > 1) {
+        const float k = std::clamp(cs.reverse ? 1 - cs.ms / cs.length : cs.ms / cs.length, 0.0f, 1.0f);
+        return in ? normal + (aimed - normal) * k : aimed + (normal - aimed) * k;
+    }
+    return aiming_ ? aimed : normal;
+}
+
 bool ViewModel::play(const Clips& c, const std::string& state, float fade_ms) {
     auto it = c.index.find(state);
     if (it == c.index.end()) return false;
@@ -157,6 +175,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         return;
     }
     const Clips& c = clips(in.weapon);
+    aiming_ = in.aiming;
     update_camera_layer(dt, c);
     update_sway(dt, yaw_deg, pitch_deg, in.aiming, c);
     if (distort_) {   // PlayerComponent::distort_update

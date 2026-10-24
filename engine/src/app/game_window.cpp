@@ -431,7 +431,7 @@ void Game::run_window() {
         const bool aiming = can_aim && (touch_mode ? touch_in.aim : settings.aim_toggle ? aim_toggled : aim_held);
         {
             const float base = opt.scripts ? logic.game_fov() : kFov;
-            const float target = aiming ? base * kAimZoom : base;
+            const float target = aiming && opt.scripts ? viewmodel.aim_fov() : base;   // CWeaponComponent::Aim
             cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
         }
         if (opt.scripts && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_D] ||
@@ -567,6 +567,7 @@ void Game::run_window() {
         use_pressed_ = std::max(use_pressed_ - dt, 0.0f);
         Camera view = cam;
         if (opt.scripts) view.yaw += logic.shake_offset().x, view.pitch += logic.shake_offset().y;
+        if (opt.scripts) view.viewmodel_fov = viewmodel.model_fov_add();
         Scene::CameraView cv;
         const bool cinematic = opt.scripts && logic.cinematic_view(cv);
         if (cinematic) {

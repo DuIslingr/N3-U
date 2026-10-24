@@ -158,6 +158,7 @@ void Game::run_walk_test() {
 // The screenshot's frame from `base`: the cinematic or limited-control camera while one is
 // on, with the overlay, HUD and text over it.
 FrameParams Game::shot_frame(Camera base) {
+    if (opt.scripts) base.viewmodel_fov = viewmodel.model_fov_add();
     if (Scene::CameraView cv; opt.scripts && !opt.have_eye && logic.cinematic_view(cv)) {   // --eye wins
         base.position = cv.position, base.directed = true, base.direction = cv.forward, base.up = cv.up;
         base.fov = glm::degrees(cv.fov), base.game_fov = false;
