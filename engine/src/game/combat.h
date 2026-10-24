@@ -192,6 +192,8 @@ public:
     int paralyzed(int id) const;
     // Npc_SetBulletType (CNPCComponent::SetWeaponBulletType): the NPC fires this projectile type.
     bool set_bullet_type(int npc, int type);
+    // Enter/ExitInvisibility: an NPC cloaked (held so) or out of it again; false if it can't.
+    bool script_invisibility(int npc, bool on);
     // LockEnemyAggro(npc, value) (CAIComponent::LockAggro): its aggressiveness held there.
     bool lock_aggressiveness(int npc, float value);
     // Npc_GetAccuracy / Npc_SetAttackBehavior (the attack-choice scripts).
@@ -352,6 +354,17 @@ private:
         // (CHealthComponent::ActivateDeathEffect). dissolve < 0: not begun.
         std::string death_model, death_material, vanish_sound;
         std::string paralyze_model, paralyze_material;   // [15]/[16]: worn while paralyzed
+        // The cloak (CNPCComponent::ChangeToInvisible / UpdateInvisibility; CComponentNPC
+        // [62]/[63] material, [64] fade ms, [65] cloaks in a fight, [68]/[69] sounds;
+        // CComponentAI [41]/[42] time invisible, [43] time visible at least, [45] damage
+        // that sends it under). The material refracts the scene behind where its noise plus
+        // BlendFactor is under 0.5: 0.5 the body, -0.5 a shimmer.
+        enum class Cloak { Visible, FadingOut, Invisible, FadingIn } cloak = Cloak::Visible;
+        std::string cloak_model, cloak_material, cloak_sound, uncloak_sound;
+        bool auto_cloak = false, script_cloak = false;
+        float cloak_fade = 0.8f, cloak_timer = 0, visible_left = 0;
+        float invisible_min = 3, invisible_max = 3, visible_min = 1, cloak_damage = 1;
+        std::vector<std::pair<float, float>> recent_damage;   // (clock, amount), the last 5 s
         float dissolve = -1;
         float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
@@ -542,6 +555,10 @@ private:
     static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
     void hurt_look(Target& t, const glm::vec3* at);   // a hit: the hurt technique on (or again)
     void paralyze_target(Target& t);                    // frozen, wearing its paralyze material
+    void cloak(Target& t, bool instant);
+    void uncloak(Target& t);
+    void update_cloak(Target& t, float dt);
+    float clock_ = 0;
     void update_paralysis(Target& t, float dt);
     void update_hurt_looks(float dt);
     void set_hurt_time(Target& t);

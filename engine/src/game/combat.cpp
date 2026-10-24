@@ -409,6 +409,74 @@ void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
     }
 }
 
+bool Combat::script_invisibility(int npc, bool on) {
+    Target* t = find_target(npc);
+    if (!t || t->cloak_model.empty()) return false;
+    t->script_cloak = on;
+    if (on) cloak(*t, true);
+    else uncloak(*t);
+    return true;
+}
+
+void Combat::cloak(Target& t, bool instant) {
+    using C = Target::Cloak;
+    if (t.cloak == C::Invisible || (t.cloak == C::FadingOut && !instant)) return;
+    const glm::vec3 at = t.pos + glm::vec3(0, 0, 1);
+    sound(t.cloak_sound, &at);
+    if (t.cloak == C::Visible && !scene_.set_object_material(t.object, t.cloak_model, t.cloak_material)) return;
+    t.cloak = instant ? C::Invisible : C::FadingOut;
+    t.cloak_timer = instant ? std::uniform_real_distribution<float>(t.invisible_min, t.invisible_max)(rng_) : t.cloak_fade;
+    scene_.set_object_param(t.object, "BlendFactor", glm::vec4(instant ? -0.5f : 0.5f), 1);
+}
+
+void Combat::uncloak(Target& t) {
+    using C = Target::Cloak;
+    if (t.cloak == C::Visible || t.cloak == C::FadingIn) return;
+    const glm::vec3 at = t.pos + glm::vec3(0, 0, 1);
+    sound(t.uncloak_sound, &at);
+    t.cloak = C::FadingIn, t.cloak_timer = 0;
+}
+
+// UpdateInvisibility: hurt enough over the last 5 s (0.8 of the damage that sends it under)
+// after its least time seen, it fades out; unseen for its time, it fades back.
+void Combat::update_cloak(Target& t, float dt) {
+    using C = Target::Cloak;
+    if (t.cloak_model.empty()) return;
+    std::erase_if(t.recent_damage, [&](const auto& d) { return clock_ - d.first > 5.0f; });
+    switch (t.cloak) {
+        case C::Visible: {
+            if (!alive(t)) break;
+            t.visible_left -= dt;
+            float hurt = 0;
+            for (const auto& d : t.recent_damage) hurt += d.second;
+            if (t.auto_cloak && alive(t) && t.visible_left <= 0 && hurt >= t.cloak_damage * 0.8f) cloak(t, false);
+            break;
+        }
+        case C::FadingOut:
+            t.cloak_timer -= dt;
+            if (t.cloak_timer <= 0) {
+                t.cloak = C::Invisible;
+                t.cloak_timer = std::uniform_real_distribution<float>(t.invisible_min, t.invisible_max)(rng_);
+                scene_.set_object_param(t.object, "BlendFactor", glm::vec4(-0.5f), 1);
+            } else {
+                scene_.set_object_param(t.object, "BlendFactor", glm::vec4(t.cloak_timer / t.cloak_fade - 0.5f), 1);
+            }
+            break;
+        case C::Invisible:
+            if (!t.script_cloak && (t.cloak_timer -= dt) <= 0) uncloak(t);
+            break;
+        case C::FadingIn:
+            t.cloak_timer += dt;
+            if (t.cloak_timer >= t.cloak_fade) {
+                t.cloak = C::Visible, t.visible_left = t.visible_min;
+                scene_.set_object_material(t.object, "", "");
+            } else {
+                scene_.set_object_param(t.object, "BlendFactor", glm::vec4(t.cloak_timer / t.cloak_fade - 0.5f), 1);
+            }
+            break;
+    }
+}
+
 void Combat::paralyze_target(Target& t) {
     if (t.paralyzed <= 0 && !t.paralyze_model.empty()) scene_.set_object_material(t.object, t.paralyze_model, t.paralyze_material);
     t.paralyzed = t.paralyze_time;
@@ -908,6 +976,17 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if ((*h)[20].type == Value::String) t.vanish_sound = (*h)[20].s;
     }
     t.dissolve = -1;
+    t.cloak = Target::Cloak::Visible, t.script_cloak = false, t.recent_damage.clear();
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 69 && (*npc)[62].type == Value::String && !(*npc)[62].s.empty()) {
+        t.cloak_model = (*npc)[62].s, t.cloak_material = (*npc)[63].s;
+        t.cloak_fade = std::max(num(*npc, 64, 800) / 1000.0f, 0.05f);
+        t.auto_cloak = (*npc)[65].i != 0;
+        t.cloak_sound = (*npc)[68].s, t.uncloak_sound = (*npc)[69].s;
+    }
+    if (const Value* ai = component(o, 78); ai && ai->size() > 45) {
+        t.invisible_min = num(*ai, 41, 3000) / 1000.0f, t.invisible_max = std::max(num(*ai, 42, 3000) / 1000.0f, t.invisible_min);
+        t.visible_min = num(*ai, 43, 1000) / 1000.0f, t.cloak_damage = num(*ai, 45, 1);
+    }
     // CComponentEffectsLocal: [1] technique, [3] time parameter, [4] start, [5] end, [6]
     // restart from, [7] the impact point wanted, [8] its parameter.
     if (const Value* hl = component(o, 0x93); hl && hl->size() > 8 && (*hl)[1].type == Value::String && !(*hl)[1].s.empty()) {
@@ -1872,6 +1951,7 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
         die(t);
         return;
     }
+    if (!t.cloak_model.empty()) t.recent_damage.emplace_back(clock_, amount);
     {   // the hurt look spreading from where it was hit (its chest when that isn't known)
         const glm::vec3 chest = t.pos + glm::vec3(0, 0, t.height * 0.6f);
         hurt_look(t, damage_point_ ? damage_point_ : &chest);
@@ -1965,6 +2045,10 @@ void Combat::die(Target& t) {
                       : damage_cause_ == Cause::Fire ? state_variant(t, "DeathFlames") : std::string();
     if (death.empty()) death = state_variant(t, "DeathWeak");
     if (death.empty() && !t.clip_deaths.empty()) death = t.clip_deaths[std::uniform_int_distribution<size_t>(0, t.clip_deaths.size() - 1)(rng_)];
+    if (t.cloak != Target::Cloak::Visible) {   // dying shows it
+        t.cloak = Target::Cloak::Visible, t.script_cloak = false;
+        scene_.set_object_material(t.object, "", "");
+    }
     if (t.actor && !death.empty()) {
         t.state = Target::State::Dying;
         play(t, death, false);
@@ -2128,7 +2212,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             die(t);   // SetHealth(id, 0) from a script
             continue;
         }
-        if (t.actor) update_actor(t, dt);
+        if (t.actor) update_actor(t, dt), update_cloak(t, dt);
         else if (t.paralyzed > 0) update_paralysis(t, dt);
     }
     // Keep actors apart.
@@ -2226,6 +2310,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
     update_trails(dt);
     update_hurt_looks(dt);
+    clock_ += dt;
     for (Beam& b : beams_) b.age += dt;
     std::erase_if(beams_, [](const Beam& b) { return b.age >= 1.0f; });
     for (Spark& s : sparks_) s.life -= dt;

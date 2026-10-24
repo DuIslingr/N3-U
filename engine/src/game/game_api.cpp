@@ -1120,7 +1120,9 @@ int api_is_player_looking_at(lua_State* L) {
 template <bool Visible>
 int api_invisibility(lua_State* L) {
     LevelLogic& c = ctx(L);
-    if (const LevelLogic::Object* o = obj(L, 1)) c.scene.set_object_visible(o->index, Visible && o->visible);
+    // Cloaked (refracting the scene), or not drawn at all for an NPC without a cloak.
+    const LevelLogic::Object* o = obj(L, 1);
+    if (o && !(c.combat && c.combat->script_invisibility(o->id, !Visible))) c.scene.set_object_visible(o->index, Visible && o->visible);
     return 0;
 }
 int api_npc_crouch(lua_State* L) {   // NpcCmd_Crouch(npc, id, on): crouches where it is (holds there)
