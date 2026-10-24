@@ -1434,6 +1434,11 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             }
         }
     }
+    t.linked.clear();
+    if (const Value* lo = component(o, 0x91); lo && lo->size() > 0)
+        for (const Value& e : (*lo)[0].list)
+            if (e.size() > 2 && e[0].i >= 0 && e[1].type == Value::String && attach(e[0].i, e[1].s))
+                t.linked.push_back(t.attached.size() - 1), t.attached.back().on = e[2].i != 0;
     if (const Value* h = component(o, kCompHealth); h && h->size() > 20 && (*h)[13].type == Value::String) {
         t.death_model = (*h)[13].s, t.death_material = (*h)[14].s;
         if ((*h)[15].type == Value::String) t.paralyze_model = (*h)[15].s, t.paralyze_material = (*h)[16].s;
@@ -1842,6 +1847,9 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         const bool cloak = order == "cloack";
         scene_.set_object_visible(t->object, !cloak);
         t->invulnerable = cloak;
+    } else if (order == "flashlight") {   // CLinkedObjectsComponent::OnEvent: "start" / "stop" its first
+        if (t->linked.empty()) return false;
+        t->attached[t->linked[0]].on = flag;
     } else if (order == "use_machinegun") {
         // CMachineGunAIComponent::ActivateBy: behind the gun, which turns and fires for it.
         const LevelLogic::Object* gun = logic_.object(arg);
@@ -3025,8 +3033,9 @@ void Combat::place_attachments() {
         const LevelLogic::Object* o = logic_.object(t.id);
         const bool shown = o && o->visible && o->enabled;
         for (Target::Attachment& a : t.attached) {
-            if (shown) scene_.set_object_transform(a.object, scene_.object_matrix(t.object, a.node));
-            if (shown != a.shown) scene_.set_object_visible(a.object, shown), a.shown = shown;
+            const bool show = shown && a.on;
+            if (show) scene_.set_object_transform(a.object, scene_.object_matrix(t.object, a.node));
+            if (show != a.shown) scene_.set_object_visible(a.object, show), a.shown = show;
         }
         if (t.muzzle_shown) {
             if (!shown || scene_.clip_finished(t.muzzle_object)) {

@@ -454,8 +454,12 @@ private:
             size_t object;
             std::string node;
             bool shown = false;
+            bool on = true;   // a linked object: started (CLinkedObjectsComponent::StartObject)
         };
         std::vector<Attachment> attached;
+        // Its linked objects (CLinkedObjectsComponent, 0x91: {type, node, started, ?}; a
+        // marine's head lamp): their places in `attached`.
+        std::vector<size_t> linked;
         bool armed = false;                // attached[0] is its weapon
         // The weapon's muzzle object (CComponentNPCWeapon [9] at [10]), shown per shot.
         int muzzle_type = -1;
