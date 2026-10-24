@@ -409,8 +409,8 @@ private:
         struct Band {
             float threshold = 0, range_min = 15, range_max = 25, pause_min = 1, pause_max = 1;
         // Weights of what it does from cover (UpdateLowCover's fuzzy actions): fire, lean,
-        // blind fire, peek, throw a grenade.
-        float fire = 100, lean = 0, blind = 0, peek = 0, grenade = 0;
+        // blind fire, peek, roll out, throw a grenade.
+        float fire = 100, lean = 0, blind = 0, peek = 0, roll = 0, grenade = 0;
         };
         std::vector<Band> bands;
         // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
@@ -429,6 +429,10 @@ private:
         enum class CoverAct { Fire, Lean, Blind, Peek } cover_act = CoverAct::Fire;
         bool cover_left = false;
         std::string cover_from, cover_next;
+        // A clip that moves it (its root's travel applied to its position): the roll out of
+        // cover. Its root where it was last applied.
+        std::string root_clip;
+        glm::vec3 root_prev{0};
         bool cover_next_loop = false;
         float cover_timer = 0, cover_eval = 0;
         float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds
@@ -551,6 +555,8 @@ private:
     bool cover_protects(const CoverPoint& c, const glm::vec3& from) const;
     int choose_cover(const Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_eye) const;
     void leave_cover(Target& t);
+    void start_root_motion(Target& t, const std::string& clip);
+    bool update_root_motion(Target& t);   // false once the clip is over
     void set_crouched(Target& t, bool on);
     // The fight from cover; false when the actor has no cover to fight from (the usual
     // chase and attack then).

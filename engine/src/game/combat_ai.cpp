@@ -65,7 +65,7 @@ void Combat::read_ai(Target& t, const Value& ai) {
             band.range_min = field(b, 2, 15), band.range_max = field(b, 3, 25);
             band.pause_min = field(b, 22, 1000) / 1000.0f, band.pause_max = field(b, 23, 1000) / 1000.0f;
             band.fire = field(b, 13, 100), band.lean = field(b, 14, 0), band.blind = field(b, 15, 0);
-            band.peek = field(b, 16, 0), band.grenade = field(b, 18, 0);
+            band.peek = field(b, 16, 0), band.roll = field(b, 17, 0), band.grenade = field(b, 18, 0);
             t.bands.push_back(band);
         }
 }
@@ -152,6 +152,38 @@ void Combat::set_crouched(Target& t, bool on) {
     t.height = on ? t.stand_height * 0.6f : t.stand_height;
 }
 
+void Combat::start_root_motion(Target& t, const std::string& clip) {
+    play(t, clip, false);
+    t.root_clip = t.playing == clip ? clip : std::string();
+    glm::mat4 local;
+    if (!t.root_clip.empty() && scene_.sample_node(t.object, "Bip01", clip, 0, local)) t.root_prev = glm::vec3(local[3]);
+}
+
+bool Combat::update_root_motion(Target& t) {
+    if (t.root_clip.empty()) return false;
+    Scene::ClipState cs;
+    glm::mat4 local;
+    const bool on = t.playing == t.root_clip && scene_.clip_state(t.object, cs);
+    if (on && scene_.sample_node(t.object, "Bip01", t.root_clip, cs.ms, local)) {
+        // The root's sideways travel since the last step, through the actor's placement (the
+        // scene holds the root itself in place).
+        const glm::vec3 now(local[3]);
+        const glm::vec3 d = glm::mat3(scene_.object_matrix(t.object)) * glm::vec3(now.x - t.root_prev.x, now.y - t.root_prev.y, 0);
+        t.root_prev = now;
+        t.pos += glm::vec3(d.x, d.y, 0);
+        stay_on_mesh(t);
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+    }
+    if (on && !scene_.clip_finished(t.object)) return true;
+    if (logic_.trace) {
+        char line[96];
+        std::snprintf(line, sizeof line, "%d rolled to (%.1f %.1f %.1f)", t.id, t.pos.x, t.pos.y, t.pos.z);
+        log(line);
+    }
+    t.root_clip.clear();
+    return false;
+}
+
 void Combat::leave_cover(Target& t) {
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
@@ -164,6 +196,7 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
     const float dist = glm::distance(glm::vec2(t.pos), glm::vec2(target));
     const bool in_cover = t.cover >= 0 && t.cover_phase != Target::CoverPhase::Moving;
     update_aggressiveness(t, dt, dist, sees, in_cover);
+    if (update_root_motion(t)) return true;   // rolling out of cover
     if (!t.use_covers || !t.ranged || !t.mobile || t.hold || t.has_region || nav_.empty() || t.tri < 0 || covers_.empty()) return false;
     const glm::vec3 enemy_eye = chest + glm::vec3(0, 0, 0.3f);
     // The cover still hides it? Flanked, or the enemy upon it: out (CheckPositionIsSafe).
@@ -228,7 +261,10 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
             const float ang = glm::degrees(std::atan2(c.dir.x * to.y - c.dir.y * to.x, c.dir.x * to.x + c.dir.y * to.y));
             if (ang < -15.0f) t.cover_left = false;   // the enemy to its right
             else if (ang > 15.0f) t.cover_left = true;
-            else t.cover_left = c.left && !(c.right && ang < 0);
+            else {   // ahead: a side the cover opens on, the left before the right
+                if (ang < 5.0f && c.right) t.cover_left = false;
+                if (ang > -5.0f && c.left) t.cover_left = true;
+            }
             t.cover_phase = Target::CoverPhase::Hidden;
             t.cover_timer = hide_for();
             if (c.low) set_crouched(t, true);
@@ -250,13 +286,32 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
             for (const Grenade& g : live_grenades_) grenade_out |= g.live && g.npc;
             const float d = glm::distance(t.pos, target);
             const bool front = glm::dot(c.dir, glm::normalize(target - c.pos + glm::vec3(0, 0, 1e-4f))) > 0.5f;
-            const float w[5] = {b ? b->fire : 100.0f, b ? b->lean : 0.0f, b && front ? b->blind : 0.0f, b ? b->peek : 0.0f,
-                                b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f};
+            // Rolling out (CheckExitLowCoverRoll): from a low cover, out of a side it opens on.
+            const bool can_roll = c.low && (t.cover_left ? c.left : c.right);
+            const float w[6] = {b ? b->fire : 100.0f, b ? b->lean : 0.0f, b && front ? b->blind : 0.0f, b ? b->peek : 0.0f,
+                                b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f,
+                                b && can_roll ? b->roll : 0.0f};
             float total = 0;
             for (float x : w) total += x;
             float roll = std::uniform_real_distribution<float>(0.0f, std::max(total, 1e-3f))(rng_);
             int act = 0;
-            while (act < 4 && roll >= w[act]) roll -= w[act], ++act;
+            while (act < 5 && roll >= w[act]) roll -= w[act], ++act;
+            if (act == 5) {   // ExitLowCoverRoll: out of the cover, then fighting in the open
+                const std::string out = clip("LowCoverRoll" + side);
+                if (!out.empty()) {
+                    leave_cover(t);
+                    t.cover_eval = std::uniform_real_distribution<float>(3.0f, 5.0f)(rng_);
+                    start_root_motion(t, out);
+                    if (logic_.trace) {
+                        char line[160];
+                        std::snprintf(line, sizeof line, "%d rolls out of cover (%s) from (%.1f %.1f %.1f), the enemy at (%.1f %.1f)", t.id,
+                                      side.c_str(), t.pos.x, t.pos.y, t.pos.z, target.x, target.y);
+                        log(line);
+                    }
+                    return true;
+                }
+                act = 0;
+            }
             if (act == 4) {   // the grenade
                 const std::string from_cover = c.low ? clip("LowCover" + side + "ThrowGrenade") : std::string();
                 transition(from_cover.empty() ? "AttackGrenade" : "LowCover" + side + "ThrowGrenade", idle, true);
