@@ -157,6 +157,9 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
             player_.jump_speed = num(*pc, 14, 8), player_.jump_time = num(*pc, 15, 0.8f);
             player_.step_min_ms = num(*pc, 71, 400), player_.step_max_ms = num(*pc, 72, 600);
             player_.rush_limit = num(*pc, 21, 2.5f), player_.rush_recover = num(*pc, 22, 3), player_.rush_restart = num(*pc, 23, 1);
+            if (pc->size() > 74)   // [74] {damage type, sounds}: PlayerComponent::PlayMeleeHitSound
+                for (const Value& e : (*pc)[74].list)
+                    if (e.size() > 1) melee_sounds_[e[0].i] = sound_list(e[1]);
             fall_damage_from_ = num(*pc, 7, 15), fall_damage_per_ = num(*pc, 4, 16);
             landing_speeds_ = {num(*pc, 8, 5), num(*pc, 9, 15), num(*pc, 10, 20)};
         }
@@ -1632,6 +1635,18 @@ float Combat::vehicle_shield() const {
     return -2;
 }
 
+void Combat::melee_hit_player(float amount, const glm::vec3& from, int type) {
+    if (player_dead) return;
+    damage_player(amount, from);
+    if (player_dead) return;
+    if (auto it = melee_sounds_.find(type); it != melee_sounds_.end() && !it->second.empty() && logic_.audio)
+        logic_.audio->play(it->second[std::uniform_int_distribution<size_t>(0, it->second.size() - 1)(rng_)]);
+    if (type == 11 || type == 12) {   // CHud scratch; CWeaponManager::PlayDamageAnim
+        scratch_ = type == 12 ? 1 : 0;
+        view_hurt_ = type == 12 ? "SpiderRightHurt" : "SpiderLeftHurt";
+    }
+}
+
 // CBigSpiderAiComponent::CheckJumpAttack / SetAction(6) / JumpInit / UpdateAction(6).
 bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist) {
     constexpr float kSpeed = 30, kGravity = 30;
@@ -1680,8 +1695,7 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
         if (t.jump_event >= 0 && t.jump_timer >= t.jump_event) {
             t.jump_event = 1e9f;
             if (on_player && glm::distance(feet, t.pos) < t.melee_range + 1.0f && std::abs(feet.z - t.pos.z) < 2.0f) {
-                damage_player(t.melee_damage, t.pos);
-                scratch_ = t.jump_right ? 1 : 0;
+                melee_hit_player(t.melee_damage, t.pos, t.jump_right ? 12 : 11);
             }
         }
         // Down on the ground (or too long in the air): landing.
@@ -2272,8 +2286,7 @@ void Combat::update_actor(Target& t, float dt) {
         if (!t.melee_hit && t.timer > 0.45f) {
             t.melee_hit = true;
             if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) {
-                if (on_player) damage_player(t.melee_damage, t.pos);
-                if (on_player && t.spider) scratch_ = 0;   // its left claw
+                if (on_player) melee_hit_player(t.melee_damage, t.pos, t.spider ? 11 : 5);   // a spider: its left claw
                 else if (t.enemy >= 0) apply_damage(targets_[size_t(t.enemy)], t.melee_damage, false);
             }
         }

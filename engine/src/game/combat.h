@@ -1044,6 +1044,11 @@ private:
     bool reload_filled_ = false;
     int low_shield_voice_ = -1;   // sfx_shield_low playing
     int scratch_ = -1;
+    // An NPC's blow (CNPCComponent::GiveMeleeAttackDamage, PlayerComponent::ReceiveDamage):
+    // damage type 5/6 a fist, 11/12 a spider's left/right claw (its scratch and camera jolt);
+    // the type's impact sound (PlayerComponent [melee sounds]).
+    void melee_hit_player(float amount, const glm::vec3& from, int type);
+    std::unordered_map<int, std::vector<std::string>> melee_sounds_;
     bool update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist);
     int mech_ = -1;                // the mech piloted (its health is the player's)
     float own_health_ = 0, own_max_health_ = 0;
