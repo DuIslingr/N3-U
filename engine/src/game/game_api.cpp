@@ -926,6 +926,17 @@ int api_give_damage_mc(lua_State* L) {   // GiveDamageMC(amount, ...)
     if (Combat* c = ctx(L).combat) c->damage_player(float(lua_tonumber(L, 1)), ctx(L).player.center);
     return 0;
 }
+// GiveDamageToScriptTarget(trigger, amount, ...): what set the trigger off takes the damage
+// (only the player sets them off here). IsTriggerTarget(trigger, who): 0 the player, -1 anyone.
+int api_give_damage_to_script_target(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->damage_player(float(lua_tonumber(L, 2)), ctx(L).player.center);
+    return 0;
+}
+int api_is_trigger_target(lua_State* L) {
+    const lua_Integer who = lua_tointeger(L, 2);
+    lua_pushboolean(L, who == 0 || who == -1);
+    return 1;
+}
 int api_get_random(lua_State* L) {   // GetRandom(n) -> 0..n-1, GetRandom(a, b) -> a..b
     static std::mt19937 rng(12345);
     lua_Integer lo = 0, hi = lua_tointeger(L, 1) - 1;
@@ -1345,6 +1356,8 @@ const Entry kImplemented[] = {
     {"GiveAmmo", api_give_ammo},
     {"GetHealthMC", api_get_health_mc},
     {"GiveDamageMC", api_give_damage_mc},
+    {"GiveDamageToScriptTarget", api_give_damage_to_script_target},
+    {"IsTriggerTarget", api_is_trigger_target},
     {"GetRandom", api_get_random},
     {"ShowMessage", api_show_message},
     {"ShowMessageEx", api_show_message},
