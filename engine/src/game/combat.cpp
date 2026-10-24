@@ -1311,6 +1311,7 @@ void Combat::start(bool keep_stats) {
             t.hostile = (t.attacks & kPlayerTeamBit) != 0;
             t.radius = 4, t.height = 3, t.pos.z -= 1.5f;   // a hull to hit
         }
+        t.vehicle = component(o, 0x96) != nullptr;
         if (const Value* car = component(o, 0x96); car && car->size() > 0 && component(o, 0x97) && !t.actor) {
             t.car = true;
             if (const Value* aw = component(o, kCompAwareness); aw && aw->size() > 5)
@@ -1616,6 +1617,15 @@ glm::vec3 Combat::player_center() const { return player_.center + glm::vec3(0, 0
 bool Combat::line_clear(const glm::vec3& a, const glm::vec3& b) const {
     float t = 1;
     return !scene_.collision().raycast(a, b, t);
+}
+
+float Combat::vehicle_shield() const {
+    const int v = logic_.player_vehicle();
+    if (v < 0) return -2;
+    for (const Target& t : targets_)
+        if (t.id == v)
+            if (const LevelLogic::Object* o = logic_.object(v)) return std::clamp(o->health / std::max(t.max_health, 1.0f), 0.0f, 1.0f);
+    return -2;
 }
 
 Combat::Target* Combat::find_target(int id) {
@@ -2859,6 +2869,17 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
 
 void Combat::damage_player(float amount, const glm::vec3& from) {
     if (player_dead || player_invulnerable || protect_ > 0 || amount <= 0) return;
+    // In the jeep the jeep takes it (the player's own collision is off while riding,
+    // CPlayerJeepComponent; CHud::SetShieldJeepPercent shows its health); destroyed, the
+    // player goes with it.
+    if (const int v = logic_.player_vehicle(); v >= 0)
+        if (Target* jeep = find_target(v); jeep && alive(*jeep)) {
+            LevelLogic::Object* o = logic_.object(v);
+            o->health -= amount;
+            if (o->health > 0) return;
+            die(*jeep);
+            amount = player_health;
+        }
     if (logic_.in_mech()) amount *= 0.3f;   // the mech's armour (its health is 200 to the player's 50)
     player_health -= amount;
     stats_.damage_taken += amount;
@@ -3067,7 +3088,7 @@ void Combat::die(Target& t) {
     } else if (t.actor && !death.empty()) {
         t.state = Target::State::Dying;
         play(t, death, false);
-    } else if (t.car) {
+    } else if (t.car || t.vehicle) {
         // CVehicleCar::Destroy: it stops and plays Death (the wreck, its explosion); the
         // wreck stays.
         if (t.car_firing) car_fire(t, false);

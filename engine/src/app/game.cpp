@@ -359,6 +359,7 @@ void Game::draw_text(FrameParams& f, int w, int h) {
         hs.weapons = logic.controls.weapons && !logic.limited_active();
         hs.grenade_count = combat.mines_picked() ? combat.mines : combat.grenades;
         hs.shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
+        hs.jeep_shield = combat.vehicle_shield();
         hs.core = combat.core;
         if (combat.core >= 0) hs.core_left = (hs.shield - 1) / std::max(combat.core_percent / 100, 1e-3f);
         hs.weapon_sprite = combat.weapon_sprite();

@@ -364,6 +364,8 @@ public:
     // Shooting (CWeaponComponent's firing flag: set by FireButtonPress, cleared by
     // FireButtonRelease): the trigger held with shots still coming.
     bool firing() const { return trigger_held_ && since_shot_ < 0.2f; }
+    // Riding a jeep: its health, 0..1 (the HUD's jeep shield); -2 not riding one.
+    float vehicle_shield() const;
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};
@@ -576,7 +578,7 @@ private:
         // first fire mode gives the bullet [1], the muzzle object [9] at node [11], the
         // firing loop [17] and its end [18]): what it sees, its gun turns to and fires at,
         // a shot per loop of the gun's Attack_AI clip; destroyed, it plays Death.
-        bool car = false;
+        bool car = false, vehicle = false;   // vehicle: any CVehicleCar (0x96)
         int car_gun_type = -1, car_loop = -1;
         bool car_firing = false, car_muzzle_shown = false;
         float car_interval = 0, car_shot = 0, car_yaw = 0, car_pitch = 0;

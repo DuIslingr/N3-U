@@ -34,6 +34,7 @@ public:
         // controls are (limited control: CLevelInterfaceNormal::EnableControls(false)).
         bool weapons = true;
         float shield = 1;            // the player's health, 0..1 (the shield bar at the top)
+        float jeep_shield = -2;      // riding a jeep: its health, 0..1 (HUDShield_Jeep instead); -2 none
         // A shield core's overcharge (the Military Shop): its kind (0 Vanguard, 1 Crypton,
         // 2 Plasma; -1 none) and how much of it is left, 0..1 (CHud::SetShieldPercent).
         int core = -1;
@@ -125,7 +126,9 @@ private:
     float screen_min_ = 640;
     bool large_ = false;
     size_t object_ = size_t(-1), ammo_ = size_t(-1), frost_object_ = size_t(-1), shield_ = size_t(-1);
-    float shield_shown_ = -1;
+    float shield_shown_ = -1, jeep_shown_ = -1;
+    size_t jeep_shield_ = size_t(-1);
+    bool jeep_visible_ = false;
     int core_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
     size_t damage_ = size_t(-1), blood_ = size_t(-1);

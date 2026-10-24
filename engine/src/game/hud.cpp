@@ -37,6 +37,11 @@ void Hud::start() {
     shield_ = scene_.spawn_model("nv_hud_shield.bdae", true, "nv_hud_shield.bdae", "shield");
     shield_shown_ = -1, core_shown_ = -1;
     if (shield_ != size_t(-1)) scene_.play_clip(shield_, "shield", false);
+    // HUDShield_Jeep (nv_hud_shield_jeep.bdae): in the jeep, its "shield_jeep" clip posed by
+    // the jeep's health (CHud::SetShieldJeepPercent).
+    jeep_shield_ = scene_.spawn_model("nv_hud_shield_jeep.bdae", true, "nv_hud_shield_jeep.bdae", "shield_jeep");
+    jeep_shown_ = -1, jeep_visible_ = false;
+    if (jeep_shield_ != size_t(-1)) scene_.play_clip(jeep_shield_, "shield_jeep", false), scene_.set_object_visible(jeep_shield_, false);
     // HUD_Frost: its clip runs as the frost spreads.
     frost_object_ = scene_.spawn_model("hud_frost.bdae", true, "hud_frost.bdae", "hud_frost");
     if (frost_object_ != size_t(-1)) {   // made for the HUD camera as it is
@@ -396,10 +401,16 @@ void Hud::place(const std::string& node, glm::vec2 px, const glm::mat4& view_pro
 
 void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites) {
     if (object_ == size_t(-1)) return;
-    if (s.visible != visible_) {
+    const bool jeep = s.jeep_shield > -1;
+    if (s.visible != visible_ || jeep != jeep_visible_) {
         scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible && s.weapons);
-        if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible);
-        visible_ = s.visible;
+        if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible && !jeep);
+        if (jeep_shield_ != size_t(-1)) scene_.set_object_visible(jeep_shield_, s.visible && jeep);
+        visible_ = s.visible, jeep_visible_ = jeep;
+    }
+    if (Scene::ClipState cs; jeep && jeep_shield_ != size_t(-1) && std::abs(s.jeep_shield - jeep_shown_) > 1e-3f && scene_.clip_state(jeep_shield_, cs)) {
+        jeep_shown_ = s.jeep_shield;
+        scene_.set_clip_time(jeep_shield_, std::clamp(s.jeep_shield, 0.0f, 1.0f) * cs.length * 0.999f / 1000.0f);
     }
     if (s.grenades != grenades_) scene_.set_node_visible(object_, "grenade_button", s.grenades), grenades_ = s.grenades;
     if (s.weapons != weapons_) {
