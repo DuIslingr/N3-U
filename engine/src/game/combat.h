@@ -459,6 +459,11 @@ private:
         // lock a target (LockTarget: object id, 0 the player) or make it ignore some.
         int enemy = kNoEnemy;
         int locked = -1;               // object id; 0 the player; -1 none
+        // Manning a mounted gun (use_machinegun; CMachineGunAIComponent::ActivateBy): its
+        // level object, its state (0 idle, 1 a burst, 2 a pause), the time left in that, to
+        // the next shot, the way it points and its firing loop's sound.
+        int gun = -1, gun_state = 0, gun_loop = -1;
+        float gun_timer = 0, gun_shot = 0, gun_yaw = 0;
         std::vector<int> ignored;      // object ids; 0 the player
         float choose_timer = 0, awareness = 0;
         // Script orders (SendEvent): follow the player, hold the position (cover, a
@@ -723,6 +728,22 @@ private:
     bool try_dash(Target& t, const glm::vec3& to, bool forced, const glm::vec3* enemy_chest = nullptr);
     bool try_dash_aside(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest);   // TrySSRandom
     void update_dash(Target& t, float dt);
+    // CMachineGunAIComponent (gol 0x43): its bullet [0], the turn [3] it covers (degrees,
+    // both ways together) and its pitch limits [4]/[5], the gunner's node [6], a shot every
+    // [7] ms in bursts of [8]-[9] ms with [10]-[11] ms between, its firing loop [13] and its
+    // stop [14].
+    struct GunDef {
+        float damage = 20, speed = 480;
+        ProjectileLooks looks;
+        Impacts impacts;
+        float turn = 90, pitch_min = -45, pitch_max = 45;
+        std::string gunner_node;
+        float interval = 0.2f, burst_min = 3, burst_max = 5, pause_min = 1, pause_max = 3;
+        std::string loop_sound, stop_sound;
+    };
+    std::unordered_map<int, GunDef> guns_;
+    const GunDef* gun_def(int type);
+    void update_gunner(Target& t, float dt, const glm::vec3& chest, bool sees);
     // Waypoints flagged as jump points ([9], CWayPointObject::IsJumpPoint) and where each
     // lands (its next waypoint).
     struct JumpPoint {

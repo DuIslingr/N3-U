@@ -428,6 +428,15 @@ int Game::run_screenshot() {
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         std::printf("bench: %.2f ms/frame (update + render + readback)\n", ms / opt.bench);
     }
+    if (opt.have_probe) {   // what collides there: the owners of triangles near it, and the floor below
+        std::string owners;
+        for (uint32_t ow : scene.collision().owners_near(opt.probe, 3.0f))
+            owners += " " + (ow < scene.level().objects.size() ? scene.level().objects[ow].model : std::to_string(ow));
+        float floor_z = 0;
+        const bool floor = scene.collision().ray_down(opt.probe, 50.0f, floor_z);
+        std::printf("probe: collision near:%s; floor %s\n", owners.empty() ? " none" : owners.c_str(),
+                    floor ? std::to_string(floor_z).c_str() : "none within 50 m");
+    }
     if (opt.have_probe || !opt.probe_model.empty())
         for (size_t i = 0; i < scene.draws().size(); ++i) {
             const Scene::DrawInfo& di = scene.draw_info()[i];

@@ -1439,14 +1439,12 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
         scene_.set_object_visible(t->object, !cloak);
         t->invulnerable = cloak;
     } else if (order == "use_machinegun") {
-        // Behind the gun, holding there, firing longer bursts.
+        // CMachineGunAIComponent::ActivateBy: behind the gun, which turns and fires for it.
         const LevelLogic::Object* gun = logic_.object(arg);
-        if (!gun) return false;
-        const float y = glm::radians(gun->yaw);
-        t->pos = gun->position + glm::vec3(std::sin(y), -std::cos(y), 0) * 1.0f;
-        t->yaw = gun->yaw, t->hold = true, t->leaping = false;
-        t->burst = std::max(t->burst, 12), t->burst_pause = 0.8f, t->fire_range = std::max(t->fire_range, 60.0f);
-        scene_.set_object_pose(t->object, t->pos, t->yaw);
+        if (!gun || gun->index >= scene_.level().objects.size() || !gun_def(scene_.level().objects[gun->index].type)) return false;
+        t->gun = arg, t->gun_state = 0, t->gun_timer = t->gun_shot = 0, t->gun_yaw = gun->yaw;
+        t->hold = true, t->leaping = false;
+        t->goals.clear();
     } else {
         return false;
     }
@@ -1846,6 +1844,10 @@ void Combat::update_actor(Target& t, float dt) {
         t.lost_sight = 0;
     } else {
         t.lost_sight += dt;
+    }
+    if (t.gun >= 0) {
+        update_gunner(t, dt, chest, sees);
+        return;
     }
     if (t.mobile && !t.hold && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
@@ -2334,6 +2336,96 @@ glm::mat4 Combat::bolt_matrix(const glm::vec3& pos, const glm::vec3& dir) {
     return m;
 }
 
+const Combat::GunDef* Combat::gun_def(int type) {
+    if (auto it = guns_.find(type); it != guns_.end()) return &it->second;
+    auto g = gol_.find(type);
+    const Value* v = g == gol_.end() ? nullptr : resolved_template(g->second, gol_, 0x43);
+    if (!v || v->size() < 15) return nullptr;
+    GunDef d;
+    if (auto b = gol_.find((*v)[0].i); b != gol_.end())
+        if (const Value* pr = resolved_template(b->second, gol_, kCompProjectile); pr && pr->size() > 8) {
+            d.damage = num(*pr, 2, 20), d.speed = std::max(num(*pr, 8, 480), 10.0f);
+            d.impacts = read_impacts(*pr);
+            d.looks = read_looks((*v)[0].i);
+        }
+    d.turn = num(*v, 3, 90), d.pitch_min = num(*v, 4, -45), d.pitch_max = num(*v, 5, 45);
+    d.gunner_node = str(*v, 6);
+    d.interval = std::max(num(*v, 7, 200), 30.0f) / 1000.0f;
+    d.burst_min = num(*v, 8, 3000) / 1000.0f, d.burst_max = num(*v, 9, 5000) / 1000.0f;
+    d.pause_min = num(*v, 10, 1000) / 1000.0f, d.pause_max = num(*v, 11, 3000) / 1000.0f;
+    d.loop_sound = str(*v, 13), d.stop_sound = str(*v, 14);
+    return &(guns_[type] = std::move(d));
+}
+
+// CMachineGunAIComponent::Update: the gun turns to its gunner's target within its arc
+// (UpdateBodyRotation / CheckAndUpdateRotation) and, on it, fires bursts with pauses
+// between (UpdateAttack, StartFire / StopFire); the gunner stands behind it.
+void Combat::update_gunner(Target& t, float dt, const glm::vec3& chest, bool sees) {
+    LevelLogic::Object* gun = logic_.object(t.gun);
+    const GunDef* d = gun && gun->index < scene_.level().objects.size() ? gun_def(scene_.level().objects[gun->index].type) : nullptr;
+    if (!d) {
+        t.gun = -1;
+        return;
+    }
+    const bool target = t.aware && t.enemy != kNoEnemy && sees;
+    const float want = target ? yaw_towards(gun->position, chest) : gun->yaw;
+    const float aim = gun->yaw + std::clamp(angle_diff(gun->yaw, want), -d->turn * 0.5f, d->turn * 0.5f);
+    const float step = 120.0f * dt;
+    t.gun_yaw += std::clamp(angle_diff(t.gun_yaw, aim), -step, step);
+    scene_.set_object_pose(gun->index, gun->position, t.gun_yaw);
+    glm::vec3 at;
+    if (!(!d->gunner_node.empty() && scene_.node_position(gun->index, d->gunner_node, at)) &&
+        !scene_.node_position(gun->index, "Dummy_poz_hands_on_minigun", at)) {
+        const float y = glm::radians(t.gun_yaw);
+        at = gun->position - glm::vec3(-std::sin(y), std::cos(y), 0) * 1.3f;
+    }
+    t.pos = glm::vec3(at.x, at.y, gun->position.z), t.yaw = t.gun_yaw;
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    play_state(t, "AttackMachineGun", true);
+    const bool on_it = target && std::abs(angle_diff(t.gun_yaw, want)) < 5.0f;
+    auto stop_loop = [&] {
+        if (t.gun_loop >= 0 && logic_.audio) logic_.audio->stop(t.gun_loop, 50);
+        t.gun_loop = -1;
+    };
+    auto between = [&](float a, float b) { return std::uniform_real_distribution<float>(std::min(a, b), std::max(a, b))(rng_); };
+    switch (t.gun_state) {
+        case 0:   // idle: a burst once it is on a target
+            if (on_it) {
+                t.gun_state = 1, t.gun_timer = between(d->burst_min, d->burst_max), t.gun_shot = 0;
+                if (logic_.audio && !d->loop_sound.empty()) {
+                    Audio::Params p;
+                    p.position = &gun->position, p.loop = 1;
+                    t.gun_loop = logic_.audio->play(d->loop_sound, p);
+                }
+            }
+            break;
+        case 1: {   // a burst: a shot every interval while on it
+            t.gun_timer -= dt, t.gun_shot -= dt;
+            if (on_it && t.gun_shot <= 0) {
+                t.gun_shot = d->interval;
+                glm::vec3 muzzle;
+                if (!scene_.node_position(gun->index, "muzzle", muzzle)) muzzle = gun->position + glm::vec3(0, 0, 1.4f);
+                glm::vec3 dir = glm::normalize(chest - muzzle);
+                std::uniform_real_distribution<float> u(-1.0f, 1.0f);   // a little spread
+                const glm::vec3 side = glm::normalize(glm::cross(dir, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0)), up = glm::cross(side, dir);
+                dir = glm::normalize(dir + (side * u(rng_) + up * u(rng_)) * std::tan(glm::radians(1.0f)));
+                Bolt b{muzzle, dir * d->speed, d->damage, 3.0f, glm::vec4(1, 0.8f, 0.4f, 1), int(&t - targets_.data())};
+                launch_bolt(b, d->looks);
+                ++stats_.enemy_shots;
+            }
+            if (t.gun_timer <= 0 || !target) {
+                t.gun_state = 2, t.gun_timer = between(d->pause_min, d->pause_max);
+                stop_loop();
+                if (!d->stop_sound.empty()) sound(d->stop_sound, &gun->position);
+            }
+            break;
+        }
+        default:   // a pause
+            if ((t.gun_timer -= dt) <= 0) t.gun_state = 0;
+            break;
+    }
+}
+
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
@@ -2535,6 +2627,8 @@ bool Combat::start_ragdoll(Target& t) {
 }
 
 void Combat::die(Target& t) {
+    if (t.gun_loop >= 0 && logic_.audio) logic_.audio->stop(t.gun_loop, 50);   // its gun falls silent
+    t.gun_loop = -1, t.gun = -1;
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
     leave_cover(t);
