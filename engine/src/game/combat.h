@@ -17,6 +17,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -27,6 +28,7 @@
 
 #include "assets/level.h"
 #include "game/navmesh.h"
+#include "game/ragdoll.h"
 #include "render/renderer.h"
 
 namespace nova {
@@ -54,6 +56,7 @@ struct ProjectileLooks {
 
 struct WeaponDef {
     std::string name;
+    int type = -1;                     // its gol type
     int clip = 30, reserve = 210;      // reserve -1: unlimited
     float interval = 0.1f;             // seconds between shots
     bool automatic = true;
@@ -381,6 +384,13 @@ private:
         float invisible_min = 3, invisible_max = 3, visible_min = 1, cloak_damage = 1;
         std::vector<std::pair<float, float>> recent_damage;   // (clock, amount), the last 5 s
         float dissolve = -1;
+        // CPhysicsRagdollComponent (0x8e): [0] has one, [1] its kind in RagdollsSettings;
+        // a bullet's push the damage times [17] times [18], at most [19]; an explosion's [11].
+        bool has_ragdoll = false;
+        int ragdoll_kind = 0;
+        float ragdoll_hit = 90, ragdoll_hit_max = 100, ragdoll_blast = 32;
+        std::shared_ptr<Ragdoll> ragdoll;   // falling
+        float last_damage = 0;
         float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
         // rounds left, a reload under way (its clip's seconds left) and its sounds ([23]).
@@ -857,6 +867,12 @@ private:
     float hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;
     bool killing_headshot_ = false, killing_repel_ = false;   // what the damage being dealt is
     enum class Cause { Shot, Explosion, Fire } damage_cause_ = Cause::Shot;
+    // What the damage being dealt comes from: the weapon or projectile's gol type (for the
+    // death it brings, RagdollsSettings), its direction, and an explosion's centre.
+    int damage_source_ = -1;
+    glm::vec3 damage_dir_{0}, blast_at_{0};
+    RagdollSettings ragdolls_;
+    bool start_ragdoll(Target& t);
     const glm::vec3* damage_point_ = nullptr;   // where a shot struck, for the hurt animation
     // One of the clips of a state of the target's type (StateSetMarine's DeathHeadShot,
     // HurtLeftLeg, ...) that its animation has; empty if none.

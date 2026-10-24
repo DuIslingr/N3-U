@@ -74,6 +74,10 @@ public:
     // A layer over the object's clip: each node's rotation turned by `per_node` (in its own
     // frame; empty: none).
     void set_additive(size_t object, std::vector<glm::quat> per_node);
+    // Nodes placed in the world by game logic (a ragdoll's bones), their children following;
+    // empty: all animated again.
+    void set_node_worlds(size_t object, std::unordered_map<int, glm::mat4> worlds);
+    int node_index(size_t object, const std::string& node) const;   // -1 if none
     // How far the object's current clip has played, 0..1 (1 if none).
     float clip_progress(size_t object) const;
     // The object's current clip: its name, the time into it (ms; looping clips wrap), and
@@ -268,6 +272,7 @@ private:
         GpuModel* own_gpu = nullptr;
         std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)
         std::vector<glm::quat> additive;     // per node, turned by this after its clip (a pose layer); empty: none
+        std::unordered_map<int, glm::mat4> world_override;   // per node: world transform set by game logic (a ragdoll)
         std::unordered_map<int, glm::vec3> node_translation;   // per node: translation set by game logic
         int root_lock = -1;                  // node whose horizontal translation is held (actors)
         glm::vec2 root_xy{0};

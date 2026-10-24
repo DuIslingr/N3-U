@@ -635,6 +635,8 @@ void Scene::pose(AnimatedInstance& a) {
         if (int(n) == a.root_lock) p.translation.x = a.root_xy.x, p.translation.y = a.root_xy.y;
         const glm::mat4 parent = m.parent[n] < 0 ? a.placement : a.world[m.parent[n]];
         a.world[n] = parent * local_matrix(p.translation, p.rotation, p.scale);
+        if (!a.world_override.empty())
+            if (auto o = a.world_override.find(int(n)); o != a.world_override.end()) a.world[n] = o->second;
     }
     float v[16];
     bool any_visibility = false;
@@ -1269,6 +1271,19 @@ bool Scene::object_bounds(size_t object, glm::vec3& min, glm::vec3& max) const {
     if (it == object_instances_.end()) return false;
     min = instances_[it->second].world_min, max = instances_[it->second].world_max;
     return true;
+}
+
+void Scene::set_node_worlds(size_t object, std::unordered_map<int, glm::mat4> worlds) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return;
+    AnimatedInstance& a = *instances_[it->second].anim;
+    a.world_override = std::move(worlds);
+    pose(a);
+}
+
+int Scene::node_index(size_t object, const std::string& node) const {
+    const AnimatedInstance* a = object_anim(object);
+    return a ? find_node(*a->model, node) : -1;
 }
 
 glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {

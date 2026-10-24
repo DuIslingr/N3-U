@@ -67,6 +67,10 @@ public:
     // Nearest hit of a downward ray from `from`, within `max_dist`; returns false if none.
     // `owner` (if given) receives the hit triangle's owner.
     bool ray_down(const glm::vec3& from, float max_dist, float& hit_z, uint32_t* owner = nullptr, uint32_t* tri = nullptr) const;
+    // A sphere at `p` pushed out of the triangles it overlaps; false if it overlapped none.
+    // `normal` (if given) receives the direction of the last push.
+    // `from` (if given): where it was before; a triangle it crossed pushes it back to that side.
+    bool push_sphere(glm::vec3& p, float radius, glm::vec3* normal = nullptr, const glm::vec3* from = nullptr) const;
     // Owners of triangles with a vertex within `radius` of `p` (diagnostics).
     std::vector<uint32_t> owners_near(const glm::vec3& p, float radius) const;
     // First hit along the segment from -> to, as a fraction of its length; false if none.

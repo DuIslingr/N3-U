@@ -388,6 +388,76 @@ bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& 
     return any;
 }
 
+namespace {
+
+// The point of triangle abc nearest p (Ericson, Real-Time Collision Detection 5.1.5).
+glm::vec3 closest_on_triangle(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+    const glm::vec3 ab = b - a, ac = c - a, ap = p - a;
+    const float d1 = glm::dot(ab, ap), d2 = glm::dot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+    const glm::vec3 bp = p - b;
+    const float d3 = glm::dot(ab, bp), d4 = glm::dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+    const glm::vec3 cp = p - c;
+    const float d5 = glm::dot(ab, cp), d6 = glm::dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const float denom = 1 / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
+}  // namespace
+
+bool CollisionWorld::push_sphere(glm::vec3& p, float radius, glm::vec3* normal, const glm::vec3* from) const {
+    std::vector<uint32_t> cand;
+    candidates(p - glm::vec3(radius), p + glm::vec3(radius), cand);
+    bool any = false;
+    for (uint32_t i : cand) {
+        const Triangle& t = tris_[i];
+        const glm::vec3 q = closest_on_triangle(p, t.a, t.b, t.c);
+        const glm::vec3 d = p - q;
+        const float len2 = glm::dot(d, d);
+        glm::vec3 n;
+        if (from) {   // the side it came from: crossed (or as near), back out on that side
+            glm::vec3 face = glm::cross(t.b - t.a, t.c - t.a);
+            if (glm::dot(face, face) < 1e-12f) continue;
+            face = glm::normalize(face);
+            if (glm::dot(*from - t.a, face) < 0) face = -face;
+            const float side = glm::dot(p - t.a, face);
+            if (side >= radius) continue;
+            if (side >= 0 && len2 >= radius * radius) continue;   // beside the triangle, not over it
+            if (side < 0) {   // through it: back onto its face
+                const glm::vec3 on = p - face * side;
+                if (glm::distance(closest_on_triangle(on, t.a, t.b, t.c), on) > 1e-3f) continue;   // past its edge
+                p = on + face * radius;
+            } else {
+                p = q + (len2 > 1e-10f ? d / std::sqrt(len2) : face) * radius;
+            }
+            if (normal) *normal = face;
+            any = true;
+            continue;
+        }
+        if (len2 >= radius * radius) continue;
+        if (len2 > 1e-10f) {
+            n = d / std::sqrt(len2);
+        } else {
+            n = glm::cross(t.b - t.a, t.c - t.a);
+            if (glm::dot(n, n) < 1e-12f) continue;
+            n = glm::normalize(n);
+            if (n.z < 0) n = -n;
+        }
+        p = q + n * radius;
+        if (normal) *normal = n;
+        any = true;
+    }
+    return any;
+}
+
 std::vector<uint32_t> CollisionWorld::owners_near(const glm::vec3& p, float radius) const {
     std::vector<uint32_t> cand, out;
     candidates(p - glm::vec3(radius), p + glm::vec3(radius), cand);

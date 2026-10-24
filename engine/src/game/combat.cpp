@@ -125,7 +125,7 @@ void rect(std::vector<ColorVertex>& out, float x, float y, float w, float h, con
 }  // namespace
 
 Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
-    : scene_(scene), player_(player), logic_(logic), gol_(gol) {
+    : scene_(scene), player_(player), logic_(logic), gol_(gol), ragdolls_(RagdollSettings::load(gol)) {
     // The player's arsenal (CWeaponManager), in the weapon panel's order; the campaign
     // starts with the assault rifle and scripts unlock the rest (UnlockWeapon).
     for (const char* name : {"AssaultRifle_Player", "AutomaticShotGun_Player", "Handgun_Player", "SniperRifle_Player",
@@ -511,7 +511,7 @@ void Combat::repel(const glm::vec3& eye, const glm::vec3& aim) {
         const float d = glm::length(to);
         const float reach = 12.0f * repel_scale;
         if (d > reach || d < 1e-3f || glm::dot(to / d, aim) < 0.7f || !line_clear(eye, c)) continue;
-        killing_repel_ = true;
+        killing_repel_ = true, damage_dir_ = to / d;
         apply_damage(t, 6.0f * (1 - d / (reach + 2)), true);
         killing_repel_ = false;
         // Knocked back along the push, kept on the walkable area.
@@ -544,7 +544,7 @@ void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_p
         const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
         const float d = glm::distance(at, c);
         if (d >= r || !line_clear(at + glm::vec3(0, 0, 0.2f), c)) continue;
-        damage_cause_ = Cause::Explosion;
+        damage_cause_ = Cause::Explosion, blast_at_ = at;
         apply_damage(t, damage * (1 - d / r), by_player);
         damage_cause_ = Cause::Shot;
     }
@@ -762,6 +762,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
         const Value* v = resolved_template(type, gol_, kCompWeapon);
         if (!v || v->size() < 28) break;
         const Value& f = *v;
+        w.type = id;
         w.name = f[0].s;
         // CComponentWeapon::Load: ..., max ammo (+0x4c), clip size (+0x50), ...
         w.reserve = f[16].i;
@@ -986,6 +987,12 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if ((*h)[20].type == Value::String) t.vanish_sound = (*h)[20].s;
     }
     t.dissolve = -1;
+    t.ragdoll.reset();
+    t.has_ragdoll = false;
+    if (const Value* r = component(o, 0x8e); r && r->size() > 19 && (*r)[0].i != 0) {   // CPhysicsRagdollComponent
+        t.has_ragdoll = ragdolls_.shapes.count((*r)[1].i) > 0, t.ragdoll_kind = (*r)[1].i;
+        t.ragdoll_hit = num(*r, 17, 90) * num(*r, 18, 1), t.ragdoll_hit_max = num(*r, 19, 100), t.ragdoll_blast = num(*r, 11, 32);
+    }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 54)
         for (const Value& a : (*npc)[54].list)
@@ -1548,7 +1555,7 @@ void Combat::update_actor(Target& t, float dt) {
     t.timer += dt;
     t.hurt_cooldown = std::max(t.hurt_cooldown - dt, 0.0f);
     if (t.state == S::Dying) {
-        if (scene_.clip_finished(t.object)) {
+        if (t.ragdoll ? !t.ragdoll->step(dt, scene_.collision(), scene_) : scene_.clip_finished(t.object)) {
             t.state = S::Dead;
             // The death clip done: dissolving through the death material, with its sound.
             if (!t.death_model.empty() && scene_.set_object_material(t.object, t.death_model, t.death_material)) {
@@ -2159,6 +2166,7 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     if (!o || o->dead || t.invulnerable || !o->enabled) return;
     if (t.actor && !t.aggr_locked) t.aggr = std::max(t.aggr - amount / t.max_health * t.af_hurt, 0.0f);   // AF_DamageTaken
     o->health -= amount;
+    t.last_damage = amount;
     if (by_player) logic_.runtime_.send_event("TargetHit", t.id);
     if (t.actor) notice(t);
     if (o->health <= 0) {
@@ -2232,6 +2240,35 @@ std::string Combat::state_variant(const Target& t, const std::string& state) {
     return clips.empty() ? std::string() : clips[std::uniform_int_distribution<size_t>(0, clips.size() - 1)(rng_)];
 }
 
+// CPhysicsRagdollComponent::OnEvent (death): the death the killing blow brings
+// (CRagdoll::GetDeathType); unless it is an animated one, the body falls as a ragdoll,
+// pushed by the blow (BulletHit / ExplosionHit / RepelHit).
+bool Combat::start_ragdoll(Target& t) {
+    if (!t.has_ragdoll) return false;
+    const int type = killing_repel_ ? 13 : damage_cause_ == Cause::Explosion ? 8 : damage_cause_ == Cause::Fire ? 0
+                                                                                   : ragdolls_.death_type(damage_source_);
+    if (type == 0) return false;
+    auto r = std::make_shared<Ragdoll>();
+    if (!r->start(scene_, t.object, ragdolls_.shapes.at(t.ragdoll_kind))) return false;
+    scene_.set_clip_speed(t.object, 0);   // the bones it does not move hold as they were
+    // The original's pushes are Bullet impulses; here velocity changes of a like feel.
+    const float shove = std::min(t.last_damage * t.ragdoll_hit, t.ragdoll_hit_max);
+    const glm::vec3 chest = t.pos + glm::vec3(0, 0, t.height * 0.6f);
+    if (type == 8) {   // thrown from the blast, and up
+        const glm::vec3 away = glm::normalize(chest - blast_at_ + glm::vec3(0, 0, 0.5f));
+        r->push(glm::normalize(away + glm::vec3(0, 0, 0.6f)) * std::min(t.ragdoll_blast * 0.2f, 8.0f));
+    } else if (type == 13) {   // repelled
+        r->push(glm::normalize(damage_dir_ + glm::vec3(0, 0, 0.3f)) * 7.0f);
+    } else if (type != 1 && glm::dot(damage_dir_, damage_dir_) > 0) {   // the bullet's push at where it struck
+        const glm::vec3 at = damage_point_ ? *damage_point_ : chest;
+        r->hit(at, damage_dir_ * std::min(shove * 0.05f, 6.0f));
+        r->push(damage_dir_ * std::min(shove * 0.01f, 1.5f));
+    }
+    t.ragdoll = r;
+    if (logic_.trace) log(std::to_string(t.id) + " falls as a ragdoll (death type " + std::to_string(type) + ")");
+    return true;
+}
+
 void Combat::die(Target& t) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
@@ -2264,7 +2301,9 @@ void Combat::die(Target& t) {
         t.cloak = Target::Cloak::Visible, t.script_cloak = false;
         scene_.set_object_material(t.object, "", "");
     }
-    if (t.actor && !death.empty()) {
+    if (t.actor && start_ragdoll(t)) {
+        t.state = Target::State::Dying;
+    } else if (t.actor && !death.empty()) {
         t.state = Target::State::Dying;
         play(t, death, false);
     } else {
@@ -2380,9 +2419,10 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
             if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
             killing_headshot_ = head;
             damage_point_ = &point;
+            damage_source_ = w.type, damage_dir_ = dir;
             if (weapon_types_[size_t(current_)] == "FlameThrower_Player") damage_cause_ = Cause::Fire;
             apply_damage(t, dmg, true);
-            killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot;
+            killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot, damage_source_ = -1;
         } else if (wall) {
             impact(w.impacts, material, end, normal);
         }
@@ -2490,7 +2530,10 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         } else if (hits_target) {
             Target& t = targets_[size_t(hit)];
             if (players) ++stats_.hits, hit_marker_ = 0.15f;
+            damage_source_ = players && b.weapon >= 0 && size_t(b.weapon) < weapons_.size() ? weapons_[size_t(b.weapon)].type : -1;
+            damage_dir_ = seg / std::max(seg_len, 1e-4f), damage_point_ = &hit_p;
             if (b.damage > 0) apply_damage(t, b.damage, players);
+            damage_source_ = -1, damage_point_ = nullptr;
             if (!t.hit_effect.empty()) effect(t.hit_effect, hit_p, -seg);
             else if (impacts) impact(*impacts, 0, hit_p, -seg / std::max(seg_len, 1e-4f));
             stop = hit_p, stopped = true;
