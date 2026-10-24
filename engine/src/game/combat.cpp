@@ -1019,6 +1019,23 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
             }
         }
         w.reload_time = w.clip > 15 ? 1.8f : 1.3f;
+        // CWeaponComponent: the Reload state's clip; its GameEvent 4 fills the clip.
+        const Value* anim = resolved_template(type, gol_, 0x0c);
+        const Value* states = resolved_template(type, gol_, 0x0e);
+        if (anim && anim->size() > 0 && (*anim)[0].type == Value::String && states && states->size() > 1)
+            for (const Value& st : (*states)[1].list) {
+                if (st.size() < 12 || st[0].s != "Reload" || st[11].size() == 0 || st[11][0].size() < 3) continue;
+                const Value& clip = st[11][0];
+                const float speed = std::max(std::fabs(clip[1].as_float()), 0.1f);
+                const float len = scene_.file_clip_length((*anim)[0].s, clip[0].s);
+                if (len <= 0) break;
+                w.reload_time = len / speed;
+                for (const Value& group : clip[2].list)
+                    if (group.size() >= 3 && group[1].s == "GameEvent")
+                        for (const Value& ev : group[2].list)
+                            if (ev.size() >= 4 && ev[3].i == 4) w.reload_refill = std::min(float(ev[1].i) / 1000.0f / speed, w.reload_time);
+                break;
+            }
         break;
     }
     return w;
@@ -1152,8 +1169,8 @@ void Combat::start(bool keep_stats) {
         std::to_string(nav_.triangle_count()) + " triangles");
     for (const WeaponDef& w : weapons_) {
         char line[160];
-        std::snprintf(line, sizeof line, "weapon %s: %.0f ms between shots, clip %d, reserve %d, damage %.1f-%.1f", w.name.c_str(),
-                      w.interval * 1000, w.clip, w.reserve, w.damage_near, w.damage_far);
+        std::snprintf(line, sizeof line, "weapon %s: %.0f ms between shots, clip %d, reserve %d, damage %.1f-%.1f, reload %.2f s (filled at %.2f)",
+                      w.name.c_str(), w.interval * 1000, w.clip, w.reserve, w.damage_near, w.damage_far, w.reload_time, w.reload_refill);
         log(line);
     }
 }
@@ -3212,7 +3229,9 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     const WeaponDef& w = weapon();
     if (reload_left_ > 0) {
         reload_left_ -= dt;
-        if (reload_left_ <= 0) {
+        const bool refill = reload_left_ <= 0 || (w.reload_refill >= 0 && w.reload_time - reload_left_ >= w.reload_refill);
+        if (refill && !reload_filled_) {
+            reload_filled_ = true;
             const int want = w.clip - clip;
             const int take = reserve < 0 ? want : std::min(want, reserve);
             clip += take;
@@ -3229,7 +3248,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         }
     } else if ((in.reload && clip < w.clip) || (clip <= 0 && in.fire)) {
         if (reserve != 0) {
-            reload_left_ = w.reload_time;
+            reload_left_ = w.reload_time, reload_filled_ = false;
             sound(w.reload_sound, nullptr);
         }
     } else if (in.fire && shoot_enabled && fire_cooldown_ <= 0 && clip > 0 && (w.automatic || !trigger_held_)) {

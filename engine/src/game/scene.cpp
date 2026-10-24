@@ -1219,6 +1219,12 @@ float Scene::clip_length(size_t object, const std::string& clip) const {
     return c ? (c->end - c->start) / 1000.0f : 0.0f;
 }
 
+float Scene::file_clip_length(const std::string& anim_file, const std::string& clip) {
+    const AnimationLibrary* lib = animation(anim_file);
+    const AnimClip* c = lib ? lib->clip(clip) : nullptr;
+    return c ? (c->end - c->start) / 1000.0f : 0.0f;
+}
+
 float Scene::clip_root_speed(size_t object, const std::string& clip) const {
     const AnimatedInstance* a = object_anim(object);
     const AnimClip* c = a && a->library ? a->library->clip(clip) : nullptr;

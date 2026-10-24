@@ -147,6 +147,7 @@ public:
     // Clips of the object's animation; a clip's length (seconds) and root-node speed (m/s).
     std::vector<std::string> clip_names(size_t object) const;
     float clip_length(size_t object, const std::string& clip) const;
+    float file_clip_length(const std::string& anim_file, const std::string& clip);   // 0 if missing
     float clip_root_speed(size_t object, const std::string& clip) const;
     void set_clip_speed(size_t object, float speed);
     // Show or hide one of the object's nodes (by name or id) regardless of its animation.

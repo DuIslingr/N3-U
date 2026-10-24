@@ -62,7 +62,9 @@ struct WeaponDef {
     int clip = 30, reserve = 210;      // reserve -1: unlimited
     float interval = 0.1f;             // seconds between shots
     bool automatic = true;
-    float reload_time = 1.8f;
+    // Its Reload state: the clip's length (at its speed), and when its GameEvent 4 fills
+    // the clip (seconds into it; -1 at the end).
+    float reload_time = 1.8f, reload_refill = -1;
     // Its spread (degrees; CComponentWeapon [23]-[27] from the hip, [28]-[32] aiming): the
     // least, the most, its growth per second walking, its shrink per second otherwise and
     // its growth firing (per second of the frame a shot goes in).
@@ -990,6 +992,7 @@ private:
     float since_shot_ = 100;
     unsigned shots_ = 0;
     float fire_cooldown_ = 0, reload_left_ = 0;
+    bool reload_filled_ = false;
     // The spread (degrees; CWeaponComponent +0x5c), whether aiming, where the player was
     // (walking or not), the crosshair's fade (0..1) and fire kick (0..1, +0x1fc), and how
     // far off what the crosshair is on is (-1: nothing within 200 m).
