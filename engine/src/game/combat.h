@@ -494,6 +494,10 @@ private:
         // Script orders (SendEvent): follow the player, hold the position (cover, a
         // mounted gun), AI off, keep within an ai_region box.
         bool follow = false, hold = false, ai_locked = false, has_region = false;
+        // "hurt" false: no hurt reactions (CNPCComponent flag 5); "exit_area": leaving, gone
+        // once out of the player's sight (StartAutoDisable).
+        bool no_hurt = false, exiting = false;
+        float exit_time = 0;
         float paralyzed = 0;   // seconds left frozen by the Paralyze power
         float paralyze_time = 5;   // CHealthComponent::GetParalyzeDuration (health [3], ms)
         glm::vec3 region_min{0}, region_max{0};          // created by a spawn manager (its body is removed later)

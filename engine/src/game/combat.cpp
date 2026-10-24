@@ -1847,6 +1847,25 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         const bool cloak = order == "cloack";
         scene_.set_object_visible(t->object, !cloak);
         t->invulnerable = cloak;
+    } else if (order == "hurt") {   // CNPCComponent::OnEvent: SetFlag(5, !arg)
+        t->no_hurt = !flag;
+    } else if (order == "show_weapons") {   // ShowWeapons: what it holds (not its linked objects)
+        for (size_t i = 0; i < t->attached.size(); ++i)
+            if (std::find(t->linked.begin(), t->linked.end(), i) == t->linked.end()) t->attached[i].on = flag;
+    } else if (order == "exit_area") {
+        // To its zone's nearest way out (ClearActions, StartMove to a zone exit point), then
+        // gone where the player cannot see it (StartAutoDisable). Here: running off away from
+        // the player, without the zone's exit points.
+        const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+        glm::vec2 away = glm::vec2(t->pos - feet);
+        away = glm::length(away) > 1e-3f ? glm::normalize(away) : glm::vec2(1, 0);
+        glm::vec3 goal = t->pos;
+        nav_.nearest(t->pos + glm::vec3(away * 25.0f, 0), 15.0f, goal);
+        NpcGoal g;
+        g.kind = NpcGoal::Kind::Move, g.pos = goal, g.run = true, g.id = -1;
+        leave_cover(*t);
+        t->goals.clear(), t->goals.push_back(g);
+        t->exiting = true, t->exit_time = 0, t->hold = false;
     } else if (order == "flashlight") {   // CLinkedObjectsComponent::OnEvent: "start" / "stop" its first
         if (t->linked.empty()) return false;
         t->attached[t->linked[0]].on = flag;
@@ -2279,6 +2298,21 @@ void Combat::update_actor(Target& t, float dt) {
     }
     t.dash_wait = std::max(t.dash_wait - dt, 0.0f);
     t.jump_wait -= dt, t.throw_wait -= dt;
+    if (t.exiting) {   // leaving: gone once the player cannot see it (or after a while)
+        t.exit_time += dt;
+        const glm::vec3 c = t.pos + glm::vec3(0, 0, t.height * 0.5f);
+        const bool seen = glm::distance(c, player_.eye()) < 40.0f && line_clear(player_.eye(), c);
+        if ((t.goals.empty() || t.exit_time > 6) && (!seen || t.exit_time > 12)) {
+            if (LevelLogic::Object* o = logic_.object(t.id)) logic_.enable(*o, false);
+            t.exiting = false, t.goals.clear();
+            return;
+        }
+        if (t.goals.empty()) {   // farther on
+            const float spent = t.exit_time;
+            npc_order(t.id, "exit_area", 0, true, 0, 0);
+            t.exit_time = spent;
+        }
+    }
     if (t.dashing) {
         update_dash(t, dt);
         if (t.dashing || t.goals.empty()) return;
@@ -3430,7 +3464,7 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     // Flinch now and then: ducking from a blast, else by where the shot struck (the head,
     // a leg by its side, the front).
     // A mech only from a blast of over 15% of its health (CMechAIComponent::OnEvent 0xb/0xd).
-    if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee &&
+    if (t.actor && !t.clip_hurt.empty() && t.hurt_cooldown <= 0 && t.state != Target::State::Melee && !t.no_hurt &&
         (t.mech_ai ? damage_cause_ == Cause::Explosion && amount > t.max_health * 0.15f
                    : std::uniform_real_distribution<float>(0, 1)(rng_) < 0.35f)) {
         std::string clip;
