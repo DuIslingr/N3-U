@@ -322,6 +322,7 @@ public:
     // CLevel::DrawGrenades: enemy grenades that can reach the player (where they are).
     std::vector<glm::vec3> grenade_threats() const;
     float since_shot() const { return since_shot_; }   // seconds since the last shot
+    unsigned shots() const { return shots_; }           // the player's shots so far
     // Shooting (CWeaponComponent's firing flag: set by FireButtonPress, cleared by
     // FireButtonRelease): the trigger held with shots still coming.
     bool firing() const { return trigger_held_ && since_shot_ < 0.2f; }
@@ -843,6 +844,7 @@ private:
     void use_special_weapon(int index, bool on);
     int find_weapon(const std::string& name) const;
     float since_shot_ = 100;
+    unsigned shots_ = 0;
     float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;

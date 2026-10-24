@@ -2319,7 +2319,7 @@ int Combat::ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t,
 
 void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const WeaponDef& w = weapon();
-    since_shot_ = 0;
+    since_shot_ = 0, ++shots_;
     --clip_[size_t(current_)];
     // Aim assist (the original's magnetic cursor): the enemy nearest the crosshair, within
     // three degrees and in sight, takes the shot.

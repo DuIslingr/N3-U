@@ -25,6 +25,7 @@ public:
         std::string weapon;          // gol type, e.g. AssaultRifle_Player
         bool visible = true;
         bool moving = false, firing = false, reloading = false;
+        bool shot = false;           // a shot went off since the last update
         bool aiming = false, running = false;
         bool cockpit = false;        // piloting the mech: its cockpit (Player_Mech_Cockpit) instead
     };
@@ -127,7 +128,7 @@ private:
     std::string base_;             // the looping state the input asks for (Idle, AimWalk, RushWalk, ...)
     bool visible_ = false;
     bool lowered_ = false;         // GetDown: held lowered until GetUp
-    bool was_reloading_ = false;
+    bool was_reloading_ = false, was_firing_ = false;
     std::string requested_, queued_;   // queued_: a state to play after the current one
     std::string movement_;
     std::string camera_request_, camera_clip_;

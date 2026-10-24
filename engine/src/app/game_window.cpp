@@ -553,6 +553,7 @@ void Game::run_window() {
             vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D] ||
                                              touch_in.forward != 0 || touch_in.right != 0);
             vm.firing = combat.firing();
+            vm.shot = combat.shots() != vm_shots_, vm_shots_ = combat.shots();
             vm.reloading = combat.reloading();
             Camera v = cam;
             v.yaw += logic.shake_offset().x, v.pitch += logic.shake_offset().y;

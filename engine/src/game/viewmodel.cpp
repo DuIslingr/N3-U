@@ -177,7 +177,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         switch (s->type) {
             case 3: case 4: case 10: case 11: case 24: case 26: case 37: case 38: return true;
             // 42 also holds GetWeapon and Weapon_Show_Off, which play through.
-            default: return s->name == "Attack" || s->name == "StartRush" || s->name == "EndRush" || s->name == "AimToRush";
+            default: return s->name == "StartRush" || s->name == "EndRush" || s->name == "AimToRush";
         }
     };
     if (in.weapon != weapon_) {   // switched: the new weapon comes up
@@ -214,20 +214,39 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         movement_.clear();
     }
 
-    // CWeaponComponent::Update / FireStop: a fire loop (type 37) ends as soon as the trigger
-    // is let go (or the clip is empty), into the stop state (AimStopAttack while aiming,
-    // Attack_End) or else straight to the idle. Faded: the fire clip is cut mid-way.
-    bool stopped = false;
-    if (cur && cur->type == 37 && !in.firing && !lowered_) {
-        constexpr float kFireCutMs = 120;
-        stopped = play(c, in.aiming ? "AimStopAttack" : "Attack_End", kFireCutMs) ||
-                  play(c, in.aiming ? "AimIdle" : "Idle", kFireCutMs);
+    // CWeaponComponent::FireWeapon: each shot sets the attack state (AimAttack while aiming;
+    // AttackWalk walking, if the weapon has one), started over unless its clip is still
+    // playing (SetMainAnimationState, mode 2): a fire start (Attack -> Attack_Loop) kicks again
+    // at every shot.
+    auto attacking = [](const State* s) { return s && (s->type == 12 || s->type == 37 || s->type == 39); };
+    if (in.shot && !lowered_ && !in.reloading && !busy) {
+        const std::string attack = in.aiming ? "AimAttack" : in.moving && c.has("AttackWalk") ? "AttackWalk" : "Attack";
+        auto it = c.index.find(attack);
+        if (it != c.index.end()) {
+            const State& a = c.states[size_t(it->second)];
+            Scene::ClipState cs;
+            const bool same = !a.clips.empty() && scene_.clip_state(object_, cs) && cs.name == a.clips[0].first &&
+                              (left_ > 0 || (cur && cur->loop));
+            if (!same) play(c, attack);
+        }
         cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
     }
-    // The looping state the input asks for, and the move into it from the last one.
+    // CWeaponManager::FireButtonRelease / FireStop: an attack ends into the stop state
+    // (AimStopAttack while aiming, Attack_End); CWeaponComponent::Update: a fire loop (type 37)
+    // with none goes straight to the idle. Faded: the fire clip is cut mid-way.
+    bool stopped = false;
+    if (!in.firing && !lowered_ && attacking(cur) && (was_firing_ || cur->type == 37)) {
+        constexpr float kFireCutMs = 120;
+        stopped = play(c, in.aiming ? "AimStopAttack" : "Attack_End", kFireCutMs) ||
+                  (cur->type == 37 && play(c, in.aiming ? "AimIdle" : "Idle", kFireCutMs));
+        cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
+    }
+    was_firing_ = in.firing;
+    // The looping state the input asks for, and the move into it from the last one; while
+    // shooting, the attack playing (and what it leads to) stands.
     std::string base;
-    if (in.aiming) base = in.firing ? "AimAttack" : in.moving ? "AimWalk" : "AimIdle";
-    else if (in.firing) base = "Attack_Loop";
+    if (in.firing && attacking(cur)) base = cur->name;
+    else if (in.aiming) base = in.moving ? "AimWalk" : "AimIdle";
     else if (in.moving && in.running && c.has("RushWalk")) base = "RushWalk";
     else base = in.moving ? "Walk" : "Idle";
     if (!c.has(base)) base = in.aiming && c.has("AimIdle") ? "AimIdle" : "Idle";
@@ -236,10 +255,9 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         std::string move;
         if (aim && !was_aim) move = "Aim";
         else if (was_aim && !aim) move = base == "RushWalk" ? "AimToRush" : "UnAim";
-        else if (base == "Attack_Loop") move = "Attack";
+        else if (attacking(c.find(base)) || attacking(c.find(base_))) move = "";
         else if (base == "RushWalk") move = "StartRush";
         else if (base_ == "RushWalk") move = "EndRush";
-        else if (base_ == "Attack_Loop") move = "Attack_End";
         if (!move.empty()) play(c, move);
     }
     base_ = base;
@@ -264,7 +282,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
             place(object_, eye, yaw_deg, pitch_deg);
             return;
         }
-        if ((!n.loop || n.name == base) && play(c, n.name)) {
+        if ((!n.loop || n.name == base || (in.firing && attacking(&n))) && play(c, n.name)) {
             place(object_, eye, yaw_deg, pitch_deg);
             return;
         }

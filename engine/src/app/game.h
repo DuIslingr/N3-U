@@ -96,6 +96,7 @@ private:
     // (x0, y0, x1, y1), centred across, its top 100 (640-high) pixels below the middle.
     glm::vec4 use_button(int w, int h);
     float use_pressed_ = 0;   // seconds the button shows pressed (36)
+    unsigned vm_shots_ = 0;   // the player's shots the view model has seen
     void apply_display();
     void set_menu(bool on);
     void menu_action(PauseMenu::Action a);
