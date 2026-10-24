@@ -1460,6 +1460,9 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
     t.aggro_sounds.clear();
+    t.spider = false, t.jump_phase = 0;
+    if (const Value* sp = component(o, 0x55); sp && sp->size() > 7)   // CBigSpiderAiComponent::CheckJumpAttack
+        t.spider = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
     if (const Value* cfg = component(o, 0x4c); cfg && cfg->size() > 0) t.weapon_kind = (*cfg)[0].i;   // CNPCComponent::LoadConfig
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 55)
         t.aggro_sounds = sound_list((*npc)[55]);
@@ -1627,6 +1630,82 @@ float Combat::vehicle_shield() const {
         if (t.id == v)
             if (const LevelLogic::Object* o = logic_.object(v)) return std::clamp(o->health / std::max(t.max_health, 1.0f), 0.0f, 1.0f);
     return -2;
+}
+
+// CBigSpiderAiComponent::CheckJumpAttack / SetAction(6) / JumpInit / UpdateAction(6).
+bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist) {
+    constexpr float kSpeed = 30, kGravity = 30;
+    if (t.jump_phase == 0) {
+        t.jump_cool -= dt;
+        if (t.jump_cool > 0 || !t.aware || t.enemy == kNoEnemy || !sees || t.state == Target::State::Hurt ||
+            t.state == Target::State::Melee || dist <= t.jump_min || dist >= t.jump_max)
+            return false;
+        const float y = glm::radians(t.yaw);
+        const glm::vec2 to = glm::normalize(glm::vec2(feet - t.pos) + glm::vec2(1e-6f, 0));
+        if (glm::dot(to, glm::vec2(-std::sin(y), std::cos(y))) <= 0.85f) return false;   // facing it
+        t.jump_cool = std::uniform_real_distribution<float>(20.0f, 25.0f)(rng_);
+        t.jump_phase = 1, t.jump_timer = 0, t.jump_event = -1;
+        play_state(t, "JumpStart", false);
+        if (logic_.trace) log(std::to_string(t.id) + " jumps at its target from " + std::to_string(int(dist)) + " m");
+        return true;
+    }
+    t.jump_timer += dt;
+    if (t.jump_phase == 1) {   // gathering itself; then off, at where the target is
+        face(t, feet, dt);
+        if (!scene_.clip_finished(t.object) && t.jump_timer < 1.5f) return true;
+        const glm::vec3 d = feet - t.pos;
+        const float time = std::max(glm::length(d) / kSpeed, 0.1f);
+        t.jump_vel = d / time + glm::vec3(0, 0, kGravity * 0.5f * time);
+        t.jump_goal = feet;
+        t.jump_phase = 2, t.jump_timer = 0, t.tri = -1;
+        play_state(t, "JumpAir", true);
+        return true;
+    }
+    if (t.jump_phase == 2) {   // in the air
+        t.jump_vel.z -= kGravity * dt;
+        const glm::vec3 old = t.pos;
+        t.pos += t.jump_vel * dt;
+        if (glm::length(glm::vec2(t.jump_vel)) > 0.1f) t.yaw = glm::degrees(std::atan2(-t.jump_vel.x, t.jump_vel.y));
+        // Reaching it: the claw on the side it is on, its hit at the clip's event.
+        const float speed = std::max(glm::length(t.jump_vel), 1.0f);
+        if (t.jump_event < 0 && t.enemy != kNoEnemy) {
+            const float y = glm::radians(t.yaw);
+            t.jump_right = glm::dot(glm::vec2(feet - t.pos), glm::vec2(std::cos(y), std::sin(y))) > 0;
+            const float hit_at = t.jump_right ? 0.212f : 0.244f;
+            if (glm::distance(feet, t.pos) / speed < hit_at) {
+                play_state(t, t.jump_right ? "JumpAirAttackRight" : "JumpAirAttackLeft", false);
+                t.jump_event = t.jump_timer + hit_at;
+            }
+        }
+        if (t.jump_event >= 0 && t.jump_timer >= t.jump_event) {
+            t.jump_event = 1e9f;
+            if (on_player && glm::distance(feet, t.pos) < t.melee_range + 1.0f && std::abs(feet.z - t.pos.z) < 2.0f) {
+                damage_player(t.melee_damage, t.pos);
+                scratch_ = t.jump_right ? 1 : 0;
+            }
+        }
+        // Down on the ground (or too long in the air): landing.
+        float floor_z = 0, s = 1;
+        const bool ground = t.jump_vel.z < 0 && scene_.collision().ray_down(t.pos + glm::vec3(0, 0, 0.6f), 1.2f, floor_z) && t.pos.z <= floor_z + 0.05f;
+        const bool wall = scene_.collision().raycast(old + glm::vec3(0, 0, 0.5f), t.pos + glm::vec3(0, 0, 0.5f), s);
+        if (ground || wall || t.jump_timer > 2.5f) {
+            glm::vec3 on;
+            const int tri = nav_.nearest((wall ? old : t.pos) + glm::vec3(0, 0, 0.3f), 6.0f, on);
+            if (tri >= 0) t.tri = tri, t.pos = on;
+            else if (ground) t.pos.z = floor_z;
+            t.jump_phase = 3, t.jump_timer = 0;
+            if (t.jump_event < 0) play_state(t, "JumpLand", false);
+        }
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return true;
+    }
+    // Landing, then back to the hunt.
+    if (scene_.clip_finished(t.object) || t.jump_timer > 1.0f) {
+        t.jump_phase = 0, t.state = Target::State::Chase, t.timer = 0, t.playing.clear();
+        return false;
+    }
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    return true;
 }
 
 Combat::Target* Combat::find_target(int id) {
@@ -2115,6 +2194,7 @@ void Combat::update_actor(Target& t, float dt) {
         update_gunner(t, dt, chest, sees);
         return;
     }
+    if (t.spider && update_spider_jump(t, dt, target, on_player, sees, dist)) return;
     if (t.mobile && !t.hold && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
             glm::vec3 to;
@@ -2193,6 +2273,7 @@ void Combat::update_actor(Target& t, float dt) {
             t.melee_hit = true;
             if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) {
                 if (on_player) damage_player(t.melee_damage, t.pos);
+                if (on_player && t.spider) scratch_ = 0;   // its left claw
                 else if (t.enemy >= 0) apply_damage(targets_[size_t(t.enemy)], t.melee_damage, false);
             }
         }

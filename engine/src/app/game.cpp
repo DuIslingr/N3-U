@@ -329,6 +329,7 @@ void Game::update_frost(float dt) {
     hud.update_frost(dt);
     // The shield's ripple and the blood (CLevel::StartHudEffect, CHud::ShowBlood).
     if (combat.take_hud_damage()) hud.damage_effect();
+    if (const int s = combat.take_scratch(); s >= 0) hud.scratch(s == 1);
     if (const float blood = combat.take_hud_blood(); blood >= 0) hud.show_blood(blood);
     if (combat.take_blood_fade()) hud.fade_blood();
     hud.update_effects(dt);

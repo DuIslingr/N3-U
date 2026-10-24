@@ -77,6 +77,9 @@ public:
     // shield left (`fraction` of the maximum: under 1/4 all of it), until fade_blood() plays
     // the rest of the clip (the regeneration starting) and it goes.
     void show_blood(float fraction);
+    // HUDSpiderScratch (nv_hud_scratch.bdae): a spider's claw across the view, ScratchLeft or
+    // ScratchRight (one of three clips; PlayerComponent::ReceiveDamage, damage types 11/12).
+    void scratch(bool right);
     void fade_blood();
     void update_effects(float dt);
     // Set the frame's HUD camera and draw the HUD's numbers into `sprites`.
@@ -132,7 +135,8 @@ private:
     bool jeep_visible_ = false, mech_ = false;
     int core_shown_ = -1;
     float frost_ = 0, frost_target_ = 0, frost_rate_ = 1;   // 0..1 of the clip
-    size_t damage_ = size_t(-1), blood_ = size_t(-1);
+    size_t damage_ = size_t(-1), blood_ = size_t(-1), scratch_ = size_t(-1);
+    bool scratch_shown_ = false;
     bool damage_shown_ = false, blood_shown_ = false, blood_fading_ = false;
     bool frost_shown_ = false;
     bool weapons_ = true;

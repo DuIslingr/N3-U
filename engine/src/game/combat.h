@@ -346,6 +346,7 @@ public:
     // shield's fraction left); and the blood's fade when the shield starts regenerating.
     bool take_hud_damage() { return std::exchange(hud_damage_, false); }
     float take_hud_blood() { return std::exchange(hud_blood_, -1.0f); }
+    int take_scratch() { return std::exchange(scratch_, -1); }   // a spider's claw: 0 left, 1 right, -1 none
     bool take_blood_fade() { return std::exchange(blood_fade_, false); }
     // The hit indicator: shown while true, pointing `angle` degrees clockwise from straight up.
     bool hit_indicator(float& angle) const {
@@ -579,6 +580,15 @@ private:
         // firing loop [17] and its end [18]): what it sees, its gun turns to and fires at,
         // a shot per loop of the gun's Attack_AI clip; destroyed, it plays Death.
         bool car = false, vehicle = false;   // vehicle: any CVehicleCar (0x96)
+        // A big spider's jump attack (CBigSpiderAiComponent, 0x55: [6] farthest, [7] nearest
+        // it jumps from): JumpStart, a ballistic leap at the target (30 m/s, gravity 30),
+        // a claw in the air as it reaches it (JumpAirAttackLeft/Right, event 5), JumpLand;
+        // then 20-25 s before the next.
+        bool spider = false;
+        float jump_min = 10, jump_max = 20, jump_cool = 0, jump_timer = 0, jump_event = -1;
+        int jump_phase = 0;   // 0 none, 1 start, 2 in the air, 3 landing
+        bool jump_right = false;
+        glm::vec3 jump_vel{0}, jump_goal{0};
         int car_gun_type = -1, car_loop = -1;
         bool car_firing = false, car_muzzle_shown = false;
         float car_interval = 0, car_shot = 0, car_yaw = 0, car_pitch = 0;
@@ -1033,6 +1043,8 @@ private:
     float fire_cooldown_ = 0, reload_left_ = 0;
     bool reload_filled_ = false;
     int low_shield_voice_ = -1;   // sfx_shield_low playing
+    int scratch_ = -1;
+    bool update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist);
     int mech_ = -1;                // the mech piloted (its health is the player's)
     float own_health_ = 0, own_max_health_ = 0;
     // The player's lock-on: the target (index, -1 none), time on it, locked, the lock's
