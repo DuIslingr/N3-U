@@ -295,6 +295,7 @@ bool Combat::try_dash(Target& t, const glm::vec3& to, bool forced, const glm::ve
         std::snprintf(line, sizeof line, "%d dashes to (%.1f %.1f %.1f)%s", t.id, on.x, on.y, on.z, blurred ? "" : " (no blur material)");
         log(line);
     }
+    bark(34, &t);   // CNPCComponent::TrySSToPosition
     return true;
 }
 
@@ -590,6 +591,7 @@ bool Combat::try_vault(Target& t, const CoverPoint& c) {
 }
 
 void Combat::leave_cover(Target& t) {
+    if (t.cover >= 0 && alive(t)) bark(22, &t);   // CNPCComponent::SetPosture: out of cover
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
     t.cover_next.clear();
@@ -631,6 +633,8 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
         const int c = choose_cover(t, target, enemy_eye);
         if (c < 0) return false;
         t.cover = c, covers_[size_t(c)].holder = int(&t - targets_.data());
+        // CNPCComponent::SetPosture: "taking cover" (13), or low (21) / high (20) cover.
+        bark(std::uniform_int_distribution<int>(0, 1)(rng_) == 0 ? 13 : covers_[size_t(c)].low ? 21 : 20, &t);
         if (logic_.trace) {
             char line[160];
             const glm::vec3 p = covers_[size_t(c)].pos;

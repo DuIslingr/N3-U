@@ -863,6 +863,32 @@ private:
     void launch_grenade(const GrenadeDef& def, const glm::vec3& at, const glm::vec3& vel, bool npc);
     // An NPC's throw (CNPCComponent::ThrowGrenadeFromCover): lobbed to land at the target.
     void npc_throw_grenade(Target& t, const glm::vec3& target);
+
+    // NPC barks (NPCBarksManager; gol NPCBarksManager comp 0xa5: [0] seconds between any
+    // two, [2] groups {NPC types, barks {id, seconds before the same again, sounds}}): a
+    // bark of an NPC's group plays at its head, a random sound but not the last one, when
+    // no bark has played for the gap (counted from the end of the last) and the same bark
+    // not for its own time. Without an NPC, the hostile one nearest the player that has it.
+    struct BarkSet {
+        int id = 0;
+        float interval = 5;
+        std::vector<std::string> sounds;
+        float next = 0;
+        int last = -1;
+    };
+    struct BarkGroup {
+        std::vector<int> types;
+        std::vector<BarkSet> barks;
+    };
+    std::vector<BarkGroup> bark_groups_;
+    float bark_gap_ = 1, bark_clock_ = 0, bark_next_ = 0;
+    int bark_voice_ = -1;
+    BarkSet* bark_playing_ = nullptr;
+    void load_barks();
+    BarkSet* bark_set(const Target& t, int id);
+    void bark(int id, const Target* npc);
+    void update_barks(float dt);
+    void acquire_bark(const Target& t);   // CNPCComponent::SetCurrentTarget, from none
     GrenadeDef npc_grenade_def_;
     std::map<int, GrenadeDef> fired_grenades_;   // weapons firing grenades (the grenade launcher), per type
     void update_grenades(float dt);

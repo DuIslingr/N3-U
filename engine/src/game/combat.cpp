@@ -234,6 +234,7 @@ void Combat::throw_grenade(const glm::vec3& eye, const glm::vec3& aim) {
     if (scene_.collision().raycast(eye, at, t)) at = eye;   // too close to a wall
     const GrenadeDef& def = throwing_mine_ ? mine_def_ : grenade_def_;
     launch_grenade(def, at, aim * (def.speed * 0.6f) + glm::vec3(0, 0, 3.5f), false);
+    if (!throwing_mine_) bark(27, nullptr);   // CGrenadeComponent::StartRealThrow: "grenade!"
     if (logic_.trace) log(std::string(throwing_mine_ ? "mine" : "grenade") + " thrown (type " + std::to_string(def.type) + ")");
 }
 
@@ -275,9 +276,100 @@ void Combat::launch_grenade(const GrenadeDef& def, const glm::vec3& at, const gl
     g->trail = def.trail.empty() ? -1 : scene_.particles().start(def.trail, glm::translate(glm::mat4(1), g->pos));
 }
 
+void Combat::load_barks() {
+    bark_groups_.clear();
+    for (const auto& [id, type] : gol_) {
+        if (type.name != "NPCBarksManager") continue;
+        const Value* v = resolved_template(type, gol_, 0xa5);
+        if (!v || v->size() < 3) break;
+        bark_gap_ = num(*v, 0, 1);
+        for (const Value& g : (*v)[2].list) {
+            if (g.size() < 2) continue;
+            BarkGroup group;
+            for (const Value& t : g[0].list)
+                if (t.size() > 0) group.types.push_back(t[0].i);
+            for (const Value& b : g[1].list) {
+                if (b.size() < 3) continue;
+                BarkSet set;
+                set.id = b[0].i, set.interval = b[1].as_float();
+                for (const Value& snd : b[2].list)
+                    if (snd.size() > 0 && snd[0].type == Value::String) set.sounds.push_back(snd[0].s);
+                if (!set.sounds.empty()) group.barks.push_back(std::move(set));
+            }
+            bark_groups_.push_back(std::move(group));
+        }
+        break;
+    }
+}
+
+Combat::BarkSet* Combat::bark_set(const Target& t, int id) {
+    if (t.object >= scene_.level().objects.size()) return nullptr;
+    const int type = scene_.level().objects[t.object].type;
+    for (BarkGroup& g : bark_groups_) {
+        if (std::find(g.types.begin(), g.types.end(), type) == g.types.end()) continue;
+        for (BarkSet& b : g.barks)
+            if (b.id == id) return &b;
+        return nullptr;
+    }
+    return nullptr;
+}
+
+// NPCBarksManager::PlayBark.
+void Combat::bark(int id, const Target* npc) {
+    if (!logic_.audio || bark_voice_ >= 0 || bark_clock_ < bark_next_) return;
+    BarkSet* set = nullptr;
+    if (npc) {
+        set = bark_set(*npc, id);
+    } else {   // GetClosestCompatNPC
+        float best = 1e30f;
+        for (const Target& t : targets_) {
+            if (!t.actor || !t.hostile || !t.aware || !alive(t)) continue;
+            BarkSet* s = bark_set(t, id);
+            const float d = glm::distance(t.pos, player_.center);
+            if (s && d < best) best = d, set = s, npc = &t;
+        }
+    }
+    if (!set || !npc || bark_clock_ < set->next) return;
+    // A random sound, not the last one played.
+    const int n = int(set->sounds.size());
+    int pick = n > 1 ? std::uniform_int_distribution<int>(0, n - 2)(rng_) : 0;
+    if (set->last >= 0 && pick >= set->last && n > 1) ++pick;
+    set->last = pick;
+    const glm::vec3 at = npc->pos + glm::vec3(0, 0, npc->height);
+    Audio::Params p;
+    p.position = &at;
+    bark_voice_ = logic_.audio->play(set->sounds[size_t(pick)], p);
+    if (bark_voice_ < 0) return;
+    bark_playing_ = set;
+    if (logic_.trace) log(std::to_string(npc->id) + " barks " + set->sounds[size_t(pick)]);
+}
+
+void Combat::update_barks(float dt) {
+    bark_clock_ += dt;
+    if (bark_voice_ < 0 || (logic_.audio && logic_.audio->playing(bark_voice_))) return;
+    // Over: the gap before any other, the bark's own time before it again.
+    bark_voice_ = -1, bark_next_ = bark_clock_ + bark_gap_;
+    if (bark_playing_) bark_playing_->next = bark_clock_ + bark_playing_->interval;
+    bark_playing_ = nullptr;
+}
+
+void Combat::acquire_bark(const Target& t) {
+    if (t.enemy == -1 && logic_.player_vehicle() >= 0) return bark(25, &t);   // the player in a jeep
+    if (t.enemy == -1 && logic_.in_mech()) return bark(26, &t);              // in the mech
+    if (std::uniform_int_distribution<int>(0, 1)(rng_) == 0) return bark(5, &t);   // spotted
+    // Where it is: to the side (3 right, 2 left), ahead (1) or behind (4).
+    glm::vec3 feet, chest;
+    if (!enemy_points(t, t.enemy, feet, chest)) return;
+    const float y = glm::radians(t.yaw);
+    const glm::vec2 to = glm::vec2(feet - t.pos), ahead(-std::sin(y), std::cos(y)), right(std::cos(y), std::sin(y));
+    const float f = glm::dot(to, ahead), r = glm::dot(to, right);
+    bark(std::abs(f) <= std::abs(r) ? (r >= 0 ? 3 : 2) : (f > 0 ? 1 : 4), &t);
+}
+
 void Combat::npc_throw_grenade(Target& t, const glm::vec3& target) {
     if (t.grenades <= 0) return;
     --t.grenades;
+    bark(8, &t);   // CNPCComponent::ThrowGrenade
     const float y = glm::radians(t.yaw);
     const glm::vec3 hand = t.pos + glm::vec3(0, 0, t.stand_height * 0.9f) + glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.2f);
     // A lob landing at the target: across in a time set by the throw speed, with gravity.
@@ -1163,6 +1255,8 @@ void Combat::start(bool keep_stats) {
     }
     load_covers();
     load_jump_points();
+    load_barks();
+    bark_voice_ = -1, bark_playing_ = nullptr, bark_next_ = bark_clock_ = 0;
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, " +
         std::to_string(breakables_.size()) + " breakables, nav mesh " +
@@ -1891,7 +1985,11 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
     if (t.attacks == 0 && t.locked < 0) return;
-    if ((t.choose_timer -= dt) <= 0) t.choose_timer = 0.4f, t.enemy = choose_enemy(t);
+    if ((t.choose_timer -= dt) <= 0) {
+        const int before = t.enemy;
+        t.choose_timer = 0.4f, t.enemy = choose_enemy(t);
+        if (before == kNoEnemy && t.enemy != kNoEnemy) acquire_bark(t);
+    }
     glm::vec3 target, chest;
     if (!enemy_points(t, t.enemy, target, chest)) t.enemy = kNoEnemy, target = t.pos, chest = t.pos;
     const bool on_player = t.enemy == -1;
@@ -2151,6 +2249,7 @@ void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool
         Scene::ClipState cs;
         if (!clips.empty() && scene_.play_clip(t.object, clips[size_t(rng_()) % clips.size()], false) && scene_.clip_state(t.object, cs)) {
             t.playing = cs.name, t.reload_left = std::max(cs.length / 1000.0f, 0.3f);
+            bark(19, &t);   // reloading
             if (logic_.trace) log(std::to_string(t.id) + " reloads (" + cs.name + ")");
         } else {
             refill(t);
@@ -2184,6 +2283,9 @@ void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool
                 return;
             }
             t.shots_left = t.burst;
+            // CNPCComponent::StartFire: a rocket marine (36) or a sniper (38) calls it.
+            if (t.bolt_splash > 0) bark(36, &t);
+            else if (lower(t.type).find("sniper") != std::string::npos) bark(38, &t);
             // The type's attack choice (BA_ChooseAttack: by accuracy and chance) picks a
             // behaviour: its shots and the gap between them.
             t.behaviour.clear();
@@ -2754,6 +2856,7 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
         t.timer = 0;
         t.hurt_cooldown = 2.5f;
         play(t, clip, false);
+        bark(15, &t);   // CNPCComponent::OnEvent (hurt): injured
     }
 }
 
@@ -2828,9 +2931,9 @@ void Combat::die(Target& t) {
     t.gun_loop = -1, t.gun = -1;
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
-    leave_cover(t);
     if (t.held >= 0) drop_held(t);   // CNPCComponent::OnEvent 0xe: RemoveTentacle, DropTrownObject
     o->dead = true;
+    leave_cover(t);
     o->health = 0;
     t.timer = 0;
     t.token = false;
@@ -2924,6 +3027,11 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const WeaponDef& w = weapon();
     since_shot_ = 0, ++shots_;
     --clip_[size_t(current_)];
+    // CWeaponComponent::FireWeapon: the enemy calls out a sniper rifle, a flamethrower or
+    // a rocket launcher.
+    if (w.type == 2038) bark(28, nullptr);
+    else if (w.type == 15186) bark(29, nullptr);
+    else if (w.type == 1011) bark(24, nullptr);
     // Aim assist (the original's magnetic cursor): the enemy nearest the crosshair, within
     // three degrees and in sight, takes the shot.
     glm::vec3 aimed = aim;
@@ -3016,6 +3124,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     update_spawners(dt);
     update_pickups(dt);
     update_damage_zones(dt);
+    update_barks(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);
@@ -3101,6 +3210,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         if (!player_dead && shooter && (shooter->attacks & kPlayerTeamBit) && glm::length(glm::vec2(off)) < player_.radius.x + 0.15f &&
             std::abs(off.z) < player_.radius.z) {
             damage_player(b.damage, b.pos);
+            bark(18, nullptr);   // PlayerComponent::ReceiveDamage: one of them calls the hit
             stop = c, stopped = true;
         } else if (hits_target) {
             Target& t = targets_[size_t(hit)];
