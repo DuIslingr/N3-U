@@ -339,6 +339,10 @@ std::vector<Placement> model_placements(const Level& level, const Gol& gol, bool
             p.anim_clip = (*anim)[1].s;
             p.anim_speed = (*anim)[2].as_float();
         }
+        // A throwable physics object (CPhysicsObjectComponent [1]: the Alien Commanders'
+        // telekinesis) moves: posable.
+        if (library)
+            if (const Value* phys = resolved_template(g->second, gol, 0x8f); phys && phys->size() > 1 && (*phys)[1].i != 0) p.animated = true;
         out.push_back(std::move(p));
     }
     return out;

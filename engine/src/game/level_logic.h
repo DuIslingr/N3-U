@@ -254,6 +254,8 @@ public:
     // StartEffect / StopEffect: the object's effect `index` (its built-in effect: any index).
     bool start_effect(Object& o, int index);
     void stop_effect(Object& o, int index);
+    // The object's running effects moved to where its nodes now are (it was moved).
+    void move_effects(Object& o);
     void message(const std::string& text, float seconds);
     // ShowDialogMessage: voice-over lines in order (each shown while its voice plays);
     // "MessageEnd" is sent after the last.

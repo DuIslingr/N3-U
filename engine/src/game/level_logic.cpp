@@ -243,6 +243,12 @@ void LevelLogic::update_player_effects() {
         if (e.handle >= 0) scene.particles().move(e.handle, at);
 }
 
+void LevelLogic::move_effects(Object& o) {
+    if (o.index == std::numeric_limits<size_t>::max()) return;
+    for (Object::EffectSlot& e : o.effects)
+        if (e.handle >= 0) scene.particles().move(e.handle, scene.object_matrix(o.index, e.node));
+}
+
 void LevelLogic::stop_effect(Object& o, int index) {
     if (o.effects.size() == 1) index = 0;
     if (index < 0 || size_t(index) >= o.effects.size()) return;

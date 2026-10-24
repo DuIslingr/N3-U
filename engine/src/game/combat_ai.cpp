@@ -54,7 +54,12 @@ void Combat::read_ai(Target& t, const Value& ai) {
     t.use_covers = ai.size() > 6 && ai[6].i != 0;
     t.can_dash = ai.size() > 9 && ai[9].i != 0;
     t.can_jump = ai.size() > 11 && ai[11].i != 0;
-    t.jump_wait_min = field(ai, 39, 5000) / 1000.0f, t.jump_wait_max = field(ai, 40, 7000) / 1000.0f;
+    t.can_throw = ai.size() > 12 && ai[12].i != 0;
+    t.throw_wait_min = field(ai, 39, 5000) / 1000.0f, t.throw_wait_max = field(ai, 40, 7000) / 1000.0f;
+    t.throw_reach = field(ai, 46, 20), t.throw_enemy_min = field(ai, 47, 5), t.throw_object_min = field(ai, 48, 5);
+    t.throw_drag = field(ai, 50, 2.5f);
+    t.throw_wait = t.throw_wait_min;
+    t.jump_wait_min = field(ai, 37, 6000) / 1000.0f, t.jump_wait_max = field(ai, 38, 12000) / 1000.0f;
     t.jump_wait = t.jump_wait_min;
     t.dash_wait_min = field(ai, 31, 5000) / 1000.0f, t.dash_wait_max = field(ai, 32, 10000) / 1000.0f;
     t.attack_min = field(ai, 21, 1000) / 1000.0f, t.attack_max = field(ai, 22, 3000) / 1000.0f;
@@ -73,7 +78,7 @@ void Combat::read_ai(Target& t, const Value& ai) {
             band.fire = field(b, 13, 100), band.lean = field(b, 14, 0), band.blind = field(b, 15, 0);
             band.peek = field(b, 16, 0), band.roll = field(b, 17, 0), band.grenade = field(b, 18, 0);
             band.crouch_min = field(b, 6, 0) / 1000.0f, band.crouch_max = field(b, 7, 0) / 1000.0f;
-            band.jump = field(b, 11, 0);
+            band.jump = field(b, 11, 0), band.throw_chance = field(b, 12, 0);
             t.bands.push_back(band);
         }
 }
@@ -359,6 +364,123 @@ bool Combat::try_jump(Target& t, const glm::vec3& enemy_feet, const glm::vec3& e
     t.goals.push_back(leap);
     if (logic_.trace) log(std::to_string(t.id) + " jumps from jump point " + std::to_string(from->id) + " to " + std::to_string(to->id));
     return true;
+}
+
+bool Combat::try_throw(Target& t, const glm::vec3& enemy_feet) {
+    if (!t.can_throw || t.held >= 0 || t.throw_wait > 0) return false;
+    t.throw_wait = std::uniform_real_distribution<float>(t.throw_wait_min, std::max(t.throw_wait_max, t.throw_wait_min))(rng_);
+    const Target::Band* b = band(t);
+    if (!b || std::uniform_real_distribution<float>(0.0f, 100.0f)(rng_) >= b->throw_chance) return false;
+    if (glm::distance(t.pos, enemy_feet) < t.throw_enemy_min) return false;
+    // CNPCComponent::CanThrowObject: an object in its zone, within reach and roughly ahead
+    // (cosine 0.408), far enough from the enemy, whose way from where it would be held (the
+    // drag distance ahead, raised) to the enemy is clear.
+    const glm::vec3 ahead(-std::sin(glm::radians(t.yaw)), std::cos(glm::radians(t.yaw)), 0);
+    const int zone = scene_.zones().zone_at(t.pos + glm::vec3(0, 0, 1));
+    std::vector<int> choices;   // a random one of those that fit
+    for (size_t i = 0; i < targets_.size(); ++i) {
+        const Target& o = targets_[i];
+        if (!o.throwable || o.flight || !alive(o)) continue;
+        if (const LevelLogic::Object* lo = logic_.object(o.id); !lo || !lo->enabled || !lo->visible) continue;
+        if (scene_.zones().zone_at(o.pos + glm::vec3(0, 0, 0.5f)) != zone) continue;
+        const glm::vec3 to = o.pos - t.pos;
+        if (glm::length(to) > t.throw_reach || glm::distance(o.pos, enemy_feet) < t.throw_object_min) continue;
+        if (glm::dot(glm::normalize(to), ahead) < 0.408f) continue;
+        if (!line_clear(t.pos + ahead * t.throw_drag + glm::vec3(0, 0, o.throw_lift + t.height * 0.5f), enemy_feet + glm::vec3(0, 0, 1)))
+            continue;
+        choices.push_back(int(i));
+    }
+    if (choices.empty()) return false;
+    const int pick = choices[size_t(std::uniform_int_distribution<int>(0, int(choices.size()) - 1)(rng_))];
+    Target& o = targets_[size_t(pick)];
+    t.held = pick, t.throw_stage = 0, t.throw_timer = 0;
+    o.flight = 1, o.thrower = int(&t - targets_.data()), o.flight_from = o.pos, o.flight_t = 0;
+    const glm::vec3 grab(scene_.object_matrix(t.object, t.grab_node)[3]);
+    o.flight_len = 0.3f + glm::distance(o.pos, grab) * 0.05f;   // pulled at about 20 m/s
+    const std::string start = logic_.state_clip(scene_.level().objects[t.object].type, "ThrowAttackStart");
+    if (!start.empty()) play(t, start, false);
+    sound(t.telekinesis_sound, &t.pos);
+    if (logic_.trace) log(std::to_string(t.id) + " lifts " + std::to_string(o.id));
+    return true;
+}
+
+void Combat::drop_held(Target& t) {   // DropTrownObject
+    if (t.held >= 0 && size_t(t.held) < targets_.size()) {
+        Target& o = targets_[size_t(t.held)];
+        if (o.flight == 1 || o.flight == 2) o.flight = 3, o.flight_vel = glm::vec3(0);
+    }
+    t.held = -1;
+}
+
+void Combat::update_throw(Target& t, float dt, const glm::vec3& enemy_chest) {
+    // Pulled in (ThrowAttackStart, then ThrowAttackIdle), then ThrowAttack lets go at its
+    // GameEvent 10 (309 ms), then ThrowAttackEnd.
+    const int type = scene_.level().objects[t.object].type;
+    auto clip = [&](const char* s) { return logic_.state_clip(type, s); };
+    Target& o = targets_[size_t(t.held)];
+    if (!alive(o) || o.flight == 0) {
+        t.held = -1;
+        return;
+    }
+    face(t, enemy_chest, dt);
+    t.throw_timer += dt;
+    switch (t.throw_stage) {
+        case 0:   // pulling
+            if (scene_.clip_finished(t.object)) play(t, clip("ThrowAttackIdle"), true);
+            if (o.flight == 2) {
+                const std::string throwing = clip("ThrowAttack");
+                play(t, throwing, false);
+                t.throw_stage = 1, t.throw_timer = 0;
+            }
+            break;
+        case 1:   // throwing
+            if (t.throw_timer >= 0.309f) {
+                // CPhysicsObjectComponent::Throw: across at its speed, up enough to land on the target.
+                const glm::vec3 d = enemy_chest - o.pos;
+                const float across = std::max(glm::length(glm::vec2(d)), 0.1f), time = across / o.throw_speed;
+                o.flight_vel = glm::vec3(glm::vec2(d) / across * o.throw_speed, d.z / time + 0.5f * 9.8f * time);
+                o.flight = 3, o.flight_t = 0;
+                sound(t.telekinesis_end_sound, &t.pos);
+                t.throw_stage = 2;
+                if (logic_.trace) log(std::to_string(t.id) + " throws " + std::to_string(o.id));
+            }
+            break;
+        default:
+            if (scene_.clip_finished(t.object)) {
+                play(t, clip("ThrowAttackEnd"), false);
+                t.held = -1;
+            }
+            break;
+    }
+}
+
+void Combat::update_flight(Target& o, float dt) {
+    o.flight_t += dt;
+    if (o.flight == 1 || o.flight == 2) {   // pulled to the thrower's grab node, held there
+        const Target* t = o.thrower >= 0 && size_t(o.thrower) < targets_.size() ? &targets_[size_t(o.thrower)] : nullptr;
+        if (!t || !alive(*t) || t->held != int(&o - targets_.data())) {
+            o.flight = 3, o.flight_vel = glm::vec3(0);
+            return;
+        }
+        const glm::vec3 grab(scene_.object_matrix(t->object, t->grab_node)[3]);
+        const float k = std::min(o.flight_t / o.flight_len, 1.0f);
+        o.pos = glm::mix(o.flight_from, grab - glm::vec3(0, 0, 0.5f), k * k * (3 - 2 * k));
+        if (k >= 1) o.flight = 2;
+    } else {   // flying: under gravity until it meets something, then it goes off
+        const glm::vec3 from = o.pos;
+        o.flight_vel.z -= 9.8f * dt;
+        o.pos += o.flight_vel * dt;
+        const glm::vec3 c = o.pos + glm::vec3(0, 0, 0.5f);
+        const bool landed = !line_clear(from + glm::vec3(0, 0, 0.5f), c) ||
+                            glm::distance(c, player_center()) < player_.radius.z + 0.5f || o.flight_t > 30;
+        if (landed) {
+            o.flight = 0;
+            if (LevelLogic::Object* lo = logic_.object(o.id)) lo->health = 0;
+            apply_damage(o, 1e6f, false);
+        }
+    }
+    scene_.set_object_pose(o.object, o.pos, scene_.level().objects[o.object].base ? scene_.level().objects[o.object].base->rotation.z : 0.0f);
+    if (LevelLogic::Object* lo = logic_.object(o.id)) lo->position = o.pos, logic_.move_effects(*lo);
 }
 
 void Combat::leave_cover(Target& t) {

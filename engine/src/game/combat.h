@@ -456,6 +456,7 @@ private:
         float fire = 100, lean = 0, blind = 0, peek = 0, roll = 0, grenade = 0;
         float crouch_min = 0, crouch_max = 0;   // seconds crouched in the open (after a roll out)
         float jump = 0;                         // [11]: % to jump to a jump point when it may
+        float throw_chance = 0;                 // [12]: % to throw an object when it may
         };
         std::vector<Band> bands;
         // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
@@ -475,9 +476,26 @@ private:
         float dash_blend = 0, dash_blend_ms = 0;   // the blur material's BlendFactor (CGameObject::MatsUpdate)
         glm::vec3 dash_from{0}, dash_to{0};
         // Jumping between jump points (CAIComponent::HideFromThreats, ChooseJumpPointInRange):
-        // AI [11] can; a chance every AI [39]-[40] ms (timer 4); the take-off point at most
+        // AI [11] can; a chance every AI [37]-[38] ms (timer 4); the take-off point at most
         // NPC [52] m of path away, walked to beyond NPC [53] m.
         bool can_jump = false;
+        // Telekinesis (CNPCComponent::ChooseAttack / CanThrowObject / UpdateUpperBodyThrow /
+        // DoThrowCurrentObject): AI [12] can; by the band's chance every AI [39]-[40] ms, an
+        // object within AI [46] m of it, at least AI [48] m from the enemy, the enemy at least
+        // AI [47] m away; pulled to NPC [59]'s node with NPC [56] playing, flung with [57].
+        bool can_throw = false;
+        float throw_wait = 0, throw_wait_min = 5, throw_wait_max = 7, throw_reach = 20, throw_enemy_min = 5, throw_object_min = 5;
+        float throw_drag = 2.5f;   // AI [50]: how far in front it holds the object
+        std::string grab_node, telekinesis_sound, telekinesis_end_sound;
+        int held = -1, throw_stage = 0;   // held: the object (index); stages: pulling, throwing, after
+        float throw_timer = 0;
+        // A throwable object (CPhysicsObjectComponent [1]; [6] m/s across when thrown): pulled,
+        // held, then flying on a ballistic arc (CPhysicsObjectComponent::Throw) until it lands.
+        bool throwable = false;
+        float throw_speed = 22, throw_lift = 1;   // [6]; CThrowMotionComponent [6]: raised this far when grabbed
+        int flight = 0, thrower = -1;   // flight: 1 pulled, 2 held, 3 flying
+        glm::vec3 flight_from{0}, flight_vel{0};
+        float flight_t = 0, flight_len = 0.5f;
         float jump_wait = 0, jump_wait_min = 5, jump_wait_max = 7, jump_reach = 8, jump_walk = 2;
         int cover = -1;
         enum class CoverPhase { Moving, Hidden, Acting } cover_phase = CoverPhase::Moving;
@@ -651,6 +669,10 @@ private:
     std::vector<JumpPoint> jump_points_;
     void load_jump_points();
     bool try_jump(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest);
+    bool try_throw(Target& t, const glm::vec3& enemy_feet);
+    void update_throw(Target& t, float dt, const glm::vec3& enemy_chest);
+    void update_flight(Target& o, float dt);
+    void drop_held(Target& t);
     // EnterLowCoverRoll: into a low cover about a roll away; false when it can't.
     bool roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye);
     void set_crouched(Target& t, bool on);

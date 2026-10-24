@@ -891,6 +891,9 @@ void Combat::start(bool keep_stats) {
             t.death_node = str(*tg, 15);
         }
         t.explosive = lower(o.name).find("explosive") != std::string::npos;
+        if (const Value* phys = component(o, 0x8f); phys && phys->size() > 6 && (*phys)[1].i != 0)   // CPhysicsObjectComponent
+            t.throwable = true, t.throw_speed = std::max(num(*phys, 6, 22), 1.0f);
+        if (const Value* motion = component(o, 0x3b); motion && motion->size() > 6) t.throw_lift = num(*motion, 6, 1);   // CThrowMotionComponent
         if (t.explosive) t.radius = 0.5f, t.height = 1.0f;
         const bool ai = component(o, kCompAi) || component(o, 0x55) || component(o, 0x21) || component(o, 0x57) ||
                         component(o, 0x59) || component(o, 0x23);
@@ -1006,6 +1009,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 53) {   // super speed, jumping
         t.dash_side = num(*npc, 30, 7), t.dash_min = num(*npc, 31, 5), t.dash_speed = std::max(num(*npc, 32, 12), 1.0f);
         t.jump_reach = num(*npc, 52, 8), t.jump_walk = num(*npc, 53, 2);
+        if (npc->size() > 59) t.telekinesis_sound = str(*npc, 56), t.telekinesis_end_sound = str(*npc, 57), t.grab_node = str(*npc, 59);
     }
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 69 && (*npc)[62].type == Value::String && !(*npc)[62].s.empty()) {
         t.cloak_model = (*npc)[62].s, t.cloak_material = (*npc)[63].s;
@@ -1558,7 +1562,7 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
     t.dash_wait = std::max(t.dash_wait - dt, 0.0f);
-    t.jump_wait -= dt;
+    t.jump_wait -= dt, t.throw_wait -= dt;
     if (t.dashing) {
         update_dash(t, dt);
         if (t.dashing || t.goals.empty()) return;
@@ -1631,6 +1635,16 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
 
+    if (t.held >= 0) {   // telekinesis under way
+        update_throw(t, dt, chest);
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
+    // ChooseAttack: between attacks, a telekinetic may throw an object instead.
+    if (t.state == S::Attack && t.attack_state.empty() && t.reload_left <= 0 && sees && try_throw(t, target)) {
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
     // CAIComponent::HideFromThreats: a jumper not busy attacking or reloading may jump.
     const bool between_attacks = t.attack_choices.empty() ? t.shots_left <= 0 : t.attack_state.empty();
     if ((t.state == S::Chase || (t.state == S::Attack && between_attacks)) && t.reload_left <= 0 && t.cover < 0 &&
@@ -2402,6 +2416,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             continue;
         }
         if (t.actor) update_actor(t, dt), update_cloak(t, dt);
+        else if (t.flight) update_flight(t, dt);
         else if (t.paralyzed > 0) update_paralysis(t, dt);
     }
     // Keep actors apart.
