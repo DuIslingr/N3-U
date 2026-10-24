@@ -364,6 +364,9 @@ void Game::draw_text(FrameParams& f, int w, int h) {
         hs.clip_size = combat.clip_size();
         hud.frame(f, w, h, hs, hud_sprites);
         if (hs.visible) draw_crosshair(w, h);
+        if (hs.visible && combat.hit_marker())   // CLevel::Render2DInterface
+            if (const Sprite* cb = hud.sprite("chatboard.bsprite"))
+                hud.draw_frame(hud_sprites, *cb, 231, {float(w) * 0.5f, float(h) * 0.5f}, hud.sprite_scale("chatboard.bsprite"), glm::vec4(1));
         if (float angle = 0; hs.visible && combat.hit_indicator(angle))   // CLevel::Render2DInterface
             if (const Sprite* cs = hud.sprite("controls.bsprite"))
                 hud.draw_frame_rotated(hud_sprites, *cs, 60, {float(w) * 0.5f, float(h) * 0.5f}, hud.sprite_scale("controls.bsprite"),

@@ -256,6 +256,9 @@ public:
         float distance = -1;       // the scope's: to what it is on
     };
     Crosshair crosshair() const;
+    // CLevel::StartHitMarker: the player's shot hit something that takes damage (Chatboard
+    // frame 231 in the middle while it lasts).
+    bool hit_marker() const { return hit_marker_ > 0; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
     // SetMinEnemiesOnPlayer / RestoreMinEnemiesOnPlayer (CAIController +0xac, 1 to start

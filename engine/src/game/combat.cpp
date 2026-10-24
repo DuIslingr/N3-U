@@ -19,6 +19,7 @@ namespace nova {
 namespace {
 
 constexpr int kCompBreakable = 0x13;
+constexpr int kLightningGunType = 9007;   // AlienLightningGun_Player: a longer hit marker
 constexpr int kCompHealth = 0x11;
 constexpr int kCompAirNavigation = 0x1b;
 constexpr int kCompGroundNavigation = 0x1d;
@@ -119,12 +120,6 @@ void glow(std::vector<ColorVertex>& out, const glm::vec3& p, float size, const g
     const uint32_t centre = pack_rgba(c), edge = pack_rgba(glm::vec4(glm::vec3(c), 0));
     const glm::vec3 ring[4] = {p + right, p + up, p - right, p - up};
     for (int k = 0; k < 4; ++k) out.insert(out.end(), {{p, centre}, {ring[k], edge}, {ring[(k + 1) % 4], edge}});
-}
-
-void rect(std::vector<ColorVertex>& out, float x, float y, float w, float h, const glm::vec4& c) {
-    const uint32_t p = pack_rgba(c);
-    out.insert(out.end(), {{{x, y, 0}, p}, {{x + w, y, 0}, p}, {{x + w, y + h, 0}, p},
-                           {{x, y, 0}, p}, {{x + w, y + h, 0}, p}, {{x, y + h, 0}, p}});
 }
 
 }  // namespace
@@ -2637,7 +2632,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
             const bool head = t.headshots && point.z > t.pos.z + t.height * 0.84f;
             if (head) dmg *= 2;   // CTargetableComponent head multiplier
             ++stats_.hits;
-            hit_marker_ = 0.15f;
+            hit_marker_ = w.type == kLightningGunType ? 0.15f : 0.075f;
             if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
             killing_headshot_ = head;
             damage_point_ = &point;
@@ -2753,7 +2748,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             stop = c, stopped = true;
         } else if (hits_target) {
             Target& t = targets_[size_t(hit)];
-            if (players) ++stats_.hits, hit_marker_ = 0.15f;
+            if (players) ++stats_.hits, hit_marker_ = b.weapon >= 0 && size_t(b.weapon) < weapons_.size() && weapons_[size_t(b.weapon)].type == kLightningGunType ? 0.15f : 0.075f;
             damage_source_ = players && b.weapon >= 0 && size_t(b.weapon) < weapons_.size() ? weapons_[size_t(b.weapon)].type : -1;
             damage_dir_ = seg / std::max(seg_len, 1e-4f), damage_point_ = &hit_p;
             if (b.damage > 0) apply_damage(t, b.damage, players);
@@ -3016,18 +3011,8 @@ void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const
     }
     for (const Spark& s : sparks_) glow(o.world, s.pos, 0.25f, glm::vec4(glm::vec3(s.color), std::min(s.life * 8, 1.0f)), eye);
 
-    // HUD, in pixels.
-    const float w = float(width), h = float(height), u = h / 720.0f;
-    const float cx = w * 0.5f, cy = h * 0.5f;
-    const float th = std::max(2 * u, 1.0f);
-    if (hit_marker_ > 0) {
-        const float s = 7 * u, a = hit_marker_ / 0.15f;
-        for (int k = 0; k < 4; ++k) {
-            const float dx = (k & 1) ? 1.0f : -1.0f, dy = (k & 2) ? 1.0f : -1.0f;
-            rect(o.screen, cx + dx * (s + 2 * u) - th / 2, cy + dy * (s + 2 * u) - th / 2, th * 2, th * 2, {1, 1, 1, a});
-        }
-    }
-    // (Health shows as the damage flash, ammo on the HUD's weapon panel: game/hud.cpp.)
+    // (The crosshair, the hit marker, health and ammo are the HUD's: app/game.cpp, game/hud.cpp.)
+    (void)width, (void)height;
 }
 
 int Combat::count_teams(uint32_t team_mask) const {
