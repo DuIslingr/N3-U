@@ -466,6 +466,7 @@ void Game::run_window() {
                     in.forward = glm::clamp(float(keys[SDL_SCANCODE_W]) - float(keys[SDL_SCANCODE_S]) + touch_in.forward, -1.0f, 1.0f);
                     in.right = glm::clamp(float(keys[SDL_SCANCODE_D]) - float(keys[SDL_SCANCODE_A]) + touch_in.right, -1.0f, 1.0f);
                     in.forward *= logic.move_sensitivity, in.right *= logic.move_sensitivity;
+                    if (aiming && opt.scripts) in.forward *= combat.weapon().aim_move, in.right *= combat.weapon().aim_move;   // ComputeControlVelocity
                 }
                 in.jump = lc.jump && !mech && (keys[SDL_SCANCODE_SPACE] || touch_in.jump);
                 in.run = lc.rush && logic.player_rush && !aiming && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);

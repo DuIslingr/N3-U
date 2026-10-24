@@ -916,6 +916,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
             w.cross_aiming = f[33].i != 0, w.cross_px = f[34].i, w.cross_plus = f[36].i != 0;
             w.scope = f[46].i != 0;
         }
+        if (f.size() > 52) w.aim_move = num(f, 52, 1);
         if (f.size() > 35 && f[35].type == Value::String) w.sprite = f[35].s;
         // Fire modes {?, projectile type, continuous, continuous delay (ms), ...}.
         if (f[4].size() > 0 && f[4][0].size() > 3) {

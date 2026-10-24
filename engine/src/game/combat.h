@@ -75,6 +75,7 @@ struct WeaponDef {
     // looking through it.
     int cross_px = 15;
     bool cross_plus = false, cross_aiming = false, scope = false;
+    float aim_move = 1;                // [52]: the player's speed aiming (GetAimPlayerMoveFactor)
     // CProjectileComponent::GetDamage: `near` damage up to near_dist, `far` beyond far_dist.
     float damage_near = 2, damage_far = 1, near_dist = 30, far_dist = 30;
     // Sounds (CComponentWeapon fire mode): one per shot, or a loop while firing and its end.
