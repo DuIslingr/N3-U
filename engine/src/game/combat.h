@@ -41,6 +41,16 @@ struct Impacts {
     std::unordered_map<int, std::vector<std::string>> sounds;
 };
 
+// A projectile's looks in flight (CProjectileComponent and its game object): the object
+// it carries ([36]: the bullet streak), its effects (autostart, and [23] when [22]) and its
+// own model (its type, when it has a mesh). With none of these, our glow.
+struct ProjectileLooks {
+    int trail = -1;
+    std::vector<std::string> fx;
+    int body = -1;
+    bool any() const { return trail >= 0 || !fx.empty() || body >= 0; }
+};
+
 struct WeaponDef {
     std::string name;
     int clip = 30, reserve = 210;      // reserve -1: unlimited
@@ -55,10 +65,14 @@ struct WeaponDef {
     std::string reload_sound, loop_sound, end_sound;
     Impacts impacts;
     std::string sprite;                // HUD icon and crosshair (.bsprite)
-    // The bullet (CComponentProjectile): its speed (m/s) and the object it carries
-    // (NPC_AssaultRifle_BulletTrail's streak; -1: none).
+    // The bullet (CComponentProjectile): its speed (m/s), looks, explosion ([6] damage,
+    // [7] radius; CProjectileComponent::Die) and life ([39] ms). It flies (a projectile, not
+    // an instant hit) when slow with looks of its own, or when it explodes: the rocket
+    // launcher, the plasma guns.
     float bullet_speed = 0;
-    int trail_type = -1;
+    ProjectileLooks looks;
+    float splash_damage = 0, splash_radius = 0, bullet_life = 3;
+    bool flies = false;
 };
 
 // An NPC command (CAIComponent::PushGoal_*, from NpcCmd_* script calls): goals run in
@@ -318,12 +332,8 @@ private:
         float bolt_damage = 3, bolt_speed = 40, burst_gap = 0.1f, burst_pause = 1.6f, fire_range = 35;
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
-        int bolt_trail = -1;           // the object the bullet carries (its streak)
-        // The projectile's own looks: its effects started with it (CEffectsComponent
-        // autostart) and its model (its type, when it has a mesh; -1: none). With none of
-        // these, our glow.
-        std::vector<std::string> bolt_fx;
-        int bolt_body = -1;
+        ProjectileLooks bolt_looks;
+        float bolt_splash = 0, bolt_radius = 0;   // its explosion (rockets)
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
         bool invulnerable = false;
@@ -446,7 +456,9 @@ private:
         glm::vec3 pos, vel;
         float damage, life;
         glm::vec4 color;
-        int owner;                     // target index
+        int owner;                     // target index; -1: the player
+        float splash = 0, radius = 0;  // its explosion
+        int weapon = -1;               // the player's: its weapon (the impacts)
         int trail_type = -1;           // its streak: object and where it started
         size_t trail = size_t(-1);
         glm::vec3 from{0};
@@ -472,7 +484,9 @@ private:
     void launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to);
     void update_trails(float dt);
     size_t take_trail(int type, const glm::vec3& at);
-    static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);   // a hidden one of that type, or a new one
+    static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
+    ProjectileLooks read_looks(int type) const;
+    void launch_bolt(Bolt b, const ProjectileLooks& looks);   // a hidden one of that type, or a new one
     void pose_trail(size_t object, const glm::vec3& from, const glm::vec3& head, const glm::vec3& dir, float length = -1);
     struct Spark {
         glm::vec3 pos;

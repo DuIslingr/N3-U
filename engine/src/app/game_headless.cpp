@@ -250,7 +250,8 @@ int Game::run_screenshot() {
                 aim = glm::normalize(target - player.eye());
                 player.yaw = glm::degrees(std::atan2(-aim.x, aim.y));
                 player.pitch = glm::degrees(std::asin(glm::clamp(aim.z, -1.0f, 1.0f)));
-                ci.fire = true;
+                // Held, or pressed and let go for a semi-automatic weapon.
+                ci.fire = combat.weapon().automatic || int(t / 0.1f) % 2 == 0;
             }
             fire_step(kPhysicsStep, ci, player.eye(), aim, false);
             combat.push_player_out();

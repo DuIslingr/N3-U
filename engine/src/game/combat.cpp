@@ -687,9 +687,13 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                     w.damage_far = num(*pr, 1, 1), w.damage_near = num(*pr, 2, 2);
                     w.far_dist = num(*pr, 3, 30), w.near_dist = num(*pr, 4, 30);
                     w.impacts = read_impacts(*pr);
-                    // [8] speed (per ms times 1000: CProjectileComponent::LaunchBullet), [36]
-                    // the object it carries.
-                    if (pr->size() > 36) w.bullet_speed = num(*pr, 8, 0), w.trail_type = (*pr)[36].i;
+                    // [8] speed (per ms times 1000: CProjectileComponent::LaunchBullet).
+                    w.bullet_speed = num(*pr, 8, 0);
+                    w.splash_damage = num(*pr, 6, 0), w.splash_radius = num(*pr, 7, 0);
+                    if (pr->size() > 39) w.bullet_life = std::max((*pr)[39].as_float() / 1000.0f, 0.1f);
+                    w.looks = read_looks(mode[1].i);
+                    w.flies = (w.splash_damage > 0 && w.splash_radius > 0) ||
+                              (w.bullet_speed >= 1 && w.bullet_speed < 150 && (!w.looks.fx.empty() || w.looks.body >= 0));
                 }
             }
         }
@@ -816,14 +820,8 @@ bool Combat::set_projectile(Target& t, int type) {
     t.ranged = true;
     t.bolt_damage = num(*pr, 2, 3);
     t.bolt_speed = std::max(num(*pr, 8, 40), 10.0f);
-    t.bolt_trail = pr->size() > 36 ? (*pr)[36].i : -1;
-    t.bolt_fx.clear(), t.bolt_body = -1;
-    if (const Value* fx = resolved_template(p->second, gol_, 0x92); fx && fx->size() > 0)
-        for (const Value& e : (*fx)[0].list)
-            if (e.size() > 2 && e[0].type == Value::String && !e[0].s.empty() && e[2].i != 0) t.bolt_fx.push_back(e[0].s);
-    if (const Value* mesh = resolved_template(p->second, gol_, 0x01); mesh && mesh->size() > 0 && (*mesh)[0].type == Value::String &&
-        !(*mesh)[0].s.empty())
-        t.bolt_body = type;
+    t.bolt_looks = read_looks(type);
+    t.bolt_splash = num(*pr, 6, 0), t.bolt_radius = num(*pr, 7, 0);
     if (lower(p->second.name).find("throw") != std::string::npos || lower(p->second.name).find("plasma") != std::string::npos)
         t.bolt_color = {0.35f, 0.6f, 1.0f, 1}, t.burst = 2, t.burst_gap = 0.35f;
     return true;
@@ -1540,6 +1538,41 @@ void Combat::set_attack_behaviour(int npc, const std::string& name) {
     if (Target* t = find_target(npc)) t->behaviour = name;
 }
 
+ProjectileLooks Combat::read_looks(int type) const {
+    ProjectileLooks l;
+    auto p = gol_.find(type);
+    if (p == gol_.end()) return l;
+    if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 36) {
+        l.trail = (*pr)[36].i;
+        if ((*pr)[22].i != 0 && (*pr)[23].type == Value::String && !(*pr)[23].s.empty()) l.fx.push_back((*pr)[23].s);
+    }
+    if (const Value* fx = resolved_template(p->second, gol_, 0x92); fx && fx->size() > 0)
+        for (const Value& e : (*fx)[0].list)
+            if (e.size() > 2 && e[0].type == Value::String && !e[0].s.empty() && e[2].i != 0) l.fx.push_back(e[0].s);
+    if (const Value* mesh = resolved_template(p->second, gol_, 0x01); mesh && mesh->size() > 0 && (*mesh)[0].type == Value::String &&
+        !(*mesh)[0].s.empty())
+        l.body = type;
+    return l;
+}
+
+void Combat::launch_bolt(Bolt b, const ProjectileLooks& looks) {
+    const glm::vec3 dir = glm::normalize(b.vel);
+    if (looks.trail >= 0 && (b.trail = take_trail(looks.trail, b.pos)) != size_t(-1)) {
+        b.trail_type = looks.trail, b.from = b.pos;
+        scene_.play_clip(b.trail, "start", false);
+        scene_.set_object_visible(b.trail, true);
+    }
+    const glm::mat4 placed = bolt_matrix(b.pos, dir);
+    for (const std::string& e : looks.fx)
+        if (const int h = scene_.particles().start(e, placed); h >= 0) b.fx.push_back(h);
+    if (looks.body >= 0 && (b.body = take_trail(looks.body, b.pos)) != size_t(-1)) {
+        b.body_type = looks.body;
+        scene_.set_object_transform(b.body, placed);
+        scene_.set_object_visible(b.body, true);
+    }
+    bolts_.push_back(std::move(b));
+}
+
 // A projectile's placement: at `pos`, its +Y along the flight.
 glm::mat4 Combat::bolt_matrix(const glm::vec3& pos, const glm::vec3& dir) {
     glm::vec3 side = glm::cross(dir, glm::vec3(0, 0, 1));
@@ -1566,20 +1599,8 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
         aim = glm::normalize(aim + side * std::tan(glm::radians(u(rng_))) + up * std::tan(glm::radians(u(rng_))));
     }
     Bolt b{muzzle, aim * t.bolt_speed, t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())};
-    if (t.bolt_trail >= 0 && (b.trail = take_trail(t.bolt_trail, muzzle)) != size_t(-1)) {
-        b.trail_type = t.bolt_trail, b.from = muzzle;
-        scene_.play_clip(b.trail, "start", false);
-        scene_.set_object_visible(b.trail, true);
-    }
-    const glm::mat4 placed = bolt_matrix(muzzle, aim);
-    for (const std::string& e : t.bolt_fx)
-        if (const int h = scene_.particles().start(e, placed); h >= 0) b.fx.push_back(h);
-    if (t.bolt_body >= 0 && (b.body = take_trail(t.bolt_body, muzzle)) != size_t(-1)) {
-        b.body_type = t.bolt_body;
-        scene_.set_object_transform(b.body, placed);
-        scene_.set_object_visible(b.body, true);
-    }
-    bolts_.push_back(b);
+    b.splash = t.bolt_splash, b.radius = t.bolt_radius;
+    launch_bolt(b, t.bolt_looks);
     if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
     ++stats_.enemy_shots;
 }
@@ -1828,25 +1849,32 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     glm::vec3 point;
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
     const glm::vec3 end = hit >= 0 ? point : eye + dir * (wall ? wall_t * range : range);
-    launch_trail(w, has_muzzle_ ? muzzle_ : eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f, end);
-    if (hit >= 0) {
-        Target& t = targets_[size_t(hit)];
-        const float d = glm::distance(eye, point);
-        float dmg = w.damage_near;
-        if (d > w.far_dist) dmg = w.damage_far;
-        else if (d > w.near_dist) dmg = w.damage_near + (d - w.near_dist) * (w.damage_far - w.damage_near) / (w.far_dist - w.near_dist);
-        const bool head = t.headshots && point.z > t.pos.z + t.height * 0.84f;
-        if (head) dmg *= 2;   // CTargetableComponent head multiplier
-        ++stats_.hits;
-        hit_marker_ = 0.15f;
-        if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
-        killing_headshot_ = head;
-        damage_point_ = &point;
-        if (weapon_types_[size_t(current_)] == "FlameThrower_Player") damage_cause_ = Cause::Fire;
-        apply_damage(t, dmg, true);
-        killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot;
-    } else if (wall) {
-        impact(w.impacts, material, end, normal);
+    const glm::vec3 from = has_muzzle_ ? muzzle_ : eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f;
+    if (w.flies) {   // a projectile from the muzzle at what the crosshair is on; it hits as it gets there
+        Bolt b{from, glm::normalize(end - from) * w.bullet_speed, w.damage_near, w.bullet_life, glm::vec4(1, 0.6f, 0.3f, 1), -1};
+        b.splash = w.splash_damage, b.radius = w.splash_radius, b.weapon = current_;
+        launch_bolt(b, w.looks);
+    } else {
+        launch_trail(w, from, end);
+        if (hit >= 0) {
+            Target& t = targets_[size_t(hit)];
+            const float d = glm::distance(eye, point);
+            float dmg = w.damage_near;
+            if (d > w.far_dist) dmg = w.damage_far;
+            else if (d > w.near_dist) dmg = w.damage_near + (d - w.near_dist) * (w.damage_far - w.damage_near) / (w.far_dist - w.near_dist);
+            const bool head = t.headshots && point.z > t.pos.z + t.height * 0.84f;
+            if (head) dmg *= 2;   // CTargetableComponent head multiplier
+            ++stats_.hits;
+            hit_marker_ = 0.15f;
+            if (!effect(t.hit_effect, point, -dir)) sparks_.push_back({point, 0.12f, {1.0f, 0.3f, 0.2f, 1}});
+            killing_headshot_ = head;
+            damage_point_ = &point;
+            if (weapon_types_[size_t(current_)] == "FlameThrower_Player") damage_cause_ = Cause::Fire;
+            apply_damage(t, dmg, true);
+            killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot;
+        } else if (wall) {
+            impact(w.impacts, material, end, normal);
+        }
     }
     // Shot sounds: automatic weapons loop while the trigger is held.
     if (!w.loop_sound.empty()) {
@@ -1931,25 +1959,37 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         glm::vec3 hit_p;
         const float seg_len = glm::length(seg);
         const int hit = seg_len > 1e-4f ? ray_target(b.pos, seg / seg_len, seg_len, hit_t, hit_p) : -1;
+        const bool players = b.owner < 0;   // the player's projectile: anything it meets, never the player
         const Target* shooter = b.owner >= 0 && size_t(b.owner) < targets_.size() ? &targets_[size_t(b.owner)] : nullptr;
-        const bool hits_target = hit >= 0 && hit != b.owner && shooter &&
-                                 ((shooter->attacks & (1u << targets_[size_t(hit)].team)) != 0 || targets_[size_t(hit)].id == shooter->locked);
+        const bool hits_target = hit >= 0 && hit != b.owner &&
+                                 (players || (shooter && ((shooter->attacks & (1u << targets_[size_t(hit)].team)) != 0 ||
+                                                          targets_[size_t(hit)].id == shooter->locked)));
+        const Impacts* impacts = players && b.weapon >= 0 && size_t(b.weapon) < weapons_.size() ? &weapons_[size_t(b.weapon)].impacts
+                                 : shooter && !shooter->bolt_impacts.effects.empty()       ? &shooter->bolt_impacts
+                                                                                            : nullptr;
+        glm::vec3 stop = end;
+        bool stopped = false;
         if (!player_dead && shooter && (shooter->attacks & kPlayerTeamBit) && glm::length(glm::vec2(off)) < player_.radius.x + 0.15f &&
             std::abs(off.z) < player_.radius.z) {
             damage_player(b.damage, b.pos);
-            b.life = 0;
+            stop = c, stopped = true;
         } else if (hits_target) {
-            apply_damage(targets_[size_t(hit)], b.damage, false);
-            if (!targets_[size_t(hit)].hit_effect.empty()) effect(targets_[size_t(hit)].hit_effect, hit_p, -seg);
-            b.life = 0;
+            Target& t = targets_[size_t(hit)];
+            if (players) ++stats_.hits, hit_marker_ = 0.15f;
+            if (b.damage > 0) apply_damage(t, b.damage, players);
+            if (!t.hit_effect.empty()) effect(t.hit_effect, hit_p, -seg);
+            else if (impacts) impact(*impacts, 0, hit_p, -seg / std::max(seg_len, 1e-4f));
+            stop = hit_p, stopped = true;
         } else if (wall) {
-            if (b.owner >= 0 && size_t(b.owner) < targets_.size() && !targets_[size_t(b.owner)].bolt_impacts.effects.empty())
-                impact(targets_[size_t(b.owner)].bolt_impacts, material, end, normal);
-            else if (!effect("impact_plasma", end, normal))
-                sparks_.push_back({end, 0.15f, b.color});
-            b.life = 0;
+            if (impacts) impact(*impacts, material, end, normal);
+            else if (!effect("impact_plasma", end, normal)) sparks_.push_back({end, 0.15f, b.color});
+            stopped = true;
         }
-        b.pos = end;
+        // An explosive one blows up where it stops, or at the end of its flight
+        // (CProjectileComponent::Die: [6] damage within [7] metres).
+        if ((stopped || b.life <= 0) && b.splash > 0 && b.radius > 0) splash_damage(stop, b.splash, b.radius, players);
+        if (stopped) b.life = 0;
+        b.pos = stop;
         const glm::vec3 dir = glm::normalize(b.vel);
         if (!b.fx.empty() || b.body != size_t(-1)) {
             const glm::mat4 at = bolt_matrix(b.pos, dir);
@@ -2089,12 +2129,12 @@ void Combat::push_player_out() {
 
 void Combat::launch_trail(const WeaponDef& w, const glm::vec3& from, const glm::vec3& to) {
     const float len = glm::distance(from, to);
-    if (w.trail_type < 0 || w.bullet_speed <= 0 || len < 0.5f) return;
-    const size_t object = take_trail(w.trail_type, from);
+    if (w.looks.trail < 0 || w.bullet_speed <= 0 || len < 0.5f) return;
+    const size_t object = take_trail(w.looks.trail, from);
     if (object == size_t(-1)) return;
     scene_.play_clip(object, "start", false);
     scene_.set_object_visible(object, true);
-    tracers_.push_back({object, w.trail_type, from, from, (to - from) / len, to, w.bullet_speed});
+    tracers_.push_back({object, w.looks.trail, from, from, (to - from) / len, to, w.bullet_speed});
 }
 
 void Combat::update_trails(float dt) {
