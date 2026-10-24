@@ -353,6 +353,22 @@ void Combat::update_barks(float dt) {
     bark_playing_ = nullptr;
 }
 
+// CNPCComponent::SetCurrentTarget: turning on the player, one of its aggro sounds (none
+// while one of them still plays; not the last one any NPC played).
+void Combat::aggro_sound(const Target& t) {
+    if (!logic_.audio || t.aggro_sounds.empty()) return;
+    for (const std::string& s : t.aggro_sounds)
+        if (logic_.audio->playing(s)) return;
+    const size_t n = t.aggro_sounds.size();
+    size_t pick = std::uniform_int_distribution<size_t>(0, n - 1)(rng_);
+    if (t.aggro_sounds[pick] == last_aggro_) pick = (pick + 1) % n;
+    last_aggro_ = t.aggro_sounds[pick];
+    const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.8f);
+    Audio::Params p;
+    p.position = &at;
+    logic_.audio->play(last_aggro_, p);
+}
+
 void Combat::acquire_bark(const Target& t) {
     if (t.enemy == -1 && logic_.player_vehicle() >= 0) return bark(25, &t);   // the player in a jeep
     if (t.enemy == -1 && logic_.in_mech()) return bark(26, &t);              // in the mech
@@ -1368,6 +1384,9 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         t.ragdoll_hit = num(*r, 17, 90) * num(*r, 18, 1), t.ragdoll_hit_max = num(*r, 19, 100), t.ragdoll_blast = num(*r, 11, 32);
     }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
+    t.aggro_sounds.clear();
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 55)
+        t.aggro_sounds = sound_list((*npc)[55]);
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 54)
         for (const Value& a : (*npc)[54].list)
             if (a.size() > 1 && a[0].type == Value::String && a[1].as_float() > 0) t.attack_choices.emplace_back(a[0].s, a[1].as_float());
@@ -1680,7 +1699,10 @@ void Combat::keep_enemies_on_player() {
     std::sort(could.begin(), could.end());
     for (size_t k = 0; k < could.size() && want > 0; ++k, --want) {
         Target& t = targets_[could[k].second];
+        const int before = t.enemy;
         t.enemy = -1, t.choose_timer = 0.4f;
+        if (before == kNoEnemy) acquire_bark(t);
+        aggro_sound(t);
     }
 }
 
@@ -1989,6 +2011,7 @@ void Combat::update_actor(Target& t, float dt) {
         const int before = t.enemy;
         t.choose_timer = 0.4f, t.enemy = choose_enemy(t);
         if (before == kNoEnemy && t.enemy != kNoEnemy) acquire_bark(t);
+        if (before != -1 && t.enemy == -1) aggro_sound(t);
     }
     glm::vec3 target, chest;
     if (!enemy_points(t, t.enemy, target, chest)) t.enemy = kNoEnemy, target = t.pos, chest = t.pos;

@@ -478,6 +478,7 @@ private:
         std::string hit_effect, hit_node, death_effect, death_node;
         // CHealthComponent sounds; the NPC weapon's shot sounds (one per burst) and impacts.
         std::vector<std::string> hurt_sounds, death_sounds, fire_sounds;
+        std::vector<std::string> aggro_sounds;   // CComponentNPC [55]: turning on the player
         float hurt_sound_wait = 0;
         Impacts bolt_impacts;
 
@@ -888,7 +889,9 @@ private:
     BarkSet* bark_set(const Target& t, int id);
     void bark(int id, const Target* npc);
     void update_barks(float dt);
-    void acquire_bark(const Target& t);   // CNPCComponent::SetCurrentTarget, from none
+    void acquire_bark(const Target& t);
+    std::string last_aggro_;   // CAIController +0xc4: the last aggro sound any NPC played
+    void aggro_sound(const Target& t);   // CNPCComponent::SetCurrentTarget, from none
     GrenadeDef npc_grenade_def_;
     std::map<int, GrenadeDef> fired_grenades_;   // weapons firing grenades (the grenade launcher), per type
     void update_grenades(float dt);
