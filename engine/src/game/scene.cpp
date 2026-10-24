@@ -621,6 +621,7 @@ void Scene::pose(AnimatedInstance& a) {
         const ModelNode& node = m.cpu.nodes[n];
         NodePose p{node.translation, node.rotation, node.scale};
         if (a.tracks[n]) sample_tracks(*a.tracks[n], t, p);
+        if (n < a.additive.size()) p.rotation = p.rotation * a.additive[n];
         if (auto moved = a.node_translation.find(int(n)); moved != a.node_translation.end()) p.translation = moved->second;
         if (int(n) == a.root_lock) p.translation.x = a.root_xy.x, p.translation.y = a.root_xy.y;
         const glm::mat4 parent = m.parent[n] < 0 ? a.placement : a.world[m.parent[n]];
@@ -1264,6 +1265,29 @@ bool Scene::sample_node(size_t object, const std::string& node, const std::strin
     local = local_matrix(p.translation, p.rotation, p.scale);
     if (length_ms) *length_ms = c->end - c->start;
     return true;
+}
+
+bool Scene::sample_rotations(size_t object, const std::string& clip, float ms, std::vector<glm::quat>& out, float* length_ms) const {
+    const AnimatedInstance* a = object_anim(object);
+    if (!a || !a->library) return false;
+    const AnimClip* c = a->library->clip(clip);
+    if (!c) return false;
+    const auto& nodes = a->model->cpu.nodes;
+    out.resize(nodes.size());
+    const float t = c->start + std::clamp(ms, 0.0f, c->end - c->start);
+    for (size_t n = 0; n < nodes.size(); ++n) {
+        NodePose p{nodes[n].translation, nodes[n].rotation, nodes[n].scale};
+        if (a->tracks[n]) sample_tracks(*a->tracks[n], t, p);
+        out[n] = p.rotation;
+    }
+    if (length_ms) *length_ms = c->end - c->start;
+    return true;
+}
+
+void Scene::set_additive(size_t object, std::vector<glm::quat> per_node) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !instances_[it->second].anim) return;
+    instances_[it->second].anim->additive = std::move(per_node);
 }
 
 bool Scene::clip_finished(size_t object) const {

@@ -146,6 +146,13 @@ private:
     uint32_t events_serial_ = 0;
     float events_ms_ = 0;
     void update_events(const Clips& c);
+    // The weapon trailing the view (CWeaponManager::UpdateWeaponRotation): how far behind
+    // it is (radians: x yaw, positive to the left; y pitch, positive up), where its catch-up
+    // started and how much of it is left, shown by the posture clips' turn of the arms.
+    glm::vec2 sway_{0}, sway_start_{0};
+    float sway_left_ = 0, last_yaw_ = 0, last_pitch_ = 0;
+    bool sway_view_ = false, sway_layer_ = false;
+    void update_sway(float dt, float yaw_deg, float pitch_deg, bool aiming, const Clips& c);
     void start_fx(const Clips& c, int index);
     void stop_fx(int index);
     void stop_all_fx();

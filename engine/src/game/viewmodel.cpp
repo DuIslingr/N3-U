@@ -82,6 +82,7 @@ void ViewModel::start() {
     muzzles_.clear(), flashing_ = -1;   // their objects went with the old level
     fx_.clear(), fx_weapon_.clear(), events_serial_ = 0;
     weapon_.clear(), base_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
+    sway_ = sway_start_ = glm::vec2(0), sway_left_ = 0, sway_view_ = false, sway_layer_ = false;
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
     current_ = -1, left_ = 0;
@@ -146,6 +147,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     }
     const Clips& c = clips(in.weapon);
     update_camera_layer(dt, c);
+    update_sway(dt, yaw_deg, pitch_deg, in.aiming, c);
     if (distort_) {   // PlayerComponent::distort_update
         if (distort_ms_ > 0) {
             distort_ms_ -= dt * 1000.0f;
@@ -169,6 +171,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     };
     if (in.weapon != weapon_) {   // switched: the new weapon comes up
         weapon_ = in.weapon;
+        sway_ = sway_start_ = glm::vec2(0), sway_left_ = 0;
         show_weapon(c.node);
         lowered_ = false, queued_.clear();
         if (!play(c, "GetUp")) play(c, "GetWeapon");
@@ -287,6 +290,53 @@ void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pit
         for (size_t i = 0; i < fx_.size(); ++i)
             if (fx_[i] >= 0) scene_.particles().move(fx_[i], fx_matrix(c, int(i)));
     }
+}
+
+void ViewModel::update_sway(float dt, float yaw_deg, float pitch_deg, bool aiming, const Clips& c) {
+    // At most 0.126 rad behind (0.021 aiming); once the view holds still it catches up
+    // over 1 / 0.012 ms (twice as long aiming).
+    const float most = aiming ? 0.020944f : 0.125664f;
+    const float yaw = glm::radians(yaw_deg), pitch = glm::radians(pitch_deg);
+    if (!sway_view_) last_yaw_ = yaw, last_pitch_ = pitch, sway_view_ = true;
+    const glm::vec2 turn(std::remainder(yaw - last_yaw_, glm::two_pi<float>()), pitch - last_pitch_);
+    last_yaw_ = yaw, last_pitch_ = pitch;
+    if (turn.x != 0 || turn.y != 0) {   // a new view: the weapon starts from where it was
+        glm::vec2 lag = sway_ - turn;
+        if (const float l = glm::length(lag); l > most) lag *= most / l;
+        sway_start_ = lag, sway_left_ = 1;
+    } else {
+        sway_left_ = std::max(sway_left_ - 0.012f * dt * 1000.0f * (aiming ? 0.5f : 1.0f), 0.0f);
+    }
+    sway_ = sway_start_ * sway_left_;
+    // The posture blender (CStatesSetComponent::SetCircularBlenderPosition): the two
+    // direction clips either side of the lag's direction, each that far in (0.95 of its
+    // length at the most), as turns of the arms from the centre posture.
+    const float m = std::min(glm::length(sway_) / most, 1.0f);
+    if (m < 0.01f) {
+        if (sway_layer_) scene_.set_additive(object_, {}), sway_layer_ = false;
+        return;
+    }
+    const std::string pre = aiming ? "Posture_Aim_" : "Posture_";
+    static const char* const kDirs[4] = {"Left", "Up", "Right", "Down"};   // anticlockwise from the left
+    float a = std::atan2(sway_.y, sway_.x) / glm::half_pi<float>();
+    if (a < 0) a += 4;
+    const int k = int(a) % 4;
+    const float w = a - std::floor(a);
+    std::vector<glm::quat> centre, pa, pb;
+    float la = 0, lb = 0;
+    const std::string ca = c.get(pre + kDirs[k]), cb = c.get(pre + kDirs[(k + 1) % 4]), cc = c.get(pre + "Center");
+    if (ca.empty() || cb.empty() || cc.empty() || !scene_.sample_rotations(object_, cc, 0, centre) ||
+        !scene_.sample_rotations(object_, ca, 0, pa, &la) || !scene_.sample_rotations(object_, cb, 0, pb, &lb))
+        return;
+    scene_.sample_rotations(object_, ca, m * 0.95f * la, pa);
+    scene_.sample_rotations(object_, cb, m * 0.95f * lb, pb);
+    std::vector<glm::quat> turn_by(centre.size());
+    for (size_t n = 0; n < centre.size(); ++n) {
+        const glm::quat inv = glm::inverse(centre[n]);
+        turn_by[n] = glm::normalize(glm::slerp(inv * pa[n], inv * pb[n], w));
+    }
+    scene_.set_additive(object_, std::move(turn_by));
+    sway_layer_ = true;
 }
 
 glm::mat4 ViewModel::fx_matrix(const Clips& c, int index) const {

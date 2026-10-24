@@ -67,6 +67,12 @@ public:
     bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false);
     // The object's current clip has played through (never true for looping clips).
     bool clip_finished(size_t object) const;
+    // Every node's rotation `ms` into a clip of the object's animation (its rest rotation
+    // where the clip has no track), and the clip's length; false without that clip.
+    bool sample_rotations(size_t object, const std::string& clip, float ms, std::vector<glm::quat>& out, float* length_ms = nullptr) const;
+    // A layer over the object's clip: each node's rotation turned by `per_node` (in its own
+    // frame; empty: none).
+    void set_additive(size_t object, std::vector<glm::quat> per_node);
     // How far the object's current clip has played, 0..1 (1 if none).
     float clip_progress(size_t object) const;
     // The object's current clip: its name, the time into it (ms; looping clips wrap), and
@@ -254,6 +260,7 @@ private:
         std::vector<Morph> morphs;
         GpuModel* own_gpu = nullptr;
         std::vector<int8_t> node_forced;     // per node: -1 animated, 0 hidden, 1 shown (game logic)
+        std::vector<glm::quat> additive;     // per node, turned by this after its clip (a pose layer); empty: none
         std::unordered_map<int, glm::vec3> node_translation;   // per node: translation set by game logic
         int root_lock = -1;                  // node whose horizontal translation is held (actors)
         glm::vec2 root_xy{0};
