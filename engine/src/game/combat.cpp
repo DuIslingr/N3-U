@@ -1555,7 +1555,13 @@ void Combat::update_actor(Target& t, float dt) {
     t.timer += dt;
     t.hurt_cooldown = std::max(t.hurt_cooldown - dt, 0.0f);
     if (t.state == S::Dying) {
-        if (t.ragdoll ? !t.ragdoll->step(dt, scene_.collision(), scene_) : scene_.clip_finished(t.object)) {
+        const bool falling = t.ragdoll && t.ragdoll->step(dt, scene_.collision(), scene_);
+        if (t.ragdoll) {   // where the body is (its placement moves with it; the bones are its own)
+            const glm::vec3 c = t.ragdoll->centre();
+            t.pos.x = c.x, t.pos.y = c.y;
+            scene_.set_object_pose(t.object, t.pos, t.yaw);
+        }
+        if (t.ragdoll ? !falling : scene_.clip_finished(t.object)) {
             t.state = S::Dead;
             // The death clip done: dissolving through the death material, with its sound.
             if (!t.death_model.empty() && scene_.set_object_material(t.object, t.death_model, t.death_material)) {
