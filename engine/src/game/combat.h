@@ -433,6 +433,7 @@ private:
         // cover. Its root where it was last applied.
         std::string root_clip;
         glm::vec3 root_prev{0};
+        bool root_moves = true;        // false: a clip it only waits out (getting up after the roll)
         bool cover_next_loop = false;
         float cover_timer = 0, cover_eval = 0;
         float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds
@@ -555,7 +556,7 @@ private:
     bool cover_protects(const CoverPoint& c, const glm::vec3& from) const;
     int choose_cover(const Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_eye) const;
     void leave_cover(Target& t);
-    void start_root_motion(Target& t, const std::string& clip);
+    void start_root_motion(Target& t, const std::string& clip, bool moves = true, bool reverse = false);
     bool update_root_motion(Target& t);   // false once the clip is over
     void set_crouched(Target& t, bool on);
     // The fight from cover; false when the actor has no cover to fight from (the usual

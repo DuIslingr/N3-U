@@ -152,9 +152,10 @@ void Combat::set_crouched(Target& t, bool on) {
     t.height = on ? t.stand_height * 0.6f : t.stand_height;
 }
 
-void Combat::start_root_motion(Target& t, const std::string& clip) {
-    play(t, clip, false);
+void Combat::start_root_motion(Target& t, const std::string& clip, bool moves, bool reverse) {
+    if (scene_.play_clip(t.object, clip, false, reverse)) t.playing = clip;
     t.root_clip = t.playing == clip ? clip : std::string();
+    t.root_moves = moves && !reverse;
     glm::mat4 local;
     if (!t.root_clip.empty() && scene_.sample_node(t.object, "Bip01", clip, 0, local)) t.root_prev = glm::vec3(local[3]);
 }
@@ -164,7 +165,7 @@ bool Combat::update_root_motion(Target& t) {
     Scene::ClipState cs;
     glm::mat4 local;
     const bool on = t.playing == t.root_clip && scene_.clip_state(t.object, cs);
-    if (on && scene_.sample_node(t.object, "Bip01", t.root_clip, cs.ms, local)) {
+    if (on && t.root_moves && scene_.sample_node(t.object, "Bip01", t.root_clip, cs.ms, local)) {
         // The root's sideways travel since the last step, through the actor's placement (the
         // scene holds the root itself in place).
         const glm::vec3 now(local[3]);
@@ -175,12 +176,21 @@ bool Combat::update_root_motion(Target& t) {
         scene_.set_object_pose(t.object, t.pos, t.yaw);
     }
     if (on && !scene_.clip_finished(t.object)) return true;
-    if (logic_.trace) {
-        char line[96];
-        std::snprintf(line, sizeof line, "%d rolled to (%.1f %.1f %.1f)", t.id, t.pos.x, t.pos.y, t.pos.z);
-        log(line);
-    }
+    const bool rolled = t.root_moves;
     t.root_clip.clear();
+    if (rolled) {
+        if (logic_.trace) {
+            char line[96];
+            std::snprintf(line, sizeof line, "%d rolled to (%.1f %.1f %.1f)", t.id, t.pos.x, t.pos.y, t.pos.z);
+            log(line);
+        }
+        // Up from the crouch it ends in (CrouchExit: CrouchEnter's clip backwards), when its
+        // band gives it no time crouched (UpdateCrouch).
+        if (const std::string c = logic_.state_clip(scene_.level().objects[t.object].type, "CrouchExit"); !c.empty()) {
+            start_root_motion(t, c, false, true);
+            return true;
+        }
+    }
     return false;
 }
 
