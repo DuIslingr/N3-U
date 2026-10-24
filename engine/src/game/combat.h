@@ -63,7 +63,18 @@ struct WeaponDef {
     float interval = 0.1f;             // seconds between shots
     bool automatic = true;
     float reload_time = 1.8f;
-    float spread_step = 1.5f;          // degrees added per shot (recovers over time)
+    // Its spread (degrees; CComponentWeapon [23]-[27] from the hip, [28]-[32] aiming): the
+    // least, the most, its growth per second walking, its shrink per second otherwise and
+    // its growth firing (per second of the frame a shot goes in).
+    struct Spread {
+        float min = 1, max = 2, walk = 10, recover = 20, fire = 1.5f;
+    } hip, aim;
+    // Its crosshair (CWeaponComponent::DrawTargetCrossHair: frames 4-8 of its sprite): the
+    // arms [34] pixels (at 640 high) further out at the widest spread, above, right, below
+    // and left [36] (else at the corners); [33] shown aiming too; [46] a scope's, shown only
+    // looking through it.
+    int cross_px = 15;
+    bool cross_plus = false, cross_aiming = false, scope = false;
     // CProjectileComponent::GetDamage: `near` damage up to near_dist, `far` beyond far_dist.
     float damage_near = 2, damage_far = 1, near_dist = 30, far_dist = 30;
     // Sounds (CComponentWeapon fire mode): one per shot, or a loop while firing and its end.
@@ -101,6 +112,7 @@ struct NpcGoal {
 
 struct CombatInput {
     bool fire = false, reload = false;
+    bool aiming = false;               // the view narrowed (the weapon's aiming spread)
     bool grenade = false;              // throw a grenade (or a mine, when they are picked)
     bool switch_throwable = false;     // grenades <-> mines
     bool detonate = false;             // set off the mines placed
@@ -234,6 +246,16 @@ public:
     // The rail beams, as textured quads after the particles.
     void build_beams(const glm::vec3& eye, ParticleList& out);
     const std::string& weapon_sprite() const { return weapon().sprite; }
+    // What the HUD draws the crosshair with (CWeaponComponent::DrawTargetCrossHair).
+    struct Crosshair {
+        std::string sprite;
+        float arms = 0;            // how far out the arms are, in pixels at 640 high
+        bool plus = false, scope = false;
+        glm::vec4 color{1};        // red on an enemy
+        float alpha = 0;
+        float distance = -1;       // the scope's: to what it is on
+    };
+    Crosshair crosshair() const;
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
     // SetMinEnemiesOnPlayer / RestoreMinEnemiesOnPlayer (CAIController +0xac, 1 to start
@@ -903,7 +925,14 @@ private:
     int find_weapon(const std::string& name) const;
     float since_shot_ = 100;
     unsigned shots_ = 0;
-    float fire_cooldown_ = 0, reload_left_ = 0, spread_ = 0;
+    float fire_cooldown_ = 0, reload_left_ = 0;
+    // The spread (degrees; CWeaponComponent +0x5c), whether aiming, where the player was
+    // (walking or not), the crosshair's fade (0..1) and fire kick (0..1, +0x1fc), and how
+    // far off what the crosshair is on is (-1: nothing within 200 m).
+    float spread_ = 1;
+    bool aiming_ = false;
+    glm::vec3 last_center_{0};
+    float cross_alpha_ = 0, cross_kick_ = 0, aim_distance_ = -1;
     bool trigger_held_ = false;
     float regen_delay_ = 0, regen_rate_ = 20, regen_pause_ = 3.0f;
     float hit_marker_ = 0, dead_timer_ = 0, protect_ = 0;

@@ -58,6 +58,9 @@ public:
     // The current weapon's zoom range aiming (CLevelInterfaceNormal::EnableZoomSlider); false
     // if it has none.
     bool zoom_range(float& widest, float& narrowest);
+    // Looking through the weapon's scope (its Aim clip has hidden it): the HUD draws the
+    // scope's crosshair instead.
+    bool scoped() const { return weapon_hidden_ && aiming_; }
     // PlayerComponent::distort_push / distort_pop / distort_change_blend: the rig drawn with
     // hand_mesh_new_distort.bdae's armsDistort (the screen behind shows through it where its
     // noise texture plus BlendFactor is under 0.5), BlendFactor from -0.3 eased to `target`
@@ -127,6 +130,10 @@ private:
     // loop holds the others off until it ends (left_), then its next state follows.
     bool play(const Clips& c, const std::string& state, float fade_ms = 0);
     void show_weapon(const std::string& node);
+    // GameEvent 12 / 13 (the sniper rifle's Aim clip): the weapon out of sight while the
+    // view looks through its scope, back on UnAim.
+    void set_weapon_hidden(const Clips& c, bool hidden);
+    bool weapon_hidden_ = false;
 
     Scene& scene_;
     const Gol& gol_;

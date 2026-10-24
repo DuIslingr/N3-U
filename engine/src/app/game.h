@@ -84,6 +84,7 @@ private:
     void spawn_at_option();
     // A combat step: the player's bullets leave from the view model's muzzle, which flashes
     // for each shot fired.
+    void draw_crosshair(int w, int h);
     void fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming);
     void arms_distort();   // the level logic's Test_distort_* requests, to the view model
     void apply_sound();

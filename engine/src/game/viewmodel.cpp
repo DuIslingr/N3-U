@@ -107,6 +107,7 @@ void ViewModel::arms_distort_blend(float target, float ms) {
 }
 
 void ViewModel::show_weapon(const std::string& node) {
+    weapon_hidden_ = false;
     // The weapons are the WEAPON_* nodes not inside another one (the handgun keeps its mesh
     // and magazine in WEAPON_handgun and WEAPON_Handgun_charger under WEAPON_Handgun_R).
     std::vector<std::string> weapons;
@@ -122,6 +123,13 @@ void ViewModel::show_weapon(const std::string& node) {
 }
 
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
+
+void ViewModel::set_weapon_hidden(const Clips& c, bool hidden) {
+    if (weapon_hidden_ == hidden) return;
+    weapon_hidden_ = hidden;
+    if (hidden) scene_.set_node_visible(object_, c.node, false);
+    else show_weapon(c.node);
+}
 
 float ViewModel::aim_fov() { return weapon_.empty() ? kDefaultAimFov : clips(weapon_).aim_fov; }
 
@@ -184,6 +192,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     }
     const Clips& c = clips(in.weapon);
     aiming_ = in.aiming;
+    if (!in.aiming && weapon_hidden_) set_weapon_hidden(c, false);   // UnAim: SetVisible
     update_camera_layer(dt, c);
     update_sway(dt, yaw_deg, pitch_deg, in.aiming, c);
     if (distort_) {   // PlayerComponent::distort_update
@@ -465,6 +474,7 @@ void ViewModel::update_events(const Clips& c) {
             if (!(e.ms > from && e.ms <= to)) continue;
             if (e.id == 50) start_fx(c, e.arg);
             else if (e.id == 51) stop_fx(e.arg);
+            else if (e.id == 12 || e.id == 13) set_weapon_hidden(c, e.id == 12);   // CWeaponComponent::OnEvent: SetVisible
         }
     };
     if (cs.reverse) {

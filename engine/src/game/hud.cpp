@@ -95,12 +95,13 @@ const Sprite* Hud::sprite(const std::string& name) {
     if (auto it = sprites_.find(key); it != sprites_.end()) return it->second.frames.empty() ? nullptr : &it->second;
     Sprite& s = sprites_[key];
     // The game picks a resolution variant (<name>_<w>x<h>.bsprite) by screen size; the
-    // 1720x1280 and 2560x1504 ones are the 960x640 frames at twice the size.
+    // 1720x1280 and 2560x1504 ones are the 960x640 frames at twice the size, the 1024x768
+    // ones (the weapons' crosshairs) laid out for 768 high.
     std::string base = name;
     if (base.size() > 8 && base.compare(base.size() - 8, 8, ".bsprite") == 0) base.resize(base.size() - 8);
     std::vector<std::pair<std::string, float>> files;
     if (large_) files = {{base + "_1720x1280.bsprite", 2.0f}, {base + "_2560x1504.bsprite", 2.0f}};
-    files.insert(files.end(), {{base + "_1024x768.bsprite", 1.0f}, {base + "_960x640.bsprite", 1.0f}, {base + ".bsprite", 1.0f}});
+    files.insert(files.end(), {{base + "_1024x768.bsprite", 768.0f / 640.0f}, {base + "_960x640.bsprite", 1.0f}, {base + ".bsprite", 1.0f}});
     sprite_factor_[key] = 1;
     for (const auto& [file, factor] : files) {
         if (!scene_.vfs().exists(file)) continue;

@@ -55,6 +55,7 @@ Options parse_options(int argc, char** argv) {
         else if (a == "--power-test") o.power_test = std::stof(next());
         else if (a == "--shoot-at") o.shoot_at = next();
         else if (a == "--checkpoint-at") o.checkpoint_at = std::stof(next());
+        else if (a == "--aim-at") o.aim_at = std::stof(next());
         else if (a == "--sprite-sheet") o.sprite_sheet = next();
         else if (a == "--menu") o.menu_keys = next();
         else if (a == "--credits") o.credits = std::stoi(next());

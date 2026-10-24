@@ -363,6 +363,7 @@ void Game::draw_text(FrameParams& f, int w, int h) {
         hs.weapon_sprite = combat.weapon_sprite();
         hs.clip_size = combat.clip_size();
         hud.frame(f, w, h, hs, hud_sprites);
+        if (hs.visible) draw_crosshair(w, h);
         if (float angle = 0; hs.visible && combat.hit_indicator(angle))   // CLevel::Render2DInterface
             if (const Sprite* cs = hud.sprite("controls.bsprite"))
                 hud.draw_frame_rotated(hud_sprites, *cs, 60, {float(w) * 0.5f, float(h) * 0.5f}, hud.sprite_scale("controls.bsprite"),
@@ -597,11 +598,46 @@ void Game::spawn_at_option() {
     }
 }
 
+// CWeaponComponent::DrawTargetCrossHair: the weapon's sprite's frame 4 in the middle and its
+// arms (5-8) pushed out by the spread, tinted red over an enemy; a scope's (the sniper
+// rifle's) only while looking through it, the screen round it dimmed and the distance to
+// what it is on in red under it.
+void Game::draw_crosshair(int w, int h) {
+    const Combat::Crosshair x = combat.crosshair();
+    if (x.sprite.empty() || (x.scope ? !viewmodel.scoped() : x.alpha <= 0)) return;
+    const Sprite* sp = hud.sprite(x.sprite);
+    if (!sp) return;
+    const float k = hud.sprite_scale(x.sprite), px = float(h) / 640.0f;
+    const glm::vec2 c(float(w) * 0.5f, float(h) * 0.5f);
+    const float d = std::round(x.arms * px);
+    const glm::vec4 color(glm::vec3(x.color), x.color.a * x.alpha);
+    if (x.scope) {   // four rectangles of black at 150 round frame 4
+        const glm::vec4 b = Hud::frame_bounds(*sp, 4);
+        const glm::vec4 r(c.x + b.x * k, c.y + b.y * k, c.x + b.z * k, c.y + b.w * k);
+        const glm::vec4 dark(0, 0, 0, 150.0f / 255.0f);
+        const float W = float(w), H = float(h);
+        if (r.z < W) objective_text.fill(hud_sprites, {r.z, 0, W, H}, dark, dark);
+        if (r.x > 0) objective_text.fill(hud_sprites, {0, 0, r.x, H}, dark, dark);
+        if (r.w < H) objective_text.fill(hud_sprites, {r.x, r.w, r.z, H}, dark, dark);
+        if (r.y > 0) objective_text.fill(hud_sprites, {r.x, 0, r.z, r.y}, dark, dark);
+    }
+    hud.draw_frame(hud_sprites, *sp, 4, c, k, color);
+    static const glm::vec2 kCorner[4] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}, kPlus[4] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+    for (int i = 0; i < 4; ++i) hud.draw_frame(hud_sprites, *sp, 5 + i, c + (x.plus ? kPlus[i] : kCorner[i]) * d, k, color);
+    if (x.scope && x.distance >= 0) {
+        char line[32];
+        std::snprintf(line, sizeof line, "%0.2fm", x.distance);
+        objective_text.draw(hud_sprites, line, c + glm::vec2(0, 64 * px), w, glm::vec4(1, 0, 0, 1), {0.5f, 0.0f});
+    }
+}
+
 void Game::fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming) {
     glm::vec3 at;
     combat.set_muzzle(viewmodel.muzzle(at) ? &at : nullptr);
     const size_t shots = combat.stats().shots;
-    combat.update(dt, in, eye, aim);
+    CombatInput with_aim = in;
+    with_aim.aiming = aiming;
+    combat.update(dt, with_aim, eye, aim);
     if (combat.stats().shots != shots) viewmodel.flash(aiming);
 }
 

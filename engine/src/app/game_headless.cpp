@@ -266,7 +266,7 @@ int Game::run_screenshot() {
                 player.pitch = glm::degrees(std::asin(glm::clamp(aim.z, -1.0f, 1.0f)));
                 ci.fire = combat.weapon().automatic || int(t / 0.1f) % 2 == 0;
             }
-            fire_step(kPhysicsStep, ci, player.eye(), aim, false);
+            fire_step(kPhysicsStep, ci, player.eye(), aim, opt.aim_at >= 0 && t >= opt.aim_at);
             combat.push_player_out();
             if (opt.combat_test > 0 && (report += kPhysicsStep) >= 1.0f) {
                 report = 0;
@@ -295,6 +295,8 @@ int Game::run_screenshot() {
             vm.firing = combat.firing();
             vm.shot = combat.shots() != vm_shots_, vm_shots_ = combat.shots();
             vm.reloading = combat.reloading();
+            vm.aiming = opt.aim_at >= 0 && t >= opt.aim_at;
+            if (vm.aiming) cam.fov += (viewmodel.aim_fov() - cam.fov) * std::min(1.0f, kPhysicsStep * 12.0f);
             viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
             logic.weapon_playing = viewmodel.state();
             update_frost(kPhysicsStep);
@@ -349,6 +351,7 @@ int Game::run_screenshot() {
         vm.firing = combat.firing();
             vm.shot = combat.shots() != vm_shots_, vm_shots_ = combat.shots();
         vm.reloading = combat.reloading();
+        vm.aiming = opt.aim_at >= 0;
         viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
     }
     bool scene_hidden = false;

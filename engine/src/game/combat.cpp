@@ -833,7 +833,7 @@ void Combat::restore_arsenal(const Saved& s) {
     if (s.owned.size() == owned_.size() && s.clip.size() == owned_.size() && s.reserve.size() == owned_.size())
         owned_ = s.owned, clip_ = s.clip, reserve_ = s.reserve;
     if (s.current >= 0 && size_t(s.current) < owned_.size() && owned_[size_t(s.current)]) current_ = s.current;
-    reload_left_ = 0, fire_cooldown_ = 0, spread_ = 0;
+    reload_left_ = 0, fire_cooldown_ = 0, spread_ = weapon().hip.min, cross_alpha_ = 0;
     grenades = s.grenades, mines = s.mines;
     if (!s.powers.empty()) powers_ = s.powers, power_index_ = std::clamp(s.power_index, 0, int(powers_.size()) - 1);
     power_cooldown_ = 0;
@@ -914,7 +914,12 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
         // CComponentWeapon::Load: ..., max ammo (+0x4c), clip size (+0x50), ...
         w.reserve = f[16].i;
         w.clip = std::max(f[17].i, 1);
-        w.spread_step = f[27].as_float();
+        w.hip = {num(f, 23, 1), num(f, 24, 2), num(f, 25, 10), num(f, 26, 20), num(f, 27, 1.5f)};
+        w.aim = {num(f, 28, 0.2f), num(f, 29, 1), num(f, 30, 1.5f), num(f, 31, 1), num(f, 32, 0.7f)};
+        if (f.size() > 46) {
+            w.cross_aiming = f[33].i != 0, w.cross_px = f[34].i, w.cross_plus = f[36].i != 0;
+            w.scope = f[46].i != 0;
+        }
         if (f.size() > 35 && f[35].type == Value::String) w.sprite = f[35].s;
         // Fire modes {?, projectile type, continuous, continuous delay (ms), ...}.
         if (f[4].size() > 0 && f[4][0].size() > 3) {
@@ -2587,13 +2592,18 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     }
     const glm::vec3& aim_dir = aimed;
     ++stats_.shots;
-    // Spread: a cone that widens while firing.
-    std::normal_distribution<float> n(0.0f, glm::radians(0.3f + spread_) * 0.5f);
+    // CWeaponComponent::DoFire: the spread within its least and most; GetSpread: the shot
+    // off by up to that much either way, across and up.
+    const WeaponDef::Spread& sp = aiming_ ? w.aim : w.hip;
+    spread_ = std::clamp(spread_, sp.min, std::max(sp.max, sp.min));
+    std::uniform_real_distribution<float> n(-glm::radians(spread_), glm::radians(spread_));
     glm::vec3 right = glm::cross(aim_dir, glm::vec3(0, 0, 1));
     right = glm::length(right) > 1e-4f ? glm::normalize(right) : glm::vec3(1, 0, 0);
     const glm::vec3 up = glm::normalize(glm::cross(right, aim_dir));
-    const glm::vec3 dir = glm::normalize(aim_dir + right * n(rng_) + up * n(rng_));
-    spread_ = std::min(spread_ + w.spread_step * 0.35f, 4.0f);
+    const glm::vec3 dir = glm::normalize(aim_dir + right * std::tan(n(rng_)) + up * std::tan(n(rng_)));
+    // CWeaponManager::UpdateWeaponFire: each shot opens it by its rate over the frame (the
+    // original's 30 frames a second), up to the most.
+    spread_ = std::min(spread_ + sp.fire / 30.0f, sp.max);
 
     // As far as the bullet flies in its life (the flamethrower's flame: 15 m/s for 1.3 s).
     const float range = w.bullet_speed >= 1 ? std::min(300.0f, w.bullet_speed * w.bullet_life) : 300.0f;   // under 1: the rail gun's instant beam
@@ -2845,7 +2855,24 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         fire_cooldown_ = 0.4f;
     }
     fire_cooldown_ = std::max(fire_cooldown_ - dt, 0.0f);
-    spread_ = std::max(spread_ - dt * 6.0f, 0.0f);
+    {   // CWeaponManager::UpdateWeaponFire, off the trigger: walking (not just after a shot)
+        // it opens to half its most, else it closes to its least.
+        aiming_ = in.aiming;
+        const WeaponDef::Spread& sp = aiming_ ? weapon().aim : weapon().hip;
+        const glm::vec3 now = player_.center;
+        const bool walking = dt > 0 && glm::length(glm::vec2(now - last_center_)) / dt > 0.5f && since_shot_ >= 0.3f;
+        last_center_ = now;
+        if (!(trigger_held_ && firing())) {
+            if (walking && spread_ < sp.max * 0.5f) spread_ = std::min(spread_ + dt * sp.walk, sp.max * 0.5f);
+            else if (!walking) spread_ = std::max(spread_ - dt * sp.recover, sp.min);
+        }
+        // DrawTargetCrossHair: it fades in over a quarter second while it may show (not
+        // aiming, unless the weapon keeps it; not reloading), out otherwise; the fire kick
+        // (Update: 0.015 a ms) draws its arms in by up to 3 pixels.
+        const bool show = (!aiming_ || weapon().cross_aiming) && reload_left_ <= 0;
+        cross_alpha_ = std::clamp(cross_alpha_ + (show ? dt : -dt) * 1000.0f / 255.0f, 0.0f, 1.0f);
+        cross_kick_ = std::clamp(cross_kick_ + (trigger_held_ && firing() ? dt : -dt) * 15.0f, 0.0f, 1.0f);
+    }
     int& clip = clip_[size_t(current_)];
     int& reserve = reserve_[size_t(current_)];
     const WeaponDef& w = weapon();
@@ -2888,6 +2915,19 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     const bool wall = scene_.collision().raycast(eye, eye + aim * 200.0f, wall_t);
     const int under = ray_target(eye, aim, wall ? wall_t * 200.0f : 200.0f, t_hit, p);
     aim_on_enemy_ = under >= 0 && targets_[size_t(under)].hostile;
+    aim_distance_ = under >= 0 ? t_hit : wall ? wall_t * 200.0f : -1.0f;
+}
+
+Combat::Crosshair Combat::crosshair() const {
+    const WeaponDef& w = weapon();
+    Crosshair c;
+    c.sprite = w.sprite, c.plus = w.cross_plus, c.scope = w.scope;
+    const WeaponDef::Spread& sp = aiming_ ? w.aim : w.hip;
+    c.arms = -3.0f * cross_kick_ + float(w.cross_px) * (sp.max > 0 ? spread_ / sp.max : 0.0f);
+    c.color = aim_on_enemy_ ? glm::vec4(1, 0, 0, 1) : glm::vec4(1);
+    c.alpha = w.scope ? 1.0f : cross_alpha_;
+    c.distance = aim_distance_;
+    return c;
 }
 
 void Combat::push_player_out() {
@@ -2979,13 +3019,7 @@ void Combat::draw(Overlay& o, const glm::vec3& eye, int width, int height) const
     // HUD, in pixels.
     const float w = float(width), h = float(height), u = h / 720.0f;
     const float cx = w * 0.5f, cy = h * 0.5f;
-    // Crosshair: red over an enemy, wider while the spread is open.
-    const glm::vec4 cc = aim_on_enemy_ ? glm::vec4(1, 0.25f, 0.2f, 0.9f) : glm::vec4(1, 1, 1, 0.75f);
-    const float gap = (6 + spread_ * 4) * u, len = 9 * u, th = std::max(2 * u, 1.0f);
-    rect(o.screen, cx - gap - len, cy - th / 2, len, th, cc);
-    rect(o.screen, cx + gap, cy - th / 2, len, th, cc);
-    rect(o.screen, cx - th / 2, cy - gap - len, th, len, cc);
-    rect(o.screen, cx - th / 2, cy + gap, th, len, cc);
+    const float th = std::max(2 * u, 1.0f);
     if (hit_marker_ > 0) {
         const float s = 7 * u, a = hit_marker_ / 0.15f;
         for (int k = 0; k < 4; ++k) {

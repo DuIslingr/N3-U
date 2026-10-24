@@ -57,6 +57,7 @@ struct Options {
     float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
     std::string shoot_at;       // headless: "x,y,z,t": from time t, fire at that point
     float checkpoint_at = -1;   // headless: at this time, respawn at the last checkpoint
+    float aim_at = -1;          // headless: from this time on, aim
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)
