@@ -347,7 +347,8 @@ void Game::draw_text(FrameParams& f, int w, int h) {
     }
     if (opt.scripts) {
         Hud::State hs;
-        hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open;
+        hs.visible = !combat.player_dead && logic.hud_enabled && (!logic.player_locked() || logic.interface_in_cinematic) && !menu.open &&
+                     !logic.interacting();   // stepping up to use: PlayerComponent::SetState hides the interface
         hs.clip = combat.ammo_in_clip(), hs.reserve = combat.ammo_reserve();
         hs.grenades = (combat.grenades_enabled || combat.mines_picked()) && logic.controls.items && !logic.limited_active();
         hs.weapons = logic.controls.weapons && !logic.limited_active();
@@ -396,7 +397,7 @@ void Game::draw_text(FrameParams& f, int w, int h) {
             if (logic.input != InputScheme::Touch)
                 objective_text.draw(hud_sprites, "[E]", {(r.x + r.z) * 0.5f, r.w + 14 * scale}, w, glm::vec4(1));
         }
-    if (opt.scripts && !logic.player_locked() && logic.hud_enabled)
+    if (opt.scripts && !logic.player_locked() && !logic.interacting() && logic.hud_enabled)
         for (const LevelLogic::ObjectiveMarker& m : logic.objective_markers) {
             const LevelLogic::Object* o = logic.object(m.id);
             if (!o || !o->enabled) continue;
@@ -404,14 +405,14 @@ void Game::draw_text(FrameParams& f, int w, int h) {
             if (!m.node.empty()) scene.node_position(o->index, m.node, at);
             hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, at, glm::distance(f.camera, at), w, h, settings.metric);
         }
-    if (opt.scripts && logic.path_marker.on && !logic.player_locked() && logic.hud_enabled)
+    if (opt.scripts && logic.path_marker.on && !logic.player_locked() && !logic.interacting() && logic.hud_enabled)
         hud.draw_marker(hud_sprites, objective_text, f.proj * f.view, logic.path_marker.position,
                         glm::distance(f.camera, logic.path_marker.position), w, h, settings.metric);
-    if (opt.scripts && !logic.player_locked() && logic.hud_enabled)
+    if (opt.scripts && !logic.player_locked() && !logic.interacting() && logic.hud_enabled)
         for (const glm::vec3& g : combat.grenade_threats()) hud.draw_grenade_warning(hud_sprites, f.view, g, w, h);
-    if (opt.scripts && logic.timer >= 0 && !logic.player_locked() && logic.hud_enabled)
+    if (opt.scripts && logic.timer >= 0 && !logic.player_locked() && !logic.interacting() && logic.hud_enabled)
         hud.draw_timer(hud_sprites, objective_text, logic.timer, w, h);
-    if (const Combat::PickupInfo& pi = combat.pickup_info(); pi.time > 0 && opt.scripts && !logic.player_locked() && logic.hud_enabled)
+    if (const Combat::PickupInfo& pi = combat.pickup_info(); pi.time > 0 && opt.scripts && !logic.player_locked() && !logic.interacting() && logic.hud_enabled)
         hud.draw_pickup(hud_sprites, objective_text, pi.sprite, pi.amount, w, h);
     if (opt.scripts && logic.objectives.alpha > 0 && !logic.player_locked() && !menu.open) {
         std::vector<Hud::ObjectiveLine> lines;

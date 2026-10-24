@@ -956,9 +956,9 @@ bool LevelLogic::in_use_capsule(const Object& o, bool& has) const {
 }
 
 void LevelLogic::update_use_range() {
-    // PlayerComponent::CheckInteract (while the player is on foot and in control): the usable
-    // object whose capsule the player is in (the one it was, while it still is; else the
-    // nearest). One that wants the crystal only while the player has it.
+    // PlayerComponent::CheckInteract (while the player is on foot and in control): the first
+    // usable object, in the level's order, whose capsule the player is in. One that wants the
+    // crystal only while the player has it.
     if (interacting() || player_locked() || (combat && combat->player_dead) || player_gun_ >= 0 || player_mech_ >= 0 ||
         player_vehicle_ >= 0)
         return;
@@ -971,15 +971,9 @@ void LevelLogic::update_use_range() {
         return in_use_capsule(o, has);
     };
     int found = -1;
-    if (const Object* o = object(in_range_); o && usable(*o)) {
-        found = in_range_;
-    } else {
-        float best = std::numeric_limits<float>::max();
-        for (const auto& [id, o] : objects_) {
-            const float d = glm::distance(o.position, player.center);
-            if (d < best && usable(o)) best = d, found = id;
-        }
-    }
+    size_t first = std::numeric_limits<size_t>::max();
+    for (const auto& [id, o] : objects_)
+        if (o.index < first && usable(o)) first = o.index, found = id;
     if (found == in_range_) return;
     if (Object* o = object(in_range_)) show_interface(*o, false);
     in_range_ = found;
