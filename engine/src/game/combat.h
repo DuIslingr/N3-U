@@ -467,6 +467,13 @@ private:
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
         float melee_at = 0.45f;   // seconds into the blow it lands
+        // Its melee position round the player (CTargetableComponent: -1 none), checked every
+        // 0.3 s; without one it keeps off (a fiend circles, CCybertoothAiComponent action 2:
+        // [8]-[0] m away).
+        int melee_slot = -1;
+        float slot_check = 0, circle_r = -1, circle_min = 7, circle_max = 12;
+        bool circles = false, circle_left = false;
+        std::string clip_circle_left, clip_circle_right;   // RunLeftStrong / RunRightStrong
         bool invulnerable = false;
         bool spawned = false;
         // Who it fights: -1 the player, >= 0 a target index, kNoEnemy none. Scripts can
@@ -872,6 +879,10 @@ private:
     void notice(Target& t);
     void apply_damage(Target& t, float amount, bool by_player);
     void die(Target& t);
+    int best_melee_slot(const Target& t) const;
+    bool melee_slot_point(const Target& t, int slot, glm::vec3& out) const;
+    void hold_off(Target& t, const glm::vec3& target, float dt);
+    static constexpr int kMeleeSlots = 4;   // CTargetableComponent::Init: a radius under 50
     // Start a particle effect at `at` with its +Z along `normal`; false if there is no such effect.
     bool effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal = {0, 0, 1});
     void sound(const std::vector<std::string>& names, const glm::vec3* at);

@@ -1498,6 +1498,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             t.alt_speed = rocket.bolt_speed, t.alt_splash = rocket.bolt_splash, t.alt_radius = rocket.bolt_radius;
     }
     t.spider = t.pounces = false, t.jump_phase = 0;
+    t.circles = false, t.melee_slot = -1, t.slot_check = 0, t.circle_r = -1;
     if (const Value* sp = component(o, 0x55); sp && sp->size() > 7)   // CBigSpiderAiComponent::CheckJumpAttack
         t.spider = t.pounces = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
     if (const Value* cy = component(o, 0x57); cy && cy->size() > 20) {   // CCybertoothAiComponent::TryJumpAttack
@@ -1505,6 +1506,8 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         t.jump_speed = num(*cy, 10, 15), t.jump_gravity = num(*cy, 11, 15);
         t.jump_cool_min = num(*cy, 19, 3), t.jump_cool_max = num(*cy, 20, 5);
         t.jump_start = "JumpAttackStart", t.jump_land = "JumpAttackLand";
+        t.circles = true, t.circle_min = num(*cy, 8, 7), t.circle_max = std::max(num(*cy, 0, 12), t.circle_min);
+        t.clip_circle_left = logic_.state_clip(o.type, "RunLeftStrong"), t.clip_circle_right = logic_.state_clip(o.type, "RunRightStrong");
         t.jump_hit_left = 0.292f, t.jump_hit_right = 0.270f, t.jump_type_left = t.jump_type_right = 5;
     }
     if (const Value* cfg = component(o, 0x4c); cfg && cfg->size() > 0) t.weapon_kind = (*cfg)[0].i;   // CNPCComponent::LoadConfig
@@ -1694,8 +1697,8 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
     if (t.jump_phase == 0) {
         t.jump_cool -= dt;
         if (t.jump_cool > 0 || !t.aware || t.enemy == kNoEnemy || !sees || t.state == Target::State::Hurt ||
-            t.state == Target::State::Melee || dist <= t.jump_min || dist >= t.jump_max)
-            return false;
+            t.state == Target::State::Melee || dist <= t.jump_min || dist >= t.jump_max || (on_player && t.melee_slot < 0))
+            return false;   // TryJumpAttack: at its melee position only
         const float y = glm::radians(t.yaw);
         const glm::vec2 to = glm::normalize(glm::vec2(feet - t.pos) + glm::vec2(1e-6f, 0));
         if (glm::dot(to, glm::vec2(-std::sin(y), std::cos(y))) <= 0.85f) return false;   // facing it
@@ -1959,6 +1962,55 @@ int Combat::choose_enemy(const Target& t) const {
 }
 
 float Combat::sight_range(const Target& t) { return t.aware && t.sight_alert > 0 ? t.sight_alert : t.sight; }
+
+// CTargetableComponent::UpdateMeleePositions: the player's melee positions, evenly round it
+// its radius + 3 m out (here no farther than the attacker strikes from), where the nav mesh
+// reaches. GetBestMeleePositionFrom: the free one on the attacker's side, else the nearest
+// either side of it.
+bool Combat::melee_slot_point(const Target& t, int slot, glm::vec3& out) const {
+    const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+    const float a = glm::radians(360.0f * float(slot) / float(kMeleeSlots));
+    const float r = std::min(player_.radius.x + 3.0f, t.melee_range * 0.8f);
+    const glm::vec3 p = feet + glm::vec3(std::cos(a), std::sin(a), 0) * r;
+    return nav_.nearest(p + glm::vec3(0, 0, 0.3f), 1.0f, out) >= 0 && line_clear(feet + glm::vec3(0, 0, 0.5f), out + glm::vec3(0, 0, 0.5f));
+}
+
+int Combat::best_melee_slot(const Target& t) const {
+    const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+    const float side = glm::degrees(std::atan2(t.pos.y - feet.y, t.pos.x - feet.x));
+    const int k = int(std::lround(side / (360.0f / float(kMeleeSlots))));
+    auto usable = [&](int s) {
+        s = (s % kMeleeSlots + kMeleeSlots) % kMeleeSlots;
+        for (const Target& o : targets_)
+            if (&o != &t && o.melee_slot == s && o.enemy == -1 && alive(o)) return -1;
+        glm::vec3 p;
+        return melee_slot_point(t, s, p) ? s : -1;
+    };
+    if (const int s = usable(k); s >= 0) return s;
+    for (int j = 1; j <= kMeleeSlots / 2; ++j) {
+        if (const int s = usable(k - j); s >= 0) return s;
+        if (const int s = usable(k + j); s >= 0) return s;
+    }
+    return -1;
+}
+
+// No melee position free: a fiend runs circles round the target (CCybertoothAiComponent
+// action 2, its run turning that way), others wait just beyond the positions, facing it.
+void Combat::hold_off(Target& t, const glm::vec3& target, float dt) {
+    glm::vec2 from = glm::vec2(t.pos - target);
+    if (glm::length(from) < 1e-3f) from = {1, 0};
+    const float a = std::atan2(from.y, from.x);
+    if (t.circles) {
+        const float b = a + glm::radians(t.circle_left ? 40.0f : -40.0f);
+        go_towards(t, target + glm::vec3(std::cos(b), std::sin(b), 0) * t.circle_r, 1.0f, dt);
+        const std::string& turn = t.circle_left ? t.clip_circle_left : t.clip_circle_right;
+        if (t.path_next < t.path.size() && !turn.empty()) play(t, turn, true);
+        return;
+    }
+    const glm::vec3 wait = target + glm::vec3(std::cos(a), std::sin(a), 0) * 5.0f;
+    if (glm::distance(glm::vec2(t.pos), glm::vec2(wait)) > 1.5f) go_towards(t, wait, 0.5f, dt);
+    else face(t, target, dt), play(t, t.clip_alert, true);
+}
 
 bool Combat::sees_point(const Target& t, const glm::vec3& target) const {
     const glm::vec3 eye = t.pos + glm::vec3(0, 0, t.height * 0.85f);
@@ -2383,8 +2435,25 @@ void Combat::update_actor(Target& t, float dt) {
         }
         // Within its region (link_region): as close to the enemy as the box allows.
         glm::vec3 goal = target;
+        float stop = t.ranged ? 1.5f : t.melee_range * 0.8f;
         if (t.has_region) goal = glm::vec3(glm::clamp(glm::vec2(target), glm::vec2(t.region_min), glm::vec2(t.region_max)), target.z);
-        go_towards(t, goal, t.ranged ? 1.5f : t.melee_range * 0.8f, dt);
+        else if (!t.ranged && on_player) {   // to its melee position, or keeping off without one
+            if ((t.slot_check -= dt) <= 0) {
+                const int was = t.melee_slot;
+                t.slot_check = 0.3f, t.melee_slot = best_melee_slot(t);
+                if (logic_.trace && t.melee_slot != was)
+                    log(std::to_string(t.id) + (t.melee_slot >= 0 ? " takes melee position " + std::to_string(t.melee_slot) : std::string(" keeps off")));
+                if (t.melee_slot < 0 && (was >= 0 || t.circle_r < 0))
+                    t.circle_r = std::uniform_real_distribution<float>(t.circle_min, t.circle_max)(rng_),
+                    t.circle_left = std::uniform_int_distribution<int>(0, 1)(rng_) != 0;
+            }
+            if (t.melee_slot < 0) {
+                hold_off(t, target, dt);
+                break;
+            }
+            if (glm::vec3 p; melee_slot_point(t, t.melee_slot, p)) goal = p, stop = 0.3f;
+        }
+        go_towards(t, goal, stop, dt);
         if (t.has_region && t.path_next >= t.path.size()) face(t, target, dt);
         break;
     }
