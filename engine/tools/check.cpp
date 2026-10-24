@@ -208,6 +208,26 @@ int cmd_anim(const std::string& dir, const std::string& file, const std::vector<
     return 0;
 }
 
+// A node's tracks: per track, its property and the key times within [from, to] ms.
+int cmd_keys(const std::string& dir, const std::string& file, const std::string& node, float from, float to) {
+    Vfs vfs;
+    vfs.mount_directory(dir);
+    const AnimationLibrary lib = load_animation(vfs.read(file));
+    auto it = lib.tracks.find(node);
+    if (it == lib.tracks.end()) {
+        std::printf("no tracks for %s\n", node.c_str());
+        return 1;
+    }
+    for (const AnimTrack& t : it->second) {
+        std::printf("%s comp %d, %zu keys:", t.property == AnimTrack::Property::Rotation ? "rotation" : t.property == AnimTrack::Property::Scale ? "scale" : "translation",
+                    t.component, t.times.size());
+        for (float k : t.times)
+            if (k >= from && k <= to) std::printf(" %.0f", k);
+        std::printf("\n");
+    }
+    return 0;
+}
+
 std::string read_text(const Vfs& vfs, const std::string& name) {
     const auto& hits = vfs.find(name);
     if (hits.empty()) throw std::runtime_error("shader file not found: " + name);
@@ -342,6 +362,7 @@ int main(int argc, char** argv) {
             return cmd_anim(argv[2], argv[3], times);
         }
         if (cmd == "texture" && argc >= 5) return cmd_texture(argv[2], argv[3], argv[4]);
+        if (cmd == "keys" && argc >= 7) return cmd_keys(argv[2], argv[3], argv[4], std::stof(argv[5]), std::stof(argv[6]));
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
         return 1;

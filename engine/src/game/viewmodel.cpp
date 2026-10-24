@@ -1,5 +1,6 @@
 #include "game/viewmodel.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <utility>
@@ -102,8 +103,18 @@ void ViewModel::arms_distort_blend(float target, float ms) {
 }
 
 void ViewModel::show_weapon(const std::string& node) {
+    // The weapons are the WEAPON_* nodes not inside another one (the handgun keeps its mesh
+    // and magazine in WEAPON_handgun and WEAPON_Handgun_charger under WEAPON_Handgun_R).
+    std::vector<std::string> weapons;
     for (const std::string& n : scene_.node_names(object_))
-        if (n.rfind("WEAPON_", 0) == 0 && n.find("_PIVOT") == std::string::npos) scene_.set_node_visible(object_, n, n == node);
+        if (n.rfind("WEAPON_", 0) == 0 && n.find("_PIVOT") == std::string::npos) weapons.push_back(n);
+    glm::vec3 at;
+    for (const std::string& n : weapons) {
+        const bool nested = std::any_of(weapons.begin(), weapons.end(), [&](const std::string& m) {
+            return m != n && scene_.node_position(object_, m + "/" + n, at);
+        });
+        if (!nested) scene_.set_node_visible(object_, n, n == node);
+    }
 }
 
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
