@@ -1347,6 +1347,7 @@ void Combat::start(bool keep_stats) {
     load_barks();
     bark_voice_ = -1, bark_playing_ = nullptr, bark_next_ = bark_clock_ = 0;
     lock_target_ = -1, lock_time_ = lock_hold_ = 0, locked_ = false, lock_marker_ = size_t(-1);
+    if (!keep_stats) mech_ = -1;
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, " +
         std::to_string(breakables_.size()) + " breakables, nav mesh " +
@@ -2880,7 +2881,6 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
             die(*jeep);
             amount = player_health;
         }
-    if (logic_.in_mech()) amount *= 0.3f;   // the mech's armour (its health is 200 to the player's 50)
     player_health -= amount;
     stats_.damage_taken += amount;
     regen_delay_ = regen_pause_;
@@ -3252,6 +3252,22 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     update_damage_zones(dt);
     update_barks(dt);
     update_lock(dt, eye, aim);
+    // CPlayerMechComponent::Enable: in the mech the player's health is the mech's (its max
+    // and what it has); out of it the player's own come back and the mech keeps its own.
+    if (const int mech = logic_.player_mech(); mech != mech_) {
+        if (mech_ >= 0) {
+            if (LevelLogic::Object* m = logic_.object(mech_)) m->health = player_health;
+            player_max_health = own_max_health_, player_health = std::min(own_health_, own_max_health_);
+        }
+        if (mech >= 0) {
+            own_max_health_ = player_max_health, own_health_ = player_health;
+            const Target* t = find_target(mech);
+            const LevelLogic::Object* m = logic_.object(mech);
+            player_max_health = t ? t->max_health : 200.0f;
+            player_health = m && m->health > 0 ? std::min(m->health, player_max_health) : player_max_health;
+        }
+        mech_ = mech;
+    }
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);
@@ -3425,7 +3441,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     regen_delay_ -= dt;
     hud_damage_wait_ = std::max(hud_damage_wait_ - dt, 0.0f);
     if (regen_delay_ < 0 && player_health < player_max_health) blood_fade_ = true;   // RegenerateHealth
-    if (regen_delay_ <= 0 && player_health < player_max_health) {
+    if (regen_delay_ <= 0 && player_health < player_max_health && mech_ < 0) {   // none in the mech
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);
         // CPlayerBaseComponent::RegenerateHealth: full again.
         if (player_health >= player_max_health && logic_.audio && !logic_.audio->playing("sfx_mc_health_regen_end"))

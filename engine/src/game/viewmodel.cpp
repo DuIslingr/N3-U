@@ -84,6 +84,16 @@ void ViewModel::start() {
         scene_.set_object_viewmodel(cockpit_);
         scene_.set_object_visible(cockpit_, false);
     }
+    // CPlayerMechComponent::Init: the mech's shield (HUDShield_Mech) on the cockpit's
+    // dummy_link_shield_mech, its "shield_mech" clip posed by the health
+    // (UpdateShieldPercent).
+    mech_shield_ = size_t(-1), mech_shield_shown_ = -1;
+    if (cockpit_ != size_t(-1) && type_named(gol_, "HUDShield_Mech", &type)) {
+        mech_shield_ = scene_.spawn_object(type, -1002, glm::vec3(0), 0);
+        scene_.set_object_viewmodel(mech_shield_);
+        scene_.play_clip(mech_shield_, "shield_mech", false);
+        scene_.set_object_visible(mech_shield_, false);
+    }
     muzzles_.clear(), flashing_ = -1;   // their objects went with the old level
     fx_.clear(), fx_weapon_.clear(), events_serial_ = 0;
     weapon_.clear(), base_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
@@ -140,6 +150,14 @@ bool ViewModel::zoom_range(float& widest, float& narrowest) {
     return c.zoom;
 }
 
+float ViewModel::cockpit_fov_factor() const {
+    Scene::CameraView hands, cockpit;
+    if (object_ == size_t(-1) || cockpit_ == size_t(-1) || !scene_.camera_view(object_, hands) || !scene_.camera_view(cockpit_, cockpit) ||
+        hands.fov <= 0)
+        return 1;
+    return cockpit.fov / hands.fov;
+}
+
 float ViewModel::model_fov_add() {
     if (weapon_.empty() || !visible_) return 0;
     const Clips& c = clips(weapon_);
@@ -172,7 +190,10 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     if (object_ == size_t(-1)) return;
     // The mech's cockpit: its own rig and states.
     const bool cockpit = in.visible && in.cockpit && cockpit_ != size_t(-1);
-    if (cockpit_ != size_t(-1) && cockpit != cockpit_visible_) scene_.set_object_visible(cockpit_, cockpit), cockpit_visible_ = cockpit;
+    if (cockpit_ != size_t(-1) && cockpit != cockpit_visible_) {
+        scene_.set_object_visible(cockpit_, cockpit), cockpit_visible_ = cockpit;
+        if (mech_shield_ != size_t(-1)) scene_.set_object_visible(mech_shield_, cockpit);
+    }
     if (cockpit) {
         if (visible_) scene_.set_object_visible(object_, false), visible_ = false;
         const Clips& c = clips("Player_Mech_Cockpit");
@@ -180,6 +201,13 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         if (want.empty()) want = c.get("CockpitIdle");
         if (!want.empty() && want != cockpit_playing_) scene_.play_clip(cockpit_, want, true), cockpit_playing_ = want;
         place(cockpit_, eye, yaw_deg, pitch_deg);
+        if (mech_shield_ != size_t(-1)) {
+            scene_.set_object_transform(mech_shield_, scene_.object_matrix(cockpit_, "dummy_link_shield_mech"));
+            if (std::abs(in.mech_shield - mech_shield_shown_) > 1e-3f) {
+                mech_shield_shown_ = in.mech_shield;
+                scene_.set_clip_time(mech_shield_, std::clamp(in.mech_shield, 0.0f, 1.0f) * scene_.clip_length(mech_shield_, "shield_mech") * 0.999f);
+            }
+        }
         camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
         stop_all_fx(), fx_weapon_.clear();
         return;

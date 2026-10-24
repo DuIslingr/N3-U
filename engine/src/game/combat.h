@@ -1033,6 +1033,8 @@ private:
     float fire_cooldown_ = 0, reload_left_ = 0;
     bool reload_filled_ = false;
     int low_shield_voice_ = -1;   // sfx_shield_low playing
+    int mech_ = -1;                // the mech piloted (its health is the player's)
+    float own_health_ = 0, own_max_health_ = 0;
     // The player's lock-on: the target (index, -1 none), time on it, locked, the lock's
     // hold after locking (CWeaponComponent +0x1ec, 5 s), and the RLTarget marker.
     int lock_target_ = -1;

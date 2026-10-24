@@ -402,11 +402,11 @@ void Hud::place(const std::string& node, glm::vec2 px, const glm::mat4& view_pro
 void Hud::frame(FrameParams& f, int w, int h, const State& s, ParticleList& sprites) {
     if (object_ == size_t(-1)) return;
     const bool jeep = s.jeep_shield > -1;
-    if (s.visible != visible_ || jeep != jeep_visible_) {
+    if (s.visible != visible_ || jeep != jeep_visible_ || s.mech != mech_) {
         scene_.set_object_visible(object_, s.visible), scene_.set_object_visible(ammo_, s.visible && s.weapons);
-        if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible && !jeep);
+        if (shield_ != size_t(-1)) scene_.set_object_visible(shield_, s.visible && !jeep && !s.mech);
         if (jeep_shield_ != size_t(-1)) scene_.set_object_visible(jeep_shield_, s.visible && jeep);
-        visible_ = s.visible, jeep_visible_ = jeep;
+        visible_ = s.visible, jeep_visible_ = jeep, mech_ = s.mech;
     }
     if (Scene::ClipState cs; jeep && jeep_shield_ != size_t(-1) && std::abs(s.jeep_shield - jeep_shown_) > 1e-3f && scene_.clip_state(jeep_shield_, cs)) {
         jeep_shown_ = s.jeep_shield;

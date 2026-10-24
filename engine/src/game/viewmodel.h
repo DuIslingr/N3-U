@@ -28,6 +28,7 @@ public:
         bool shot = false;           // a shot went off since the last update
         bool aiming = false, running = false;
         bool cockpit = false;        // piloting the mech: its cockpit (Player_Mech_Cockpit) instead
+        float mech_shield = 1;       // the mech's health, 0..1 (HUDShield_Mech in the cockpit)
     };
     // SetCrtWeaponState: play a weapon state once (GetDown lowers the weapon until GetUp,
     // Idle and UnAim go back to normal).
@@ -55,6 +56,9 @@ public:
     // other).
     float aim_fov();
     float model_fov_add();
+    // The mech's view is its cockpit camera's (CPlayerMechComponent: 1.29 rad to the hands'
+    // 0.87): how much wider than the hands' camera, 1 without the rigs.
+    float cockpit_fov_factor() const;
     // The current weapon's zoom range aiming (CLevelInterfaceNormal::EnableZoomSlider); false
     // if it has none.
     bool zoom_range(float& widest, float& narrowest);
@@ -137,7 +141,8 @@ private:
 
     Scene& scene_;
     const Gol& gol_;
-    size_t object_ = size_t(-1), cockpit_ = size_t(-1);
+    size_t object_ = size_t(-1), cockpit_ = size_t(-1), mech_shield_ = size_t(-1);
+    float mech_shield_shown_ = -1;
     bool cockpit_visible_ = false;
     std::string cockpit_playing_;
     void place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg);

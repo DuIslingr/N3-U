@@ -433,7 +433,7 @@ void Game::run_window() {
         if (!can_aim) aim_toggled = false;   // a toggled aim ends with cinematics and deaths
         const bool aiming = can_aim && (touch_mode ? touch_in.aim : settings.aim_toggle ? aim_toggled : aim_held);
         {
-            const float base = opt.scripts ? logic.game_fov() : kFov;
+            const float base = (opt.scripts ? logic.game_fov() : kFov) * (mech ? viewmodel.cockpit_fov_factor() : 1.0f);
             // CWeaponComponent::Aim: the weapon's own; one with a zoom slider starts there (within
             // its range) and the wheel moves it.
             float widest = 0, narrowest = 0;
@@ -550,6 +550,7 @@ void Game::run_window() {
             vm.visible = !flying && !combat.player_dead && !logic.player_locked() && !logic.limited_active() && !logic.weapon_hidden() &&
                          (!combat.special_weapon() || mech);
             vm.cockpit = mech;
+            vm.mech_shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
             if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
             arms_distort();
             if (combat.take_grenade_throw()) viewmodel.set_state("ThrowGrenade");

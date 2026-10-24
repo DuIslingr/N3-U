@@ -287,6 +287,7 @@ int Game::run_screenshot() {
             vm.visible = !combat.player_dead && !logic.player_locked() && !logic.limited_active() && !logic.weapon_hidden() &&
                      (!combat.special_weapon() || logic.in_mech());
             vm.cockpit = logic.in_mech();
+            vm.mech_shield = combat.player_health / std::max(combat.player_max_health, 1.0f);
             if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
             arms_distort();
             if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(h);
@@ -297,6 +298,7 @@ int Game::run_screenshot() {
             vm.reloading = combat.reloading();
             vm.aiming = opt.aim_at >= 0 && t >= opt.aim_at;
             if (vm.aiming) cam.fov += (viewmodel.aim_fov() - cam.fov) * std::min(1.0f, kPhysicsStep * 12.0f);
+            else cam.fov = kFov * (logic.in_mech() ? viewmodel.cockpit_fov_factor() : 1.0f);   // the mech: its cockpit camera's
             viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
             logic.weapon_playing = viewmodel.state();
             update_frost(kPhysicsStep);

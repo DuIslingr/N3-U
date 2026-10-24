@@ -181,6 +181,7 @@ public:
     }   // in a vehicle, on a gun or in the mech
     void leave_vehicle();
     int player_vehicle() const { return player_vehicle_; }   // -1 on foot
+    int player_mech() const { return player_mech_; }         // the mech piloted, -1 none
     int player_gun() const { return player_gun_; }
     // Where the riding player's eyes are, and the yaw range the view may take (degrees).
     bool seat(glm::vec3& eye, float& yaw_min, float& yaw_max);
