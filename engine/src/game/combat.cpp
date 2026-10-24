@@ -1478,6 +1478,24 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         t.rf_time_min = num(a, 22, 8000) / 1000.0f, t.rf_time_max = num(a, 23, 12000) / 1000.0f;
         t.rf_fire_on_s = num(a, 26, 1500) / 1000.0f, t.rf_fire_off_min = num(a, 27, 3000) / 1000.0f, t.rf_fire_off_max = num(a, 28, 4000) / 1000.0f;
     }
+    t.mech_ai = false;
+    if (const Value* m = component(o, 0x23); m && m->size() > 26) {   // CMechAIComponent::LoadConfig
+        t.mech_ai = true;
+        t.mech_rockets = num(*m, 3, 20), t.mech_lost = num(*m, 4, 2000) / 1000.0f;
+        t.mech_rocket_min = num(*m, 8, 10), t.mech_rocket_max = num(*m, 9, 60);
+        for (int k = 0; k < 2; ++k)
+            for (const Value& g : (*m)[size_t(11 + k)].list)
+                if (g.size() > 2 && g[0].type == Value::String) {
+                    const int side = g[1].i != 0 ? 0 : 1;
+                    (k ? t.mech_pod : t.mech_gun)[side] = g[0].s, t.mech_flash_type[k][side] = g[2].i;
+                }
+        t.mech_loop_sound = str(*m, 18), t.mech_stop_sound = str(*m, 19), t.mech_rocket_sound = str(*m, 20), t.mech_cool_sound = str(*m, 21);
+        set_projectile(t, (*m)[25].i);
+        Target rocket;
+        if (set_projectile(rocket, (*m)[26].i))
+            t.alt_impacts = rocket.bolt_impacts, t.alt_looks = rocket.bolt_looks, t.alt_damage = rocket.bolt_damage,
+            t.alt_speed = rocket.bolt_speed, t.alt_splash = rocket.bolt_splash, t.alt_radius = rocket.bolt_radius;
+    }
     t.spider = t.pounces = false, t.jump_phase = 0;
     if (const Value* sp = component(o, 0x55); sp && sp->size() > 7)   // CBigSpiderAiComponent::CheckJumpAttack
         t.spider = t.pounces = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
@@ -1579,7 +1597,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     t.stand_height = t.height;
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 7 && npc_grenade_def_.type >= 0 && (*npc)[4].i == npc_grenade_def_.type)
         t.grenades = (*npc)[5].i, t.grenade_min = num(*npc, 6, 20), t.grenade_max = num(*npc, 7, 50);
-    t.fire_range = std::min(t.sight, 35.0f);
+    t.fire_range = t.mech_ai ? t.sight : std::min(t.sight, 35.0f);   // a mech: at any target it sees (CheckNext)
     t.melee_damage = t.ranged ? 15.0f : 8.0f;
 
     const auto clips = scene_.clip_names(t.object);
@@ -2309,6 +2327,7 @@ void Combat::update_actor(Target& t, float dt) {
         scene_.set_object_pose(t.object, t.pos, t.yaw);
         return;
     }
+    if (t.mech_ai && t.state != S::Attack && !t.attack_state.empty()) mech_stop(t);
     switch (t.state) {
     case S::Hurt:
         if (scene_.clip_finished(t.object) || t.timer > 0.8f) t.state = S::Chase, t.timer = 0;
@@ -2327,12 +2346,14 @@ void Combat::update_actor(Target& t, float dt) {
     case S::Attack:
         face(t, target, dt);
         if (t.reload_left <= 0 && t.attack_state.empty()) {   // between attacks by states: their attack idle
-            const std::vector<std::string> idle = t.attack_choices.empty() ? std::vector<std::string>{} : logic_.state_clips(scene_.level().objects[t.object].type, "AttackIdle");
+            const std::vector<std::string> idle = t.mech_ai                ? logic_.state_clips(scene_.level().objects[t.object].type, "AI_Idle")
+                                                  : t.attack_choices.empty() ? std::vector<std::string>{}
+                                                                             : logic_.state_clips(scene_.level().objects[t.object].type, "AttackIdle");
             play(t, idle.empty() ? t.clip_fire : idle[0], true);
         }
         attack_fire(t, chest, on_player, sees, dt);
         // Lost the line of fire, or too far: close in again.
-        if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
+        if ((!sees && t.lost_sight > (t.mech_ai ? t.mech_lost : 0.8f)) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
         if (dist < t.melee_range && !t.clip_melee.empty() && t.fire_timer > 0.3f) {
             start_melee(t);
         }
@@ -2392,6 +2413,7 @@ const std::unordered_map<std::string, Combat::StateDef>& Combat::states_of(int t
                 if (st.size() < 12 || st[0].type != Value::String) continue;
                 StateDef d;
                 d.loop = st[2].i != 0;
+                d.plays = std::max(st[3].i, 1);
                 if (const int n = st[6].i; n > 0 && size_t(n) < list.size() && list[size_t(n)].size() > 0) d.next = list[size_t(n)][0].s;
                 for (const Value& clip : st[11].list) {
                     if (clip.size() < 3 || clip[0].type != Value::String) continue;
@@ -2590,6 +2612,117 @@ void Combat::event_attack(Target& t, const glm::vec3& chest, bool on_player) {
     t.fire_timer = t.burst_pause * std::uniform_real_distribution<float>(0.8f, 1.6f)(rng_);
 }
 
+// CMechAIComponent::CheckNextAttack: the rockets ([3] % of the time, the target [8]-[9] m away:
+// StartShootRockets) or the chain guns (StartShoot, their loop sound). The state's clips play
+// in turn its count of times (AI_Fire twice, AI_MissileFire three), each GameEvent 2 / 3 a
+// shot from the left / right (OnEvent 9 -> Fire / SecondaryFire), then the state after it,
+// AI_Cooldown (StartCoolDown: its sound). The guns stop [4] ms after losing sight (Update).
+void Combat::mech_attack(Target& t, const glm::vec3& chest, bool sees, float dt) {
+    if (t.attack_state.empty()) {
+        if (t.fire_timer > 0 || !sees) return;
+        const float dist = glm::distance(t.pos, chest);
+        const bool rockets = dist >= t.mech_rocket_min && dist <= t.mech_rocket_max &&
+                             float(std::uniform_int_distribution<int>(0, 99)(rng_)) < t.mech_rockets;
+        t.mech_plays = 0, t.mech_unseen = 0;
+        if (!mech_state(t, rockets ? "AI_MissileFire" : "AI_Fire")) {
+            t.fire_timer = 1;
+            return;
+        }
+        t.shots_left = 1;
+        if (!rockets && logic_.audio && !t.mech_loop_sound.empty())
+            if (const LevelLogic::Object* o = logic_.object(t.id)) {
+                Audio::Params p;
+                p.position = &o->position, p.loop = 1;
+                t.mech_loop = logic_.audio->play(t.mech_loop_sound, p);
+            }
+    }
+    const auto& st = states_of(scene_.level().objects[t.object].type);
+    auto it = st.find(t.attack_state);
+    Scene::ClipState cs;
+    if (it == st.end() || t.playing != t.attack_clip || !scene_.clip_state(t.object, cs)) {
+        mech_stop(t);
+        return;
+    }
+    const bool guns = t.attack_state == "AI_Fire", pods = t.attack_state == "AI_MissileFire";
+    if (guns && !sees && (t.mech_unseen += dt) > t.mech_lost) {
+        mech_stop(t);
+        return;
+    }
+    if (sees) t.mech_unseen = 0;
+    if (guns || pods)
+        for (const auto& c : it->second.clips) {
+            if (c.first != t.attack_clip) continue;
+            for (const auto& [ms, id] : c.second)
+                if (ms > t.attack_ms && ms <= cs.ms && (id == 2 || id == 3)) mech_shot(t, chest, id == 2, pods);
+        }
+    t.attack_ms = cs.ms;
+    if (!scene_.clip_finished(t.object)) return;
+    if (++t.mech_plays < it->second.plays && mech_state(t, t.attack_state)) return;
+    const std::string next = it->second.next;
+    if (guns || pods) {
+        if (guns) mech_stop(t);
+        t.mech_plays = 0;
+        if (!next.empty() && next != t.attack_state && mech_state(t, next)) {
+            t.shots_left = 1;
+            if (const LevelLogic::Object* o = logic_.object(t.id); o && !t.mech_cool_sound.empty()) sound(t.mech_cool_sound, &o->position);
+            return;
+        }
+    }
+    t.attack_state.clear(), t.shots_left = 0, t.fire_timer = 0;   // CheckNext: the next attack at once
+}
+
+// The state's clips in turn (StartShoot / StartShootRockets / StartCoolDown).
+bool Combat::mech_state(Target& t, const std::string& state) {
+    const auto& st = states_of(scene_.level().objects[t.object].type);
+    auto it = st.find(state);
+    if (it == st.end() || it->second.clips.empty()) return false;
+    const auto& c = it->second.clips[size_t(t.mech_plays) % it->second.clips.size()];
+    if (!scene_.play_clip(t.object, c.first, false)) return false;
+    t.playing = c.first, t.attack_state = state, t.attack_clip = c.first, t.attack_ms = -1;
+    if (logic_.trace && t.mech_plays == 0) log(std::to_string(t.id) + " mech state " + state + " (" + c.first + ")");
+    return true;
+}
+
+// CMechAIComponent::OnExitState: the guns' loop ends with their stop sound.
+void Combat::mech_stop(Target& t) {
+    if (t.mech_loop >= 0) {
+        if (logic_.audio) logic_.audio->stop(t.mech_loop, 50);
+        if (const LevelLogic::Object* o = logic_.object(t.id); o && !t.mech_stop_sound.empty()) sound(t.mech_stop_sound, &o->position);
+    }
+    t.mech_loop = -1;
+    t.attack_state.clear(), t.shots_left = 0, t.mech_plays = 0;
+}
+
+// CMechAIComponent::Fire / SecondaryFire: a bullet (a rocket) from the left or right gun's
+// (pod's) node at the target's middle, its muzzle object flashing there; each rocket its
+// launch sound.
+void Combat::mech_shot(Target& t, const glm::vec3& at, bool left, bool rocket) {
+    const int k = rocket ? 1 : 0, side = left ? 0 : 1;
+    const std::string& node = (rocket ? t.mech_pod : t.mech_gun)[side];
+    glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
+    if (node.empty() || !scene_.node_position(t.object, node, muzzle)) return;
+    if (const int type = t.mech_flash_type[k][side]; type >= 0) {
+        size_t& flash = t.mech_flash[k][side];
+        if (flash == size_t(-1)) flash = scene_.spawn_object(type, -5000 - attachment_id_++, muzzle, 0);
+        if (flash != size_t(-1)) {
+            const std::vector<std::string> clips = first_state_clips(type);
+            if (!clips.empty()) scene_.play_clip(flash, clips[size_t(rng_()) % clips.size()], false);
+            scene_.set_object_transform(flash, scene_.object_matrix(t.object, node));
+            scene_.set_object_visible(flash, true);
+        }
+    }
+    glm::vec3 aim = glm::normalize(at - muzzle);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    const glm::vec3 side_v = glm::normalize(glm::cross(aim, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0));
+    const glm::vec3 up = glm::cross(side_v, aim);
+    aim = glm::normalize(aim + (side_v * u(rng_) + up * u(rng_)) * std::tan(glm::radians(1.5f)));
+    Bolt b{muzzle, aim * (rocket ? t.alt_speed : t.bolt_speed), rocket ? t.alt_damage : t.bolt_damage, 3.0f, t.bolt_color, int(&t - targets_.data())};
+    b.splash = rocket ? t.alt_splash : t.bolt_splash, b.radius = rocket ? t.alt_radius : t.bolt_radius, b.alt = rocket;
+    launch_bolt(b, rocket ? t.alt_looks : t.bolt_looks);
+    if (rocket) sound(t.mech_rocket_sound, &muzzle);
+    ++stats_.enemy_shots;
+}
+
 void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool sees, float dt) {
     // Reloading (DoReload: the Reload state's clip), and out of rounds: a reload first.
     if (t.reload_left > 0) {
@@ -2621,6 +2754,10 @@ void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool
         t.sweep_sign = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
     }
     t.fire_timer -= dt;
+    if (t.mech_ai) {
+        mech_attack(t, chest, sees, dt);
+        return;
+    }
     if (!t.attack_choices.empty()) {
         event_attack(t, chest, on_player);
         return;
@@ -2807,6 +2944,9 @@ void Combat::place_attachments() {
         scene_.set_object_param(t.shadow, "Factor", glm::vec4(t.shadow_factor), 1);
     }
     for (Target& t : targets_) {
+        for (auto& pair : t.mech_flash)   // a mech's muzzle flashes, gone when their clips end
+            for (size_t& flash : pair)
+                if (flash != size_t(-1) && scene_.clip_finished(flash)) scene_.set_object_visible(flash, false);
         if (t.attached.empty()) continue;
         const LevelLogic::Object* o = logic_.object(t.id);
         const bool shown = o && o->visible && o->enabled;
@@ -3302,6 +3442,7 @@ void Combat::die(Target& t) {
     if (t.held >= 0) drop_held(t);   // CNPCComponent::OnEvent 0xe: RemoveTentacle, DropTrownObject
     o->dead = true;
     leave_cover(t);
+    if (t.mech_ai) mech_stop(t);
     o->health = 0;
     t.timer = 0;
     t.token = false;
@@ -3602,6 +3743,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
                                  (players || (shooter && ((shooter->attacks & (1u << targets_[size_t(hit)].team)) != 0 ||
                                                           targets_[size_t(hit)].id == shooter->locked)));
         const Impacts* impacts = players && b.weapon >= 0 && size_t(b.weapon) < weapons_.size() ? &weapons_[size_t(b.weapon)].impacts
+                                 : shooter && b.alt && !shooter->alt_impacts.effects.empty() ? &shooter->alt_impacts
                                  : shooter && !shooter->bolt_impacts.effects.empty()       ? &shooter->bolt_impacts
                                                                                             : nullptr;
         glm::vec3 stop = end;

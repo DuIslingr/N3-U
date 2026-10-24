@@ -605,6 +605,20 @@ private:
         int jump_phase = 0;   // 0 none, 1 start, 2 in the air, 3 landing
         bool jump_right = false;
         glm::vec3 jump_vel{0}, jump_goal{0};
+        // An enemy mech (CMechAIComponent, 0x23: [3] % rockets when the target is [8]-[9] m
+        // away, [4] ms out of sight before the guns stop, [11] its chain guns and [12] its rocket
+        // pods {node, left, muzzle object}, [18]-[21] the guns' loop and stop, the rocket and
+        // the cool-down sounds, [25] the bullet, [26] the rocket): AI_Fire or AI_MissileFire,
+        // each GameEvent 2 / 3 a shot from the left / right, then AI_Cooldown.
+        bool mech_ai = false;
+        float mech_rockets = 20, mech_rocket_min = 10, mech_rocket_max = 60, mech_lost = 2, mech_unseen = 0;
+        std::string mech_gun[2], mech_pod[2], mech_loop_sound, mech_stop_sound, mech_rocket_sound, mech_cool_sound;
+        int mech_flash_type[2][2] = {{-1, -1}, {-1, -1}};   // [gun / pod][left / right]
+        size_t mech_flash[2][2] = {{size_t(-1), size_t(-1)}, {size_t(-1), size_t(-1)}};
+        int mech_plays = 0, mech_loop = -1;
+        Impacts alt_impacts;   // the second projectile (a mech's rocket)
+        ProjectileLooks alt_looks;
+        float alt_damage = 30, alt_speed = 40, alt_splash = 0, alt_radius = 0;
         int car_gun_type = -1, car_loop = -1;
         bool car_firing = false, car_muzzle_shown = false;
         float car_interval = 0, car_shot = 0, car_yaw = 0, car_pitch = 0;
@@ -692,6 +706,7 @@ private:
         int owner;                     // target index; -1: the player
         float splash = 0, radius = 0;  // its explosion
         int weapon = -1;               // the player's: its weapon (the impacts)
+        bool alt = false;              // its shooter's second projectile (the impacts)
         int trail_type = -1;           // its streak: object and where it started
         size_t trail = size_t(-1);
         glm::vec3 from{0};
@@ -727,12 +742,17 @@ private:
     struct StateDef {
         std::vector<std::pair<std::string, std::vector<std::pair<float, int>>>> clips;
         bool loop = false;
+        int plays = 1;   // its clips played in turn this many times
         std::string next;
     };
     const std::unordered_map<std::string, StateDef>& states_of(int type);
     std::unordered_map<int, std::unordered_map<std::string, StateDef>> states_cache_;
     bool play_attack_state(Target& t, const std::string& state);
     void event_attack(Target& t, const glm::vec3& chest, bool on_player);
+    void mech_attack(Target& t, const glm::vec3& chest, bool sees, float dt);
+    bool mech_state(Target& t, const std::string& state);
+    void mech_shot(Target& t, const glm::vec3& at, bool left, bool rocket);
+    void mech_stop(Target& t);
     void cloak(Target& t, bool instant);
     void uncloak(Target& t);
     void update_cloak(Target& t, float dt);
