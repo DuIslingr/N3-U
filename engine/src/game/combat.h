@@ -423,7 +423,13 @@ private:
         // it, hidden behind it, up and firing), for how long; when it looks for one again.
         bool use_covers = false;
         int cover = -1;
-        enum class CoverPhase { Moving, Hidden, Firing } cover_phase = CoverPhase::Moving;
+        enum class CoverPhase { Moving, Hidden, Acting } cover_phase = CoverPhase::Moving;
+        // What it does out of hiding (UpdateLowCover's fuzzy actions), on which side of the
+        // cover (CNPCComponent +0x31c: the Left states), and the clip a transition leads to.
+        enum class CoverAct { Fire, Lean, Blind, Peek } cover_act = CoverAct::Fire;
+        bool cover_left = false;
+        std::string cover_from, cover_next;
+        bool cover_next_loop = false;
         float cover_timer = 0, cover_eval = 0;
         float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds
         float stand_height = 1.9f;
@@ -534,6 +540,7 @@ private:
     struct CoverPoint {
         glm::vec3 pos{0}, dir{0, 1, 0};
         bool low = true;
+        bool left = false, right = false;   // [8]/[9]: its sides to come out of (CCoverPoint bits 4, 8)
         int holder = -1;   // the target index holding it
     };
     std::vector<CoverPoint> covers_;

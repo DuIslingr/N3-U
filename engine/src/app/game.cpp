@@ -174,16 +174,7 @@ Game::Game(const Options& options, const Vfs& vfs_, const Gol& gol_, SDL_Window*
         if (opt.list_actors)
             for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
     }
-    if (!opt.spawn_at.empty()) {
-        float v[4] = {0, 0, 0, 0};
-        if (std::sscanf(opt.spawn_at.c_str(), "%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3]) >= 3) {
-            player.spawn({v[0], v[1], v[2]}, v[3]);
-        } else {
-            const LevelLogic::Object* o = logic.object(std::stoi(opt.spawn_at));
-            if (!o) throw std::runtime_error("no object with id " + opt.spawn_at);
-            player.spawn(o->position, o->yaw);
-        }
-    }
+    if (!opt.spawn_at.empty()) spawn_at_option();
     for (const std::string& code : opt.exec) logic.exec(code);
     for (const std::string& h : opt.hide_models) std::printf("hid %zu placements of *%s*\n", scene.hide_models(h), h.c_str());
     if (!opt.continue_file.empty() && opt.scripts) {
@@ -572,6 +563,18 @@ void Game::step_logic(float dt) {
 }
 
 // StartJump / StartLanding: the weapon's own clips (ironsight ones while aiming).
+// --spawn-at: X,Y,Z[,YAW] or an object's id.
+void Game::spawn_at_option() {
+    float v[4] = {0, 0, 0, 0};
+    if (std::sscanf(opt.spawn_at.c_str(), "%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3]) >= 3) {
+        player.spawn({v[0], v[1], v[2]}, v[3]);
+    } else {
+        const LevelLogic::Object* o = logic.object(std::stoi(opt.spawn_at));
+        if (!o) throw std::runtime_error("no object with id " + opt.spawn_at);
+        player.spawn(o->position, o->yaw);
+    }
+}
+
 void Game::fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming) {
     glm::vec3 at;
     combat.set_muzzle(viewmodel.muzzle(at) ? &at : nullptr);

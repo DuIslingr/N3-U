@@ -202,6 +202,7 @@ int Game::run_screenshot() {
             pin.forward = o.forward, pin.right = o.right;
             player.yaw += o.look.x;
         }
+        if (opt.respawn_at >= 0 && t <= opt.respawn_at && t + kPhysicsStep > opt.respawn_at && !opt.spawn_at.empty()) spawn_at_option();
         if (opt.scripts) logic.advance_real_time(kPhysicsStep);   // QTE bookkeeping (headless keeps full speed)
         if (float ly, lp; opt.scripts && logic.look_target(ly, lp)) player.yaw = ly, player.pitch = lp;   // PlayerLookTo
         if (opt.scripts) player.eye_height = logic.in_mech() ? 7.4f : 0.75f;

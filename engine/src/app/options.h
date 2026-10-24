@@ -19,6 +19,7 @@
 //   nova3 ... --screenshot OUT.bmp --trace-zones                   print the zones, portals and what is visible
 //   nova3 ... --screenshot OUT.bmp --run SECONDS                    run the level logic (standing still) first
 //   nova3 ... --screenshot OUT.bmp --run SECONDS --every S          also save OUT_000.bmp, ... every S seconds of it
+//   nova3 ... --spawn-at X,Y,Z,YAW --respawn-at T --run SECONDS      back at the spawn point T seconds in
 //
 // Controls: mouse to look, WASD to move, Shift to run, Space to jump, F to toggle flying
 // (Space/Ctrl then move up/down), E to use, G to switch game/built-in shaders, Z to toggle
@@ -79,6 +80,7 @@ struct Options {
     bool scripts = true, trace_scripts = false;
     float run = 0;            // headless: seconds of level logic before the screenshot
     float every = 0;          // headless: also save a frame every this many seconds of the run
+    float respawn_at = -1;    // headless: put the player at --spawn-at again this far into the run (after an intro)
     std::string spawn_at;
     std::vector<std::string> exec;
     std::vector<std::string> hide_models;

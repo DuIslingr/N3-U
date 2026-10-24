@@ -39,6 +39,7 @@ void Combat::load_covers() {
             const float a = glm::radians(field(e, 3, 0));
             p.dir = glm::normalize(glm::vec3(m * glm::vec4(-std::sin(a), std::cos(a), 0, 0)));
             p.low = e[6].i != 0;
+            p.left = e[8].i != 0, p.right = e[9].i != 0;
             glm::vec3 on;
             if (nav_.nearest(p.pos + glm::vec3(0, 0, 0.3f), 1.5f, on) >= 0) p.pos = on;   // standing on the walkable area
             covers_.push_back(p);
@@ -154,6 +155,7 @@ void Combat::set_crouched(Target& t, bool on) {
 void Combat::leave_cover(Target& t) {
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
+    t.cover_next.clear();
     set_crouched(t, false);
     if (t.token) t.token = false;
 }
@@ -188,12 +190,30 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
     }
     const CoverPoint& c = covers_[size_t(t.cover)];
     const Target::Band* b = band(t);
-    auto clip = [&](const char* state, const std::string& fallback) {
-        const std::string s = logic_.state_clip(scene_.level().objects[t.object].type, state);
-        return s.empty() ? fallback : s;
+    const int type = scene_.level().objects[t.object].type;
+    auto clip = [&](const std::string& state) { return logic_.state_clip(type, state); };
+    const std::string side = t.cover_left ? "Left" : "Right";
+    // A transition clip, then the one it leads to (CNPCComponent::StartTransition); without
+    // the first, straight to the second.
+    auto transition = [&](const std::string& from, const std::string& to, bool loop) {
+        const std::string first = clip(from), then = clip(to);
+        if (first.empty()) {
+            play(t, then.empty() ? t.clip_alert : then, loop);
+            t.cover_next.clear();
+            return;
+        }
+        play(t, first, false);
+        t.cover_from = first, t.cover_next = then.empty() ? t.clip_alert : then, t.cover_next_loop = loop;
+    };
+    if (!t.cover_next.empty() && (t.playing != t.cover_from || scene_.clip_finished(t.object)))   // done (or cut short)
+        play(t, t.cover_next, t.cover_next_loop), t.cover_next.clear();
+    const bool settling = !t.cover_next.empty();
+    const std::string idle = c.low ? "IdleCover" + side : "HighCoverIdle";
+    auto hide_for = [&]() {
+        return std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
     };
     switch (t.cover_phase) {
-        case Target::CoverPhase::Moving:
+        case Target::CoverPhase::Moving: {
             if (glm::distance(glm::vec2(t.pos), glm::vec2(c.pos)) > 0.6f) {
                 go_towards(t, c.pos, 0.4f, dt);
                 if (t.path_next >= t.path.size() && glm::distance(glm::vec2(t.pos), glm::vec2(c.pos)) > 2.0f) {   // no way there
@@ -202,65 +222,94 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
                 }
                 return true;
             }
+            // CheckLowCoverOrientation: the side towards the enemy (beyond 15 degrees either
+            // way of the cover's facing), else whichever side the cover opens on.
+            const glm::vec2 to(target - c.pos);
+            const float ang = glm::degrees(std::atan2(c.dir.x * to.y - c.dir.y * to.x, c.dir.x * to.x + c.dir.y * to.y));
+            if (ang < -15.0f) t.cover_left = false;   // the enemy to its right
+            else if (ang > 15.0f) t.cover_left = true;
+            else t.cover_left = c.left && !(c.right && ang < 0);
             t.cover_phase = Target::CoverPhase::Hidden;
-            t.cover_timer = std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
-            [[fallthrough]];
-        case Target::CoverPhase::Hidden:
+            t.cover_timer = hide_for();
+            if (c.low) set_crouched(t, true);
+            transition(c.low ? "EnterCover" + std::string(t.cover_left ? "Left" : "Right") : "HighCoverEnter",
+                       c.low ? "IdleCover" + std::string(t.cover_left ? "Left" : "Right") : "HighCoverIdle", true);
+            return true;
+        }
+        case Target::CoverPhase::Hidden: {
             face(t, target, dt);
             if (t.throw_at >= 0) {   // a grenade on its way out of the hand (its clip playing)
                 if ((t.throw_at -= dt) < 0) npc_throw_grenade(t, target);
                 return true;
             }
-            if (c.low) set_crouched(t, true), play(t, clip("CrouchIdle", t.clip_alert), true);
-            else play(t, clip("HighCoverIdle", t.clip_alert), true);
-            if ((t.cover_timer -= dt) > 0) return true;
-            {
-                // UpdateLowCover state 0 (CFuzzyActions): fire (rising, leaning or blind), peek
-                // (hidden a while longer) or throw a grenade (one enemy grenade about at a time,
-                // within its throw range, if it has any), by the band's weights.
-                bool grenade_out = false;
-                for (const Grenade& g : live_grenades_) grenade_out |= g.live && g.npc;
-                const float d = glm::distance(t.pos, target);
-                const float w_fire = b ? b->fire + b->lean + b->blind : 100.0f, w_peek = b ? b->peek : 0.0f;
-                const float w_grenade = b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f;
-                const float roll = std::uniform_real_distribution<float>(0.0f, std::max(w_fire + w_peek + w_grenade, 1e-3f))(rng_);
-                if (roll >= w_fire + w_peek) {
-                    play(t, clip(c.low ? "LowCoverRightThrowGrenade" : "AttackGrenade", clip("AttackGrenade", t.clip_alert)), false);
-                    t.throw_at = 0.6f;
-                    t.cover_timer = std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
-                    return true;
-                }
-                if (roll >= w_fire) {
-                    t.cover_timer = std::uniform_real_distribution<float>(0.5f, 1.5f)(rng_);
-                    return true;
-                }
+            if (settling || (t.cover_timer -= dt) > 0) return true;
+            // UpdateLowCover state 0 (CFuzzyActions): fire (rising), lean out, blind fire
+            // (the enemy in front of the cover), peek, or throw a grenade (one enemy grenade
+            // about at a time, within its throw range, if it has any), by the band's weights.
+            bool grenade_out = false;
+            for (const Grenade& g : live_grenades_) grenade_out |= g.live && g.npc;
+            const float d = glm::distance(t.pos, target);
+            const bool front = glm::dot(c.dir, glm::normalize(target - c.pos + glm::vec3(0, 0, 1e-4f))) > 0.5f;
+            const float w[5] = {b ? b->fire : 100.0f, b ? b->lean : 0.0f, b && front ? b->blind : 0.0f, b ? b->peek : 0.0f,
+                                b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f};
+            float total = 0;
+            for (float x : w) total += x;
+            float roll = std::uniform_real_distribution<float>(0.0f, std::max(total, 1e-3f))(rng_);
+            int act = 0;
+            while (act < 4 && roll >= w[act]) roll -= w[act], ++act;
+            if (act == 4) {   // the grenade
+                const std::string from_cover = c.low ? clip("LowCover" + side + "ThrowGrenade") : std::string();
+                transition(from_cover.empty() ? "AttackGrenade" : "LowCover" + side + "ThrowGrenade", idle, true);
+                t.throw_at = 0.6f;
+                t.cover_timer = hide_for();
+                return true;
             }
-            {
-                // Up to fire needs one of the attack tokens at the player (else wait a moment).
-                int shooters = 0;
-                for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
-                if (on_player && shooters >= max_shooters_) {
-                    t.cover_timer = 0.4f;
-                    return true;
-                }
+            if (act == 3) {   // a look over the top, then down again
+                transition(c.low ? "LowCover" + side + "Peek" : "HighCoverLean" + side + "Peek", idle, true);
+                t.cover_timer = std::uniform_real_distribution<float>(0.5f, 1.5f)(rng_);
+                return true;
             }
+            // Out to fire needs one of the attack tokens at the player (else wait a moment).
+            int shooters = 0;
+            for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
+            if (on_player && shooters >= max_shooters_) {
+                t.cover_timer = 0.4f;
+                return true;
+            }
+            t.cover_act = act == 1 ? Target::CoverAct::Lean : act == 2 ? Target::CoverAct::Blind : Target::CoverAct::Fire;
             // UpdateLowCover state 2: attack for attack min + (max - min) x aggressiveness/100.
-            t.cover_phase = Target::CoverPhase::Firing;
+            t.cover_phase = Target::CoverPhase::Acting;
             t.cover_timer = t.attack_min + (t.attack_max - t.attack_min) * t.aggr * 0.01f;
-            set_crouched(t, false);
             t.fire_timer = std::min(t.fire_timer, 0.3f);
+            if (!c.low) transition("HighCoverLean" + side + "ToFire", "HighCoverLean" + side + "Attack", true);
+            else if (t.cover_act == Target::CoverAct::Lean) transition("EnterLowCoverLean" + side, "LowCoverLean" + side + "Fire", true);
+            else if (t.cover_act == Target::CoverAct::Blind) transition("EnterLowCoverBlindFire" + side, "LowCoverBlindFire" + side, true);
+            else transition("EnterLowCoverFire" + side, "LowCoverFire", true);
+            set_crouched(t, c.low && t.cover_act == Target::CoverAct::Blind);   // blind: still behind it
             return true;
-        case Target::CoverPhase::Firing:
+        }
+        case Target::CoverPhase::Acting: {
             face(t, target, dt);
-            play(t, c.low ? clip("LowCoverFire", t.clip_fire) : clip("HighCoverLeanLeftAttack", t.clip_fire), true);
+            if (settling) return true;   // coming out
             if (b) t.burst_pause = std::uniform_real_distribution<float>(b->pause_min, std::max(b->pause_max, b->pause_min))(rng_);
-            attack_fire(t, chest, on_player, sees, dt);
+            if (t.cover_act == Target::CoverAct::Blind) {   // over the top unseen: anywhere near
+                std::uniform_real_distribution<float> u(-1.5f, 1.5f);
+                attack_fire(t, chest + glm::vec3(u(rng_), u(rng_), u(rng_) * 0.5f), on_player, false, dt);
+            } else {
+                attack_fire(t, chest, on_player, sees, dt);
+            }
             if ((t.cover_timer -= dt) <= 0 && t.shots_left <= 0) {   // back down
                 t.token = false;
                 t.cover_phase = Target::CoverPhase::Hidden;
-                t.cover_timer = std::uniform_real_distribution<float>(t.idle_in_cover_min, std::max(t.idle_in_cover_max, t.idle_in_cover_min))(rng_);
+                t.cover_timer = hide_for();
+                if (c.low) set_crouched(t, true);
+                if (!c.low) transition("HighCoverLean" + side + "Back", idle, true);
+                else if (t.cover_act == Target::CoverAct::Lean) transition("ExitLowCoverLean" + side, idle, true);
+                else if (t.cover_act == Target::CoverAct::Blind) transition("ExitLowCoverBlindFire" + side, idle, true);
+                else transition("ExitLowCoverFire" + side, idle, true);
             }
             return true;
+        }
     }
     return true;
 }
