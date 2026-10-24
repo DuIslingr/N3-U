@@ -343,6 +343,11 @@ private:
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
         ProjectileLooks bolt_looks;
+        // The hurt look (CEffectsLocalComponent, 0x93): a technique worn while its time
+        // parameter runs from start to end (per ms x 0.001), a hit restarting it once it
+        // passed `again`; the hit's point in a parameter. hurt_time < 0: not on.
+        std::string hurt_technique, hurt_param, hurt_impact_param;
+        float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
         // rounds left, a reload under way (its clip's seconds left) and its sounds ([23]).
         int mag_size = -1, per_shot = 1, mag = 0;
@@ -529,6 +534,9 @@ private:
     void update_trails(float dt);
     size_t take_trail(int type, const glm::vec3& at);
     static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
+    void hurt_look(Target& t, const glm::vec3* at);   // a hit: the hurt technique on (or again)
+    void update_hurt_looks(float dt);
+    void set_hurt_time(Target& t);
     ProjectileLooks read_looks(int type) const;
     std::vector<std::string> first_state_clips(int type) const;
     int attachment_id_ = 0;

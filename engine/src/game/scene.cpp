@@ -1362,6 +1362,32 @@ bool Scene::set_object_technique(size_t object, const std::string& material, con
     return any;
 }
 
+bool Scene::set_object_technique_all(size_t object, const std::string& technique) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || !game_shaders_) return false;
+    const Instance& inst = instances_[it->second];
+    bool any = false;
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count; ++i) {
+        const DrawInfo& info = draw_info_[i];
+        if (technique.empty()) {
+            draws_[i].material = draw_materials_[i];
+            continue;
+        }
+        if (!info.source) continue;
+        auto v = std::find_if(material_variants_.begin(), material_variants_.end(), [&](const Material& m) {
+            return m.id == info.source->id && m.effect == info.source->effect && m.technique == technique && m.diffuse == info.source->diffuse &&
+                   m.lightmap == info.source->lightmap;
+        });
+        if (v == material_variants_.end()) {
+            material_variants_.push_back(*info.source);
+            material_variants_.back().technique = technique;
+            v = material_variants_.end() - 1;
+        }
+        if (const GpuMaterial* gm = materials_->get(*v, info.skinned)) draws_[i].material = gm, any = true;
+    }
+    return any;
+}
+
 bool Scene::set_object_material(size_t object, const std::string& model_file, const std::string& material) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end() || !game_shaders_) return false;
@@ -1421,3 +1447,4 @@ void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_z
 }
 
 }  // namespace nova
+

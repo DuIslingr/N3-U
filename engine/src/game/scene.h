@@ -111,6 +111,9 @@ public:
     // GameObject_Material_SetTechnique: draw the object's `material` with another technique
     // of its effect (false if it has no such material or technique).
     bool set_object_technique(size_t object, const std::string& material, const std::string& technique);
+    // Every material of the object whose effect has `technique` drawn with it (empty: back to
+    // their own); false if none has it (CEffectsLocalComponent: the hurt look).
+    bool set_object_technique_all(size_t object, const std::string& technique);
     // Every draw of the object with material `material` of another model file instead
     // (CGameObject::AddMaterialToAllNodes + SwitchMaterials); an empty file: its own again.
     bool set_object_material(size_t object, const std::string& model_file, const std::string& material);

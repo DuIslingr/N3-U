@@ -886,6 +886,13 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             }
         }
     }
+    // CComponentEffectsLocal: [1] technique, [3] time parameter, [4] start, [5] end, [6]
+    // restart from, [7] the impact point wanted, [8] its parameter.
+    if (const Value* hl = component(o, 0x93); hl && hl->size() > 8 && (*hl)[1].type == Value::String && !(*hl)[1].s.empty()) {
+        t.hurt_technique = (*hl)[1].s, t.hurt_param = (*hl)[3].s;
+        t.hurt_start = num(*hl, 4, 0.1f), t.hurt_end = num(*hl, 5, 1), t.hurt_again = num(*hl, 6, 0.6f);
+        t.hurt_impact_param = (*hl)[7].i != 0 ? (*hl)[8].s : std::string();
+    }
     if (const Value* att = component(o, 0x91); att && att->size() > 0)
         for (const Value& a : (*att)[0].list)
             if (a.size() > 1 && a[1].type == Value::String) attach(a[0].i, a[1].s);
@@ -1646,6 +1653,35 @@ void Combat::build_beams(const glm::vec3& eye, ParticleList& out) {
     }
 }
 
+void Combat::hurt_look(Target& t, const glm::vec3* at) {
+    if (t.hurt_technique.empty() || (t.hurt_time >= 0 && t.hurt_time < t.hurt_again)) return;
+    if (t.hurt_time < 0 && !scene_.set_object_technique_all(t.object, t.hurt_technique)) return;
+    t.hurt_time = t.hurt_start;
+    if (at && !t.hurt_impact_param.empty()) scene_.set_object_param(t.object, t.hurt_impact_param, glm::vec4(*at, 0), 3);
+    set_hurt_time(t);
+}
+
+// The time parameter ([3], "HurtTime") is in no effect: NV_NormalRim's hurt wave reads
+// its radius from the unbound uniform HurtDist, which it is taken to drive, a 0.15 m ring
+// spreading from the hit.
+void Combat::set_hurt_time(Target& t) {
+    if (!t.hurt_param.empty()) scene_.set_object_param(t.object, t.hurt_param, glm::vec4(t.hurt_time), 1);
+    scene_.set_object_param(t.object, "HurtDist", glm::vec4(t.hurt_time), 1);
+}
+
+void Combat::update_hurt_looks(float dt) {
+    for (Target& t : targets_) {
+        if (t.hurt_time < 0) continue;
+        t.hurt_time += dt;
+        if (t.hurt_time > t.hurt_end) {
+            scene_.set_object_technique_all(t.object, "");
+            t.hurt_time = -1;
+        } else {
+            set_hurt_time(t);
+        }
+    }
+}
+
 void Combat::place_attachments() {
     for (Target& t : targets_) {
         if (t.attached.empty()) continue;
@@ -1791,6 +1827,10 @@ void Combat::apply_damage(Target& t, float amount, bool by_player) {
     if (o->health <= 0) {
         die(t);
         return;
+    }
+    {   // the hurt look spreading from where it was hit (its chest when that isn't known)
+        const glm::vec3 chest = t.pos + glm::vec3(0, 0, t.height * 0.6f);
+        hurt_look(t, damage_point_ ? damage_point_ : &chest);
     }
     if (t.hurt_sound_wait <= 0 && !t.hurt_sounds.empty()) {
         const glm::vec3 at = t.pos + glm::vec3(0, 0, t.height * 0.6f);
@@ -2141,6 +2181,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     }
     bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
     update_trails(dt);
+    update_hurt_looks(dt);
     for (Beam& b : beams_) b.age += dt;
     std::erase_if(beams_, [](const Beam& b) { return b.age >= 1.0f; });
     for (Spark& s : sparks_) s.life -= dt;
