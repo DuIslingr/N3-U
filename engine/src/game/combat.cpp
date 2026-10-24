@@ -19,6 +19,8 @@ namespace nova {
 namespace {
 
 constexpr int kCompBreakable = 0x13;
+constexpr int kCompDamage = 0x99;
+constexpr int kCompBuiltinBox = 0xa6;
 constexpr int kLightningGunType = 9007;   // AlienLightningGun_Player: a longer hit marker
 constexpr int kCompHealth = 0x11;
 constexpr int kCompAirNavigation = 0x1b;
@@ -602,6 +604,52 @@ void Combat::load_breakable(int id, size_t object, const LevelObject& o, const V
     breakables_.push_back(std::move(b));
 }
 
+void Combat::load_damage_zone(int id, const LevelObject& o, const Value& v) {
+    if (v.size() < 17) return;
+    DamageZone z;
+    z.id = id;
+    // CTriggerShapeAABB: the box [-w/2, w/2] x [-d/2, d/2] x [0, h] in the object's frame.
+    glm::vec3 box(1);
+    if (const Value* b = component(o, kCompBuiltinBox); b && b->size() >= 3) box = {num(*b, 0, 1), num(*b, 1, 1), num(*b, 2, 1)};
+    z.lo = {-box.x * 0.5f, -box.y * 0.5f, 0}, z.hi = {box.x * 0.5f, box.y * 0.5f, box.z};
+    // CComponentDamage: id, position, rotation (degrees, X then Y then Z), scale, ...
+    glm::mat4 m = glm::translate(glm::mat4(1), {num(v, 1, 0), num(v, 2, 0), num(v, 3, 0)});
+    m = glm::rotate(m, glm::radians(num(v, 6, 0)), {0, 0, 1});
+    m = glm::rotate(m, glm::radians(num(v, 5, 0)), {0, 1, 0});
+    m = glm::rotate(m, glm::radians(num(v, 4, 0)), {1, 0, 0});
+    z.to_local = glm::inverse(glm::scale(m, {num(v, 7, 1), num(v, 8, 1), num(v, 9, 1)}));
+    z.per_second = num(v, 11, 0);
+    z.teams = uint32_t(v[15].i);
+    z.sound = str(v, 16);
+    if (z.per_second > 0) damage_zones_.push_back(std::move(z));
+}
+
+void Combat::update_damage_zones(float dt) {
+    if (player_dead || dt <= 0) return;
+    // The player's capsule, feet to head, in each zone's frame against its box.
+    const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z), head = player_.center + glm::vec3(0, 0, player_.radius.z);
+    for (DamageZone& z : damage_zones_) {
+        if (const LevelLogic::Object* o = logic_.object(z.id); !o || !o->enabled) continue;
+        if (z.teams && !(z.teams & kPlayerTeamBit)) continue;
+        const glm::vec3 a(z.to_local * glm::vec4(feet, 1)), b(z.to_local * glm::vec4(head, 1));
+        float t0 = 0, t1 = 1;   // the segment's part within the box's slabs
+        for (int k = 0; k < 3 && t0 <= t1; ++k) {
+            const float d = b[k] - a[k];
+            if (std::abs(d) < 1e-6f) {
+                if (a[k] < z.lo[k] || a[k] > z.hi[k]) t0 = 2;
+                continue;
+            }
+            float u0 = (z.lo[k] - a[k]) / d, u1 = (z.hi[k] - a[k]) / d;
+            if (u0 > u1) std::swap(u0, u1);
+            t0 = std::max(t0, u0), t1 = std::min(t1, u1);
+        }
+        if (t0 > t1) continue;
+        // TestTargetForAction: [11] a second; its sound on the player while not playing.
+        damage_player(z.per_second * dt, glm::vec3(glm::inverse(z.to_local) * glm::vec4(0, 0, 0, 1)));
+        if (!z.sound.empty() && logic_.audio && !logic_.audio->playing(z.sound_handle)) z.sound_handle = logic_.audio->play(z.sound);
+    }
+}
+
 namespace {
 
 // The squared distance between segments p1q1 and p2q2, and the fraction along the first
@@ -986,7 +1034,7 @@ void Combat::start(bool keep_stats) {
     spawners_.clear();
     bolts_.clear();
     pickups_.clear(), pickup_info_ = {};
-    breakables_.clear();
+    breakables_.clear(), damage_zones_.clear();
     if (keep_stats) {   // counted again below
         stats_.targets = stats_.actors = stats_.hostile = 0;
     } else {
@@ -1024,6 +1072,10 @@ void Combat::start(bool keep_stats) {
             continue;
         }
         if (const Value* br = component(o, kCompBreakable)) load_breakable(id, obj.index, o, *br);
+        if (const Value* dz = component(o, kCompDamage)) {
+            load_damage_zone(id, o, *dz);
+            continue;
+        }
         const Value* health = component(o, kCompHealth);
         if (!health || !component(o, kCompTargetable)) continue;
         Target t;
@@ -2664,6 +2716,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     last_aim_ = aim;
     update_spawners(dt);
     update_pickups(dt);
+    update_damage_zones(dt);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);

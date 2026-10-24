@@ -164,6 +164,39 @@ int cmd_gol(const std::string& dir, const std::string& comp) {
     return 0;
 }
 
+// The objects of gol type `type_name` in level `lvc`: id, position, rotation, scale, and
+// their per-instance components (`comp` hex, or "-" for all of them).
+int cmd_instances(const std::string& dir, const std::string& lvc, const std::string& type_name, const std::string& comp) {
+    Vfs vfs;
+    vfs.mount_directory(dir);
+    const Gol gol = load_gol(vfs.read("gol.bin"));
+    const Level level = load_level(vfs.read(lvc), gol);
+    std::function<std::string(const Value&)> show = [&](const Value& v) -> std::string {
+        switch (v.type) {
+            case Value::Int: return std::to_string(v.i);
+            case Value::Float: { char b[32]; std::snprintf(b, sizeof b, "%g", double(v.f)); return b; }
+            case Value::String: return "'" + v.s + "'";
+            default: {
+                std::string out = "{";
+                for (size_t k = 0; k < v.list.size(); ++k) out += (k ? ", " : "") + show(v.list[k]);
+                return out + "}";
+            }
+        }
+    };
+    const int c = comp == "-" ? -1 : int(std::stoul(comp, nullptr, 16));
+    for (const LevelObject& o : level.objects) {
+        if (o.name != type_name) continue;
+        if (o.base)
+            std::printf("%d at (%.2f %.2f %.2f) rot (%.0f %.0f %.0f) scale (%.2f %.2f %.2f)%s", o.base->id, o.base->position.x,
+                        o.base->position.y, o.base->position.z, o.base->rotation.x, o.base->rotation.y, o.base->rotation.z,
+                        o.base->scale.x, o.base->scale.y, o.base->scale.z, o.base->visible ? "" : " hidden");
+        for (const auto& [cc, v] : o.components)
+            if (c < 0 || cc == c) std::printf(" [%02x] %s", cc, show(v).c_str());
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // The node tree of one model: name, translation, meshes, camera field of view.
 int cmd_nodes(const std::string& dir, const std::string& model) {
     Vfs vfs;
@@ -395,6 +428,7 @@ int main(int argc, char** argv) {
         if (cmd == "nodes" && argc >= 4) return cmd_nodes(argv[2], argv[3]);
         if (cmd == "gol" && argc >= 4) return cmd_gol(argv[2], argv[3]);
         if (cmd == "levels" && argc >= 4) return cmd_levels(argv[2], argv[3]);
+        if (cmd == "instances" && argc >= 6) return cmd_instances(argv[2], argv[3], argv[4], argv[5]);
         if (cmd == "anim" && argc >= 5) {
             std::vector<float> times;
             for (int k = 4; k < argc; ++k) times.push_back(std::stof(argv[k]));

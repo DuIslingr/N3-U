@@ -878,6 +878,23 @@ private:
         std::vector<Capsule> capsules;
     };
     std::vector<Breakable> breakables_;
+    // Damage zones (CDamageComponent, gol 0x99: ..., [10] enabled, [11] damage a second, [12]
+    // its kind, [13] factors by type, [15] teams it hurts (0: all), [16] a sound): a box (the
+    // object's CComponentBuiltinBox 0xa6: width, depth, height up from its base) scaled and
+    // turned with the object; the player inside is hurt (CDamageComponent::Update): kill
+    // volumes under the levels, electric arcs, fire.
+    struct DamageZone {
+        int id = 0;
+        glm::mat4 to_local{1};
+        glm::vec3 lo{0}, hi{0};      // the box in its own frame
+        float per_second = 0;
+        uint32_t teams = 0;
+        std::string sound;
+        int sound_handle = -1;
+    };
+    std::vector<DamageZone> damage_zones_;
+    void load_damage_zone(int id, const LevelObject& o, const Value& v);
+    void update_damage_zones(float dt);
     void load_breakable(int id, size_t object, const LevelObject& o, const Value& v);
     // A shot from `from` to `to` (where it stopped: on `owner`'s collision, if `wall`).
     void shoot_breakables(const glm::vec3& from, const glm::vec3& to, float damage, bool wall, uint32_t owner);

@@ -18,6 +18,7 @@ namespace nova {
 
 namespace {
 
+constexpr int kCompDamage = 0x99;   // CDamageComponent
 constexpr int kCompTrigger = 0x06;        // CTriggerComponent
 constexpr int kCompRunScript = 0x1E;      // CRunScriptComponent (OnDead)
 constexpr int kCompInteractive = 0x44;    // CInteractiveComponent: enabled, script, reusable, minigame, ...
@@ -99,7 +100,7 @@ void LevelLogic::load_objects() {
             obj.id = o.fields[0].i;
             if (o.fields.size() > 5 && o.fields[5].i >= 0) waypoint_next_[obj.id] = o.fields[5].i;
             obj.position = {o.fields[2].as_float(), o.fields[3].as_float(), o.fields[4].as_float()};
-            objects_[obj.id] = obj;
+        objects_[obj.id] = obj;
             continue;
         }
         if (o.kind == "spawn_point" && o.base) {
@@ -163,6 +164,12 @@ void LevelLogic::load_objects() {
             obj.trigger = int(triggers_.size());
             triggers_.push_back(tr);
             ++stats_.triggers;
+        } else if (const Value* dz = o.components.count(kCompDamage) ? &o.components.at(kCompDamage) : nullptr; dz && dz->size() >= 11) {
+            // CComponentDamage: id, position, rotation, scale, enabled, ... (its zone: Combat).
+            obj.id = (*dz)[0].i;
+            obj.position = {(*dz)[1].as_float(), (*dz)[2].as_float(), (*dz)[3].as_float()};
+            obj.yaw = (*dz)[6].as_float();
+            obj.enabled = obj.visible = (*dz)[10].i != 0;   // CDamageComponent::Init: Enable([10])
         } else {
             auto tf = o.base ? o.base : std::optional<Transform>();
             if (!tf) continue;   // objects without their own base are not addressable
