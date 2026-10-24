@@ -331,6 +331,20 @@ void LevelLogic::start(StartMode mode) {
     level_fog_end_ = scene.fog_end;
     level_fog_density_ = scene.fog_density;
     load_objects();
+    emitters_.clear();
+    for (auto& [id, o] : objects_)
+        if (const Value* e = object_component(o, 0x65); e && e->size() > 6 && (*e)[0].size() > 0) {
+            Emitter em;
+            em.id = id;
+            const Value& list = (*e)[0];
+            const Value& pick = list[size_t(std::rand()) % list.size()];
+            std::string s = pick.type == Value::String ? pick.s : pick.size() > 0 ? pick[0].s : "";
+            if (const size_t slash = s.find_last_of("\\/"); slash != std::string::npos) s.erase(0, slash + 1);
+            if (s.empty()) continue;
+            em.sound = s, em.loop = (*e)[1].i != 0, em.radius = (*e)[3].as_float();
+            if ((*e)[6].type == Value::String) em.node = (*e)[6].s;
+            emitters_.push_back(std::move(em));
+        }
     for (auto& [id, o] : objects_)   // vehicles (CComponentVehicleCar) and their parts
         if (object_component(o, 0x96)) vehicle(id);
     if (!keep_player) {
@@ -1516,6 +1530,31 @@ void LevelLogic::update_dialog(float dt) {
     else if (!strings.find(line).empty()) message(line, dialog_voice_ >= 0 ? 4.0f : alone);
 }
 
+void LevelLogic::update_emitters() {
+    if (!audio) return;
+    for (Emitter& e : emitters_) {
+        const Object* o = object(e.id);
+        glm::vec3 at = o ? o->position : glm::vec3(0);
+        if (o && !e.node.empty() && o->index < scene.level().objects.size()) scene.node_position(o->index, e.node, at);
+        if (!o || !o->enabled) e.played = false;
+        const bool in = o && o->enabled && glm::distance(at, player.center) <= e.radius;
+        if (!in) {
+            if (e.voice >= 0) audio->stop(e.voice, 200), e.voice = -1;
+            continue;
+        }
+        if (e.voice >= 0 && audio->playing(e.voice)) {
+            audio->set_position(e.voice, at);
+            continue;
+        }
+        if (!e.loop && e.played) continue;
+        Audio::Params p;
+        p.position = &at;
+        p.loop = e.loop ? 1 : 0;
+        e.voice = audio->play(e.sound, p);
+        e.played = true;
+    }
+}
+
 void LevelLogic::update_jetpack_sound() {
     if (!audio) return;
     if (player.jetpack) {
@@ -1800,6 +1839,7 @@ void LevelLogic::update(float dt) {
     objectives.alpha = std::clamp(objectives.alpha + (objectives.show > 0 ? 2.0f : -2.0f) * dt, 0.0f, 1.0f);   // 0.002 per ms
     update_music(dt);
     update_jetpack_sound();
+    update_emitters();
     update_breathing(dt);
     update_dialog(dt);
     update_movers(dt);

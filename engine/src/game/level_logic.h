@@ -507,6 +507,19 @@ private:
     // while it fires, "idle" while it does not, "stop" when it is put away.
     int jetpack_sound_ = -1;
     void update_jetpack_sound();
+    // Sound emitters (CSoundEmitterComponent 0x65: [0] sounds, one picked; [1] looping;
+    // [3] radius; [6] the node it sits on): while the object is active and the player within
+    // the radius it plays there (following it), out of it pauses (stopped here); deactivated
+    // it stops.
+    struct Emitter {
+        int id = 0;
+        std::string sound, node;
+        bool loop = true, played = false;   // played: a one-shot plays once while active
+        float radius = 6;
+        int voice = -1;
+    };
+    std::vector<Emitter> emitters_;
+    void update_emitters();
     // Kal's breathing in the suit (PlayerComponent::SetBreathingState, kal_breathing_system
     // .vxn) while the player is in control: battle for 5 s after a shot or a hit, dying
     // under 20% of the shield, running while sprinting, then recovery for 4 s; else normal.
