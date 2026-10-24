@@ -689,9 +689,12 @@ private:
             size_t object = 0;
             std::string node;
             enum class Kind { Wheel, Gun, Rider } kind = Kind::Rider;
+            bool front = false;   // a wheel that steers
+            std::string pose;     // the driver's clip
         };
         std::vector<Part> parts;
         float wheel_angle = 0;
+        float steer = 0;   // the front wheels' angle (degrees, + left)
         // The gun turned by its AI (relative yaw, pitch; degrees) and the shooter platform
         // node turning with it (its rest rotation within the vehicle).
         bool gun_aimed = false, destroyed = false;

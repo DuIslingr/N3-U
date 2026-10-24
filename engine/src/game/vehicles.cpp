@@ -42,17 +42,17 @@ void LevelLogic::spawn_vehicle_parts(Vehicle& v) {
     const Value* car = o ? object_component(*o, 0x96) : nullptr;
     if (!car || car->size() < 25) return;
     // [0] gun, [1] shooter, [2] driver types ... [24] wheels: [type, front, node, effect node, radius...].
-    auto spawn = [&](int type, const std::string& node, Vehicle::Part::Kind kind) {
+    auto spawn = [&](int type, const std::string& node, Vehicle::Part::Kind kind, bool front = false) {
         if (type < 0 || !gol.count(type)) return;
         const size_t index = scene.spawn_object(type, -4000 - int(scene.level().objects.size()), v.position, v.yaw);
         scene.set_object_visible(index, true);
-        v.parts.push_back({index, node, kind});
+        v.parts.push_back({index, node, kind, front, {}});
     };
     spawn((*car)[0].i, "dummy_afet_support", Vehicle::Part::Kind::Gun);
     spawn((*car)[1].i, "dummy_shooter", Vehicle::Part::Kind::Rider);
     spawn((*car)[2].i, "dummy_driver", Vehicle::Part::Kind::Rider);
     for (const Value& w : (*car)[24].list)
-        if (w.size() > 2 && w[2].type == Value::String) spawn(w[0].i, w[2].s, Vehicle::Part::Kind::Wheel);
+        if (w.size() > 2 && w[2].type == Value::String) spawn(w[0].i, w[2].s, Vehicle::Part::Kind::Wheel, w[1].i != 0);
 }
 
 void LevelLogic::place_vehicle_parts(Vehicle& v) {
@@ -78,14 +78,25 @@ void LevelLogic::place_vehicle_parts(Vehicle& v) {
     } else if (v.platform >= 0) {
         scene.set_additive(v.index, {});
     }
-    for (const Vehicle::Part& p : v.parts) {
+    for (Vehicle::Part& p : v.parts) {
         // The player's place: the shooter is the player. A destroyed one's riders are gone.
         const bool show = shown && !(ridden && p.node == "dummy_shooter") && !(v.destroyed && p.kind == Vehicle::Part::Kind::Rider);
         scene.set_object_visible(p.object, show);
         if (!show) continue;
         glm::mat4 m = scene.object_matrix(v.index, p.node);
         if (p.kind == Vehicle::Part::Kind::Wheel) {
+            if (p.front) m = glm::rotate(m, glm::radians(v.steer), glm::vec3(0, 0, 1));
             m = glm::rotate(m, v.wheel_angle, glm::vec3(1, 0, 0));
+        } else if (p.node == "dummy_driver" && p.object < scene.level().objects.size()) {
+            // CVehicleCar::UpdateMeshes2: the driver turns the wheel (DriveTurnLeft/Right,
+            // posed by how far the wheels are turned), else DriveIdle.
+            const int type = scene.level().objects[p.object].type;
+            const float r = v.steer_max > 0 ? std::clamp(v.steer / v.steer_max, -1.0f, 1.0f) : 0.0f;
+            const std::string clip = state_clip(type, std::abs(r) < 1e-3f ? "DriveIdle" : r > 0 ? "DriveTurnLeft" : "DriveTurnRight");
+            if (!clip.empty()) {
+                if (clip != p.pose) scene.play_clip(p.object, clip, std::abs(r) < 1e-3f), p.pose = clip;
+                if (std::abs(r) >= 1e-3f) scene.set_clip_time(p.object, scene.clip_length(p.object, clip) * std::abs(r));
+            }
         } else if (p.kind == Vehicle::Part::Kind::Gun && turned) {
             m = glm::translate(glm::mat4(1), glm::vec3(m[3]));
             m = glm::rotate(m, glm::radians(v.yaw + yaw), glm::vec3(0, 0, 1));
@@ -247,7 +258,10 @@ bool LevelLogic::seat(glm::vec3& eye, float& yaw_min, float& yaw_max) {
 void LevelLogic::update_vehicles(float dt) {
     for (auto& [id, v] : vehicles_) {
         if (v.limits_len > 0) v.limits_t += dt;
-        if (!v.moving) continue;
+        if (!v.moving) {
+            v.steer -= std::clamp(v.steer, -v.steer_speed * 3.0f * dt, v.steer_speed * 3.0f * dt);
+            continue;
+        }
         // Following: the leader is the route (the player when they are in it), stopping
         // short of it by the distance.
         if (v.follow != -1) {
@@ -272,6 +286,10 @@ void LevelLogic::update_vehicles(float dt) {
         const float rate = std::min(v.steer_speed * 3.0f, glm::degrees(v.speed * std::tan(glm::radians(v.steer_max)) / 2.8f));
         const float turn = std::clamp(angle_diff(v.yaw, want), -rate * dt, rate * dt);
         v.yaw += turn;
+        // The front wheels at the angle that turn takes at this speed.
+        const float want_steer = v.speed > 0.1f ? glm::degrees(std::atan(glm::radians(turn / std::max(dt, 1e-4f)) * 2.8f / v.speed)) : 0.0f;
+        const float steer_step = v.steer_speed * 3.0f * dt;
+        v.steer += std::clamp(std::clamp(want_steer, -v.steer_max, v.steer_max) - v.steer, -steer_step, steer_step);
         const float y = glm::radians(v.yaw);
         const glm::vec3 old = v.position;
         v.position += glm::vec3(-std::sin(y), std::cos(y), 0) * v.speed * dt;
