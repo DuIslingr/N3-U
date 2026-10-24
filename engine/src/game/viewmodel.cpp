@@ -37,7 +37,8 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
     if (const Value* w = resolved_template(*t, gol_, kCompWeapon); w && w->size() > 4) {
         if ((*w)[1].type == Value::String) c.node = (*w)[1].s;
         if (w->size() > 71 && weapon != "Crystal_ItemWeapon")   // drawWeapons leaves the crystal's alone
-            c.aim_fov = (*w)[45].as_float(), c.model_fov = (*w)[70].as_float(), c.model_aim_fov = (*w)[71].as_float();
+            c.aim_fov = (*w)[45].as_float(), c.model_fov = (*w)[70].as_float(), c.model_aim_fov = (*w)[71].as_float(),
+            c.zoom = (*w)[46].i != 0, c.zoom_from = (*w)[47].as_float(), c.zoom_to = (*w)[48].as_float();
         // Fire mode: [9] muzzle object, [10] its ironsight one, [11] the node.
         if (const Value& modes = (*w)[4]; modes.size() > 0 && modes[0].size() > 11) {
             c.muzzle_type = modes[0][9].i, c.aim_muzzle_type = modes[0][10].i;
@@ -123,6 +124,13 @@ void ViewModel::show_weapon(const std::string& node) {
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
 
 float ViewModel::aim_fov() { return weapon_.empty() ? kDefaultAimFov : clips(weapon_).aim_fov; }
+
+bool ViewModel::zoom_range(float& widest, float& narrowest) {
+    if (weapon_.empty()) return false;
+    const Clips& c = clips(weapon_);
+    widest = std::max(c.zoom_from, c.zoom_to), narrowest = std::min(c.zoom_from, c.zoom_to);
+    return c.zoom;
+}
 
 float ViewModel::model_fov_add() {
     if (weapon_.empty() || !visible_) return 0;

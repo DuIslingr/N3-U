@@ -55,6 +55,9 @@ public:
     // other).
     float aim_fov();
     float model_fov_add();
+    // The current weapon's zoom range aiming (CLevelInterfaceNormal::EnableZoomSlider); false
+    // if it has none.
+    bool zoom_range(float& widest, float& narrowest);
     // PlayerComponent::distort_push / distort_pop / distort_change_blend: the rig drawn with
     // hand_mesh_new_distort.bdae's armsDistort (the screen behind shows through it where its
     // noise texture plus BlendFactor is under 0.5), BlendFactor from -0.3 eased to `target`
@@ -86,6 +89,9 @@ private:
         // CComponentWeapon [45]: the view's field of view aiming; [70]/[71]: the view
         // model's, normal and aiming (game units; drawn at the view's plus theirs less 70).
         float aim_fov = 35, model_fov = 70, model_aim_fov = 70;
+        // [46]: a zoom slider while aiming (the sniper rifle's), from [47] to [48].
+        bool zoom = false;
+        float zoom_from = 30, zoom_to = 10;
         // The fire mode's muzzle objects (gol types; -1: none) and the node under `node`
         // they sit at.
         int muzzle_type = -1, aim_muzzle_type = -1;

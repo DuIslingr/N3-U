@@ -327,7 +327,10 @@ void Game::handle_event(const SDL_Event& e) {
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F3 && !e.key.repeat) {
         scene.set_game_shaders(!scene.game_shaders());
     }
-    if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
+    float widest = 0, narrowest = 0;
+    if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && aiming_ && viewmodel.zoom_range(widest, narrowest))   // the zoom slider
+        zoom_fov_ = std::clamp(zoom_fov_ - e.wheel.y * 2.5f, narrowest, widest);
+    else if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0 && logic.controls.weapons)
         combat_in.select = combat.cycle_weapon(e.wheel.y < 0 ? 1 : -1);
     if (e.type == SDL_EVENT_MOUSE_MOTION && !(opt.scripts && (logic.player_locked() || logic.interacting() || !logic.controls.rotate))) {
         // Slower while aiming (zoomed in); the Sensitivity and Invert Y-Axis settings.
@@ -431,7 +434,13 @@ void Game::run_window() {
         const bool aiming = can_aim && (touch_mode ? touch_in.aim : settings.aim_toggle ? aim_toggled : aim_held);
         {
             const float base = opt.scripts ? logic.game_fov() : kFov;
-            const float target = aiming && opt.scripts ? viewmodel.aim_fov() : base;   // CWeaponComponent::Aim
+            // CWeaponComponent::Aim: the weapon's own; one with a zoom slider starts there (within
+            // its range) and the wheel moves it.
+            float widest = 0, narrowest = 0;
+            const bool zoom = opt.scripts && viewmodel.zoom_range(widest, narrowest);
+            if (aiming && !aiming_) zoom_fov_ = zoom ? std::clamp(viewmodel.aim_fov(), narrowest, widest) : viewmodel.aim_fov();
+            aiming_ = aiming;
+            const float target = aiming && opt.scripts ? (zoom ? zoom_fov_ : viewmodel.aim_fov()) : base;
             cam.fov += (target - cam.fov) * std::min(1.0f, dt * 12.0f);
         }
         if (opt.scripts && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_D] ||

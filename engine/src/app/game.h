@@ -97,6 +97,9 @@ private:
     glm::vec4 use_button(int w, int h);
     float use_pressed_ = 0;   // seconds the button shows pressed (36)
     unsigned vm_shots_ = 0;   // the player's shots the view model has seen
+    // Aiming, and a zoomable weapon's field of view (the wheel moves it within its range).
+    bool aiming_ = false;
+    float zoom_fov_ = 0;
     void apply_display();
     void set_menu(bool on);
     void menu_action(PauseMenu::Action a);
