@@ -1840,7 +1840,8 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const glm::vec3 dir = glm::normalize(aim_dir + right * n(rng_) + up * n(rng_));
     spread_ = std::min(spread_ + w.spread_step * 0.35f, 4.0f);
 
-    const float range = 300;
+    // As far as the bullet flies in its life (the flamethrower's flame: 15 m/s for 1.3 s).
+    const float range = w.bullet_speed >= 1 ? std::min(300.0f, w.bullet_speed * w.bullet_life) : 300.0f;   // under 1: the rail gun's instant beam
     float wall_t = 1;
     uint8_t material = 0;
     glm::vec3 normal(0, 0, 1);

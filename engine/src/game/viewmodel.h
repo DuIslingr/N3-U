@@ -77,6 +77,19 @@ private:
         // they sit at.
         int muzzle_type = -1, aim_muzzle_type = -1;
         std::string muzzle_node;
+        // The weapon's effects (CEffectsComponent): name, node under `node` ("-1": the
+        // weapon node), whether it runs while the weapon is up.
+        struct Fx {
+            std::string effect, node;
+            bool autostart = false;
+        };
+        std::vector<Fx> fx;
+        // Per clip, its GameEvent track: {ms, event id, argument}.
+        struct Event {
+            float ms;
+            int id, arg;
+        };
+        std::unordered_map<std::string, std::vector<Event>> events;
         const State* find(const std::string& name) const {
             auto it = index.find(name);
             return it == index.end() ? nullptr : &states[size_t(it->second)];
@@ -126,6 +139,17 @@ private:
     std::unordered_map<int, Muzzle> muzzles_;
     int flashing_ = -1;            // the muzzle type shown
     void place_muzzle();
+    // The weapon's running effects (handles per Clips::fx index, -1: off), and how far the
+    // clip's events have been played.
+    std::vector<int> fx_;
+    std::string fx_weapon_;
+    uint32_t events_serial_ = 0;
+    float events_ms_ = 0;
+    void update_events(const Clips& c);
+    void start_fx(const Clips& c, int index);
+    void stop_fx(int index);
+    void stop_all_fx();
+    glm::mat4 fx_matrix(const Clips& c, int index) const;
 };
 
 }  // namespace nova

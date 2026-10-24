@@ -13,6 +13,7 @@ namespace nova {
 namespace {
 
 constexpr int kCompStatesSet = 0x0e;
+constexpr int kCompEffects = 0x92;
 constexpr int kCompWeapon = 0x47;     // [1]: the rig's WEAPON_* node for this weapon
 
 const GolType* type_named(const Gol& gol, const std::string& name, int* id = nullptr) {
@@ -39,6 +40,10 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
             if (modes[0][11].type == Value::String) c.muzzle_node = modes[0][11].s;
         }
     }
+    if (const Value* fx = resolved_template(*t, gol_, kCompEffects); fx && fx->size() > 0)
+        for (const Value& e : (*fx)[0].list)
+            if (e.size() > 2 && e[0].type == Value::String && e[1].type == Value::String)
+                c.fx.push_back({e[0].s, e[1].s, e[2].i != 0});
     // Each state: [0] name, [1] type, [2] loops, [6] the next state's index, [11] clips
     // ({name, speed, ...}).
     if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1)
@@ -47,8 +52,16 @@ const ViewModel::Clips& ViewModel::clips(const std::string& weapon) {
             if (st.size() > 0 && st[0].type == Value::String) s.name = st[0].s;
             if (st.size() > 6) s.type = int(st[1].as_float()), s.loop = st[2].as_float() != 0, s.next = int(st[6].as_float());
             if (st.size() > 11)
-                for (const Value& clip : st[11].list)
-                    if (clip.size() > 1 && clip[0].type == Value::String) s.clips.emplace_back(clip[0].s, clip[1].as_float());
+                for (const Value& clip : st[11].list) {
+                    if (clip.size() < 2 || clip[0].type != Value::String) continue;
+                    s.clips.emplace_back(clip[0].s, clip[1].as_float());
+                    // [2]: {"GameEvent", ..., {{name, start ms, end ms, id, argument}}}
+                    if (clip.size() > 2)
+                        for (const Value& group : clip[2].list)
+                            if (group.size() >= 3 && group[0].type == Value::String && group[0].s == "GameEvent")
+                                for (const Value& ev : group[2].list)
+                                    if (ev.size() >= 5) c.events[clip[0].s].push_back({ev[1].as_float(), ev[3].i, ev[4].i});
+                }
             c.index.emplace(s.name, int(c.states.size()));
             c.states.push_back(std::move(s));
         }
@@ -67,6 +80,7 @@ void ViewModel::start() {
         scene_.set_object_visible(cockpit_, false);
     }
     muzzles_.clear(), flashing_ = -1;   // their objects went with the old level
+    fx_.clear(), fx_weapon_.clear(), events_serial_ = 0;
     weapon_.clear(), base_.clear(), requested_.clear(), queued_.clear(), movement_.clear();
     camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
     visible_ = false, lowered_ = false, was_reloading_ = false;
@@ -121,11 +135,13 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         if (!want.empty() && want != cockpit_playing_) scene_.play_clip(cockpit_, want, true), cockpit_playing_ = want;
         place(cockpit_, eye, yaw_deg, pitch_deg);
         camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
+        stop_all_fx(), fx_weapon_.clear();
         return;
     }
     if (in.visible != visible_) scene_.set_object_visible(object_, in.visible), visible_ = in.visible;
     if (!in.visible) {
         camera_request_.clear(), camera_clip_.clear(), camera_offset_ = glm::mat4(1);
+        stop_all_fx(), fx_weapon_.clear();
         return;
     }
     const Clips& c = clips(in.weapon);
@@ -262,7 +278,78 @@ void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pit
     const glm::mat4 view = glm::rotate(glm::rotate(glm::translate(glm::mat4(1), eye), glm::radians(yaw_deg), glm::vec3(0, 0, 1)),
                                        glm::radians(pitch_deg), glm::vec3(1, 0, 0));
     scene_.set_object_transform(rig, view * glm::inverse(cam_rig));
-    if (rig == object_) place_muzzle();
+    if (rig != object_) return;
+    place_muzzle();
+    if (weapon_.empty()) return;
+    const Clips& c = clips(weapon_);
+    update_events(c);
+    if (fx_weapon_ == weapon_) {
+        for (size_t i = 0; i < fx_.size(); ++i)
+            if (fx_[i] >= 0) scene_.particles().move(fx_[i], fx_matrix(c, int(i)));
+    }
+}
+
+glm::mat4 ViewModel::fx_matrix(const Clips& c, int index) const {
+    const std::string& node = c.fx[size_t(index)].node;
+    return scene_.object_matrix(object_, node.empty() || node == "-1" ? c.node : c.node + "/" + node);
+}
+
+void ViewModel::start_fx(const Clips& c, int index) {
+    if (index < 0 || size_t(index) >= c.fx.size()) return;
+    if (fx_.size() < c.fx.size()) fx_.resize(c.fx.size(), -1);
+    stop_fx(index);
+    fx_[size_t(index)] = scene_.particles().start(c.fx[size_t(index)].effect, fx_matrix(c, index));
+}
+
+void ViewModel::stop_fx(int index) {
+    if (index < 0 || size_t(index) >= fx_.size() || fx_[size_t(index)] < 0) return;
+    scene_.particles().stop(fx_[size_t(index)]);
+    fx_[size_t(index)] = -1;
+}
+
+void ViewModel::stop_all_fx() {
+    for (size_t i = 0; i < fx_.size(); ++i) stop_fx(int(i));
+}
+
+// The playing clip's GameEvents passed since the last update (CEffectsComponent::OnEvent:
+// 50 starts the weapon's effect [argument], 51 stops it); the weapon's own effects run
+// while it is up.
+void ViewModel::update_events(const Clips& c) {
+    const bool up = visible_ && !lowered_ && !weapon_.empty();
+    if (fx_weapon_ != (up ? weapon_ : std::string())) {
+        stop_all_fx();
+        fx_.assign(c.fx.size(), -1);
+        fx_weapon_ = up ? weapon_ : std::string();
+        if (up)
+            for (size_t i = 0; i < c.fx.size(); ++i)
+                if (c.fx[i].autostart) start_fx(c, int(i));
+        events_serial_ = 0;
+    }
+    if (!up) return;
+    Scene::ClipState cs;
+    if (!scene_.clip_state(object_, cs)) return;
+    if (cs.serial != events_serial_) events_serial_ = cs.serial, events_ms_ = cs.reverse ? cs.length + 1 : -1;
+    auto it = c.events.find(cs.name);
+    if (it == c.events.end()) {
+        events_ms_ = cs.ms;
+        return;
+    }
+    auto passed = [&](float from, float to) {   // (from, to]
+        for (const Clips::Event& e : it->second) {
+            if (!(e.ms > from && e.ms <= to)) continue;
+            if (e.id == 50) start_fx(c, e.arg);
+            else if (e.id == 51) stop_fx(e.arg);
+        }
+    };
+    if (cs.reverse) {
+        if (cs.ms <= events_ms_) passed(cs.ms, events_ms_);   // backwards: the same span
+        else passed(-1, events_ms_), passed(cs.ms, cs.length + 1);
+    } else if (cs.ms >= events_ms_) {
+        passed(events_ms_, cs.ms);
+    } else {   // looped round
+        passed(events_ms_, cs.length + 1), passed(-1, cs.ms);
+    }
+    events_ms_ = cs.ms;
 }
 
 void ViewModel::flash(bool aiming) {
