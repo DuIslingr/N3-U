@@ -25,7 +25,7 @@ const glm::vec4 kLabel(0.88f, 0.94f, 1.0f, 1.0f);
 const glm::vec4 kHighlight(1.0f, 0.72f, 0.3f, 1.0f);   // the orange of the original's pressed buttons
 
 // Chatboard.bsprite frames (GS_InGameMenu).
-constexpr int kWindow = 112, kPanelTop = 197, kPanelBottom = 198;
+constexpr int kWindow = 112, kPanelTop = 197, kPanelBottom = 198, kRule = 186, kRuleLow = 185;
 constexpr int kPauseButton = 187, kPauseButtonOn = 188, kButton = 29, kButtonOn = 30, kSmallButton = 26, kSmallButtonOn = 27;
 constexpr int kToggleOn = 123, kToggleOff = 124, kSlider = 127, kSliderKnob = 128, kSliderKnobOn = 129;
 const glm::vec2 kSliderTrack(0.085f, 0.903f);   // the slider's track (between - and +), across its frame
@@ -332,38 +332,53 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
     };
 
     if (page() == Page::Pause) {
-        // On the left, the original's panel: the Military Shop (or, without one, the objectives).
+        // GS_InGameMenu::Create / CreatePausePage / RenderPausePage: a 960x640 layout, scaled
+        // to fit the screen and centred, its art at that scale per pixel of the 960x640 sheet.
+        const float px = std::min(W / 960.0f, H / 640.0f);
+        const glm::vec2 origin((W - 960 * px) * 0.5f, (H - 640 * px) * 0.5f);
+        const float k = px * hud.sprite_scale("Chatboard.bsprite") * 640.0f / std::min(W, H);
+        auto C = [&](float x, float y) { return origin + glm::vec2(x, y) * px; };
+        // A frame drawn at `p` (as CSprite::PaintFrame), its screen box returned.
+        auto paint = [&](int f, glm::vec2 p) {
+            if (!art) return glm::vec4(p, p);
+            hud.draw_frame(out, *art, f, p, k, kWhite);
+            const glm::vec4 b = Hud::frame_bounds(*art, f);
+            return glm::vec4(p + glm::vec2(b.x, b.y) * k, p + glm::vec2(b.z, b.w) * k);
+        };
+        // On the left, the panel: the Military Shop (or, without one, the objectives); its
+        // rules above and below the shop, and above and below the buttons.
         if (art) {
-            const glm::vec4 a = Hud::frame_bounds(*art, kPanelTop), b = Hud::frame_bounds(*art, kPanelBottom);
-            const glm::vec2 mid((std::min(a.x, b.x) + std::max(a.z, b.z)) * 0.5f, (a.y + b.w) * 0.5f);
-            const glm::vec2 o = at(-207, 18) - mid * art_scale;
-            hud.draw_frame(out, *art, kPanelTop, o, art_scale, kWhite);
-            hud.draw_frame(out, *art, kPanelBottom, o, art_scale, kWhite);
+            paint(kPanelTop, C(25, 0));
+            paint(kPanelBottom, C(25, 0));
+            paint(kRule, C(47, 127));
+            paint(kRuleLow, C(47, 485));
+            paint(kRule, C(529, 490));
+            const glm::vec4 rb = Hud::frame_bounds(*art, kRule);
+            paint(kRule, C(529, 122) - glm::vec2(0, (rb.w - rb.y) * k));
             if (shop) {
-                draw_shop(out, hud, *art, title, items, list, s, o - glm::vec2(25, 0) * art_scale, art_scale, W);
+                draw_shop(out, hud, *art, title, items, list, s, origin, px, k, W);
             } else {
-                title.draw(out, text("FPS_OBJECTIVES"), o + glm::vec2(mid.x, a.y + 26) * art_scale, int(W), kWhite, {0.5f, 0.5f});
-                float y = o.y + (a.y + 80) * art_scale;
+                title.draw(out, text("FPS_OBJECTIVES"), C(247, 92), int(W), kWhite, {0.5f, 0.5f});
+                float y = C(0, 150).y;
                 for (const Hud::ObjectiveLine& line : objectives) {
                     const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
                     const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
-                    y += items.draw(out, mark + line.text, {o.x + 40 * art_scale, y}, int((mid.x * 2 - 80) * art_scale), color, {0.0f, 0.0f}) +
-                         12 * u;
+                    y += items.draw(out, mark + line.text, {C(60, 0).x, y}, int(380 * px), color, {0.0f, 0.0f}) + 12 * px;
                 }
             }
         }
-        // The column of buttons on the right, Resume under it.
+        // The column of buttons on the right (72 apart), Resume under it; their text centred.
         int n = 0;
-        for (int i = 0; i < int(list.size()); ++i) {
-            if (list[size_t(i)].slot == kShopRow) continue;   // drawn with the shop
-            if (list[size_t(i)].slot != 0) {
-                pair_button(i, at(227, 205));
-                continue;
-            }
-            const glm::vec2 c = at(224, -149 + 66 * float(n++));
-            const glm::vec4 box = frame(i == selected_ ? kPauseButtonOn : kPauseButton, c);
-            say(list[size_t(i)].label, c, kWhite);
+        auto button = [&](int i, int f, glm::vec2 p) {
+            const glm::vec4 box = paint(f, p);
+            say(list[size_t(i)].label, (glm::vec2(box.x, box.y) + glm::vec2(box.z, box.w)) * 0.5f, kWhite);
             rects_[size_t(i)].row = rects_[size_t(i)].control = box;
+        };
+        for (int i = 0; i < int(list.size()); ++i) {
+            const bool sel = i == selected_;
+            if (list[size_t(i)].slot == kShopRow) continue;   // drawn with the shop
+            if (list[size_t(i)].slot != 0) button(i, sel ? kSmallButtonOn : kSmallButton, C(504, 516));
+            else button(i, sel ? kPauseButtonOn : kPauseButton, C(520, 132 + 72 * float(n++)));
         }
         return;
     }
@@ -447,9 +462,9 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
 }
 
 void PauseMenu::draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRenderer& title, TextRenderer& items,
-                          const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float k, float W) {
+                          const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float px, float k, float W) {
     // GS_InGameMenu::Create / RenderPausePage, at their 960x640 positions.
-    auto P = [&](float x, float y) { return origin + glm::vec2(x, y) * k; };
+    auto P = [&](float x, float y) { return origin + glm::vec2(x, y) * px; };
     auto frame_at = [&](int f, glm::vec2 p, const glm::vec4& color) {
         hud.draw_frame(out, art, f, p, k, color);
         const glm::vec4 b = Hud::frame_bounds(art, f);
@@ -485,7 +500,7 @@ void PauseMenu::draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRe
 
     // The credits held: the bar at the menu's corner, its sign on the left.
     const glm::vec4 bar = frame_at(kCreditsBar, P(0, 0), kWhite);
-    items.draw(out, std::to_string(s.credits), {(bar.x + bar.z) * 0.5f + 18 * k, (bar.y + bar.w) * 0.5f}, int(W), kWhite, {0.5f, 0.5f});
+    items.draw(out, std::to_string(s.credits), {(bar.x + bar.z) * 0.5f + 18 * px, (bar.y + bar.w) * 0.5f}, int(W), kWhite, {0.5f, 0.5f});
     title.draw(out, text("FPS_MILITARY_SHOP"), P(247, 92), int(W), kWhite, {0.5f, 0.5f});
 
     // The tabs and BUY (rows of their own, for the keys).
@@ -501,48 +516,47 @@ void PauseMenu::draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRe
         rects_[size_t(i)].row = rects_[size_t(i)].control = box;
     }
 
-    // The drum (CButtonCircularSweep): the tab's goods round a cylinder, the pick in front;
-    // further round, smaller and fainter, each with its cost under it.
+    // The drum (CButtonCircularSweep::Draw / DrawData): the goods round a cylinder of radius
+    // half the drum less 15 (480-wide units), 2/5 of its width apart; two either side of the
+    // pick, behind the drum's frame, then the pick in front; each sized 0.6 cos + 0.4, faded
+    // to 0.8 cos + 0.2, its cost 25 (320-high units) times that size under it with the
+    // credits sign after it, all cut to the drum's box.
     const std::vector<int> ids = shop_list();
-    const glm::vec4 drum_b = Hud::frame_bounds(art, kDrum);
-    const glm::vec2 drum = P(252, 351);
-    frame_at(kDrum, drum, kWhite);
-    const float drum_w = drum_b.z - drum_b.x, radius = drum_w * 0.5f - 30, spacing = drum_w * 2 / 5;
     const int n = int(ids.size());
-    std::vector<std::pair<float, int>> order;   // furthest first
-    for (int j = 0; j < n; ++j) {
-        float off = std::fmod(float(j) - shop_drum_, float(n));
-        if (off > n * 0.5f) off -= float(n);
-        if (off < -n * 0.5f) off += float(n);
-        order.emplace_back(off, j);
-    }
-    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return std::abs(a.first) > std::abs(b.first); });
+    const glm::vec2 drum = P(252, 351);
+    const glm::vec4 drum_b = Hud::frame_bounds(art, kDrum);
+    const glm::vec4 box(drum + glm::vec2(drum_b.x, drum_b.y) * k, drum + glm::vec2(drum_b.z, drum_b.w) * k);
+    const float drum_w = box.z - box.x, radius = drum_w * 0.5f - 30 * px, spacing = drum_w * 2 / 5;
     const glm::vec4 coin_b = Hud::frame_bounds(art, kCoin);
-    for (const auto& [off, j] : order) {
-        const float angle = off * spacing / radius;
-        if (std::abs(angle) >= 1.5707963f) continue;
+    const int near = n > 0 ? int(std::lround(shop_drum_)) : 0;
+    auto item = [&](int d) {
+        if (2 * std::abs(d) >= n + (d > 0 ? 1 : 0)) return;   // with few goods, each drawn once
+        const int j = ((near + d) % n + n) % n;
+        const float angle = (float(near + d) - shop_drum_) * spacing / radius;
+        if (std::abs(angle) >= 1.5707963f) return;
         const float x = std::sin(angle) * radius, size = std::cos(angle) * 0.6f + 0.4f, alpha = std::cos(angle) * 0.8f + 0.2f;
         const Shop::Item& it = shop->items()[size_t(ids[size_t(j)])];
         const glm::vec4 c(1, 1, 1, alpha);
-        if (icons) hud.draw_frame(out, *icons, it.icon, drum + glm::vec2(x, 0) * k, icon_k * size, c);
-        // The cost and the credits sign after it.
+        if (icons) hud.draw_frame(out, *icons, it.icon, drum + glm::vec2(x, 0), glm::vec2(icon_k * size), c, box);
         const std::string cost = std::to_string(shop->cost(it.index));
-        const glm::vec2 at = drum + glm::vec2(x, 50 * size) * k;
+        const glm::vec2 at = drum + glm::vec2(x, 50 * px * size);
         const float tw = items.measure(cost, int(W)).x;
         items.draw(out, cost, at, int(W), c, {0.5f, 0.5f});
-        const glm::vec2 coin = glm::vec2(coin_b.z - coin_b.x, coin_b.w - coin_b.y) * k * size * 0.6f;
-        hud.draw_frame(out, art, kCoin, at + glm::vec2(tw * 0.5f + 3 * k, -coin.y * 0.5f) - glm::vec2(coin_b.x, coin_b.y) * k * size * 0.6f,
-                       k * size * 0.6f, c);
-    }
+        const float ck = k * size;
+        hud.draw_frame(out, art, kCoin, at + glm::vec2(tw * 0.5f - coin_b.x * ck, -(coin_b.y + coin_b.w) * 0.5f * ck), glm::vec2(ck), c, box);
+    };
+    for (int d : {-2, -1, 2, 1}) item(d);
+    frame_at(kDrum, drum, kWhite);
+    item(0);
     // The items either side of the pick turn the drum when touched.
     const float side_x = std::sin(spacing / radius) * radius;
     for (int side = 0; side < 2; ++side) {
-        const glm::vec2 c = drum + glm::vec2(side == 0 ? -side_x : side_x, 0) * k;
-        shop_sides_[side] = {c - glm::vec2(45, 50) * k, c + glm::vec2(45, 70) * k};
+        const glm::vec2 c = drum + glm::vec2(side == 0 ? -side_x : side_x, 0);
+        shop_sides_[side] = {c - glm::vec2(45, 50) * px, c + glm::vec2(45, 70) * px};
     }
     shop_arrows_[0] = frame_at(kArrowLeft, P(39, 322), kWhite);
     shop_arrows_[1] = frame_at(kArrowRight, P(442, 322), kWhite);
-    for (glm::vec4& a : shop_arrows_) a += glm::vec4(-12, -12, 12, 12) * k;   // easier to hit
+    for (glm::vec4& a : shop_arrows_) a += glm::vec4(-12, -12, 12, 12) * px;   // easier to hit
 
     // The pick: "BUY: <name>" and what it does.
     if (pick >= 0) {
@@ -550,7 +564,7 @@ void PauseMenu::draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRe
         std::string line = text("FPS_SHOP_BUY");
         if (const size_t p = line.find("%s"); p != std::string::npos) line.replace(p, 2, text(it.name));
         coded(line, P(253, 230));
-        items.draw(out, text(it.description), P(253, 470), int(400 * k), kWhite, {0.5f, 0.5f});
+        items.draw(out, text(it.description), P(253, 470), int(400 * px), kWhite, {0.5f, 0.5f});
     }
     // BUY (Owned once a lasting upgrade is had), faint when it cannot be bought.
     if (rows_here.size() > 2) {

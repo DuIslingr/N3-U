@@ -86,10 +86,10 @@ private:
     std::vector<int> shop_list() const;
     int shop_selected() const;   // the upgrade under the drum's pick; -1 if none
     void shop_turn(int d);
-    // The shop in the pause page's panel, `origin` the original's menu origin there and `k`
-    // the art's scale (its layout is in the 960x640 sheet's pixels).
+    // The shop in the pause page's panel: `origin` the original's 960x640 layout's corner on
+    // screen, `px` its scale, `k` the art's.
     void draw_shop(ParticleList& out, Hud& hud, const Sprite& art, TextRenderer& title, TextRenderer& items,
-                   const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float k, float W);
+                   const std::vector<Row>& list, const Settings& s, glm::vec2 origin, float px, float k, float W);
 };
 
 }  // namespace nova
