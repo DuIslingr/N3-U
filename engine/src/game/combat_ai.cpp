@@ -359,16 +359,15 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
                 if (logic_.trace) log(std::to_string(t.id) + " reloads in cover");
             }
             // UpdateLowCover state 0 (CFuzzyActions): fire (rising), lean out, blind fire
-            // (the enemy in front of the cover), peek, or throw a grenade (one enemy grenade
-            // about at a time, within its throw range, if it has any), by the band's weights.
-            bool grenade_out = false;
-            for (const Grenade& g : live_grenades_) grenade_out |= g.live && g.npc;
+            // (the enemy in front of the cover), peek, or throw a grenade (when the AI
+            // controller's grenade ticket is free, within its throw range, if it has any), by
+            // the band's weights.
             const float d = glm::distance(t.pos, target);
             const bool front = glm::dot(c.dir, glm::normalize(target - c.pos + glm::vec3(0, 0, 1e-4f))) > 0.5f;
             // Rolling out (CheckExitLowCoverRoll): from a low cover, out of a side it opens on.
             const bool can_roll = c.low && (t.cover_left ? c.left : c.right);
             const float w[6] = {b ? b->fire : 100.0f, b ? b->lean : 0.0f, b && front ? b->blind : 0.0f, b ? b->peek : 0.0f,
-                                b && t.grenades > 0 && !grenade_out && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f,
+                                b && t.grenades > 0 && grenade_ticket_ < 0 && d >= t.grenade_min && d <= t.grenade_max ? b->grenade : 0.0f,
                                 b && can_roll ? b->roll : 0.0f};
             float total = 0;
             for (float x : w) total += x;
@@ -391,7 +390,8 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
                 }
                 act = 0;
             }
-            if (act == 4) {   // the grenade
+            if (act == 4) {   // the grenade (ThrowGrenadeFromCover takes the ticket)
+                grenade_ticket_ = kGrenadeTicketWait;
                 const std::string from_cover = c.low ? clip("LowCover" + side + "ThrowGrenade") : std::string();
                 transition(from_cover.empty() ? "AttackGrenade" : "LowCover" + side + "ThrowGrenade", idle, true);
                 t.throw_at = 0.6f;

@@ -705,6 +705,10 @@ private:
     void detonate();
     std::vector<Grenade> live_grenades_;
     float throw_delay_ = -1, grenade_cooldown_ = 0;
+    // CAIController's global ticket 1 (CComponentAIController [4] ms, [5] at a time): one
+    // NPC grenade, then none for 2 s; the first after 2 s.
+    static constexpr float kGrenadeTicketWait = 2.0f;
+    float grenade_ticket_ = kGrenadeTicketWait;
     static constexpr float kPowerCooldown = 5.0f;
     float power_cooldown_ = 0;
     bool power_used_ = false;

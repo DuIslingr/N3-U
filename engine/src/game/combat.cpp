@@ -831,7 +831,7 @@ void Combat::start(bool keep_stats) {
     live_grenades_.clear();   // their objects went with the old level
     tracers_.clear(), trail_pool_.clear(), beams_.clear();
     throw_delay_ = -1;
-    min_enemies_on_player = 1, max_shooters_ = 2;
+    min_enemies_on_player = 1, max_shooters_ = 2, grenade_ticket_ = kGrenadeTicketWait;
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
@@ -2351,6 +2351,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         if ((t.timer += dt) > 8.0f)
             if (LevelLogic::Object* o = logic_.object(t.id); o && o->visible) logic_.show(*o, false);
     }
+    if (grenade_ticket_ >= 0) grenade_ticket_ -= dt;   // CAIController::Update
     keep_enemies_on_player();
     for (Target& t : targets_) {
         LevelLogic::Object* o = logic_.object(t.id);
