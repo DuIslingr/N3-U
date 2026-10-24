@@ -300,51 +300,39 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
     const float W = float(w), H = float(h);
     hud.set_screen(w, h);
     const Sprite* art = hud.sprite("Chatboard.bsprite");
-    // Laid out as the original at 1280x720 (units `u` from the screen's centre), its art at 0.9u
-    // per pixel of the 960x640 sheet (the 2x sheets' pixels are half that).
-    const float u = std::min(H / 720.0f, W / 1280.0f);
-    const float art_scale = 0.905f * u * hud.sprite_scale("Chatboard.bsprite") * 640.0f / H;
-    const glm::vec2 centre(W * 0.5f, H * 0.5f);
-    auto at = [&](float x, float y) { return centre + glm::vec2(x, y) * u; };
+    // GS_InGameMenu::Create: a 960x640 layout scaled to fit the screen and centred, the art at
+    // that scale per pixel of the 960x640 sheet.
+    const float px = std::min(W / 960.0f, H / 640.0f);
+    const glm::vec2 origin((W - 960 * px) * 0.5f, (H - 640 * px) * 0.5f);
+    const float k = px * hud.sprite_scale("Chatboard.bsprite") * 640.0f / std::min(W, H);
+    auto C = [&](float x, float y) { return origin + glm::vec2(x, y) * px; };
     // The game behind, dimmed, darker at the top and bottom.
+    const float bar = 65 * H / 720.0f;
     rect(overlay, {0, 0, W, H}, {0, 0, 0, 0.3f});
-    rect(overlay, {0, 0, W, 65 * u}, {0, 0.01f, 0.02f, 0.5f});
-    rect(overlay, {0, H - 65 * u, W, H}, {0, 0.01f, 0.02f, 0.5f});
-    // A frame centred on `c`, its screen box returned.
+    rect(overlay, {0, 0, W, bar}, {0, 0.01f, 0.02f, 0.5f});
+    rect(overlay, {0, H - bar, W, H}, {0, 0.01f, 0.02f, 0.5f});
+    // A frame drawn at `p` (as CSprite::PaintFrame), or centred on `c`; its screen box returned.
+    auto paint = [&](int f, glm::vec2 p) {
+        if (!art) return glm::vec4(p, p + glm::vec2(100, 50) * px);
+        hud.draw_frame(out, *art, f, p, k, kWhite);
+        const glm::vec4 b = Hud::frame_bounds(*art, f);
+        return glm::vec4(p + glm::vec2(b.x, b.y) * k, p + glm::vec2(b.z, b.w) * k);
+    };
     auto frame = [&](int f, glm::vec2 c) {
         if (!art) return glm::vec4(c, c);
         const glm::vec4 b = Hud::frame_bounds(*art, f);
-        const glm::vec2 o = c - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f * art_scale;
-        hud.draw_frame(out, *art, f, o, art_scale, kWhite);
-        return glm::vec4(o + glm::vec2(b.x, b.y) * art_scale, o + glm::vec2(b.z, b.w) * art_scale);
+        return paint(f, c - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f * k);
     };
+    auto mid = [](const glm::vec4& b) { return (glm::vec2(b.x, b.y) + glm::vec2(b.z, b.w)) * 0.5f; };
     auto say = [&](const std::string& t, glm::vec2 p, const glm::vec4& color, glm::vec2 anchor = {0.5f, 0.5f}, float wrap = 0) {
         items.draw(out, t, p, int(wrap > 0 ? wrap : W), color, anchor);
     };
 
     std::vector<Row> list = rows(s);
     rects_.assign(list.size(), Rect{});
-    auto pair_button = [&](int i, glm::vec2 c) {   // Back / Resume / Yes / No: the slanted buttons
-        const bool sel = i == selected_;
-        const glm::vec4 box = frame(sel ? kSmallButtonOn : kSmallButton, c);
-        say(list[size_t(i)].label, c, kWhite);
-        rects_[size_t(i)].row = rects_[size_t(i)].control = box;
-    };
 
     if (page() == Page::Pause) {
-        // GS_InGameMenu::Create / CreatePausePage / RenderPausePage: a 960x640 layout, scaled
-        // to fit the screen and centred, its art at that scale per pixel of the 960x640 sheet.
-        const float px = std::min(W / 960.0f, H / 640.0f);
-        const glm::vec2 origin((W - 960 * px) * 0.5f, (H - 640 * px) * 0.5f);
-        const float k = px * hud.sprite_scale("Chatboard.bsprite") * 640.0f / std::min(W, H);
-        auto C = [&](float x, float y) { return origin + glm::vec2(x, y) * px; };
-        // A frame drawn at `p` (as CSprite::PaintFrame), its screen box returned.
-        auto paint = [&](int f, glm::vec2 p) {
-            if (!art) return glm::vec4(p, p);
-            hud.draw_frame(out, *art, f, p, k, kWhite);
-            const glm::vec4 b = Hud::frame_bounds(*art, f);
-            return glm::vec4(p + glm::vec2(b.x, b.y) * k, p + glm::vec2(b.z, b.w) * k);
-        };
+        // CreatePausePage / RenderPausePage.
         // On the left, the panel: the Military Shop (or, without one, the objectives); its
         // rules above and below the shop, and above and below the buttons.
         if (art) {
@@ -383,78 +371,81 @@ void PauseMenu::draw(Overlay& overlay, ParticleList& out, Hud& hud, TextRenderer
         return;
     }
 
-    // The other pages: the original's window, its title in the bar along the top.
-    if (art) {
-        const glm::vec4 b = Hud::frame_bounds(*art, kWindow);
-        const glm::vec2 o = centre - glm::vec2(b.x + b.z, b.y + b.w) * 0.5f * art_scale;
-        hud.draw_frame(out, *art, kWindow, o, art_scale, kWhite);
-    }
+    // The other pages (GS_InGameMenu::Create*Page / Render*Page, on the same 960x640 layout):
+    // the window (frame 112) over it all, the title centred at 76; buttons (29/30) at x 150
+    // from y 132, 72 apart; a toggle's label at x 150 beside its switch at 648; a slider's
+    // bar at 228 with its label centred above; Back at (118, 516), Resume at (504, 516).
+    paint(kWindow, C(0, 0));
     static const char* const kTitles[] = {"FPS_PAUSE", "FPS_OBJECTIVES", "FPS_OPTIONS", "FPS_SOUND", "FPS_CONTROLS", "", "FPS_ADVANCED", ""};
     const std::string heading = page() == Page::Display ? "Display" : page() == Page::Confirm ? "" : text(kTitles[int(page())]);
-    title.draw(out, heading, at(0, -229), int(W), kWhite, {0.5f, 0.5f});
+    title.draw(out, heading, {W * 0.5f, C(0, 76).y}, int(W), kWhite, {0.5f, 0.5f});
     if (page() == Page::Objectives) {
-        float y = (at(0, -170)).y;
+        float y = C(0, 132).y;
         for (const Hud::ObjectiveLine& line : objectives) {
             const std::string mark = line.primary ? "" : line.done ? "[x] " : "[ ] ";
             const glm::vec4 color = line.done && !line.primary ? glm::vec4(0.6f, 0.9f, 0.6f, 1) : kWhite;
-            y += items.draw(out, mark + line.text, {at(-300, 0).x, y}, int(600 * u), color, {0.0f, 0.0f}) + 12 * u;
+            y += items.draw(out, mark + line.text, {C(150, 0).x, y}, int(660 * px), color, {0.0f, 0.0f}) + 12 * px;
         }
     }
-    if (page() == Page::Confirm) say(confirm_text_, at(0, -40), kWhite, {0.5f, 0.5f}, 560 * u);
+    if (page() == Page::Confirm) say(confirm_text_, C(480, 280), kWhite, {0.5f, 0.5f}, 640 * px);
 
-    float y = -185;   // the top of the page's rows
+    const glm::vec4 toggle_b = art ? Hud::frame_bounds(*art, kToggleOn) : glm::vec4(0, 0, 133, 60);
+    const float toggle_h = (toggle_b.w - toggle_b.y) * k;
+    float y = 132;   // the next row's top
     for (int i = 0; i < int(list.size()); ++i) {
         const Row& r = list[size_t(i)];
         const bool sel = i == selected_;
         Rect& rc = rects_[size_t(i)];
         if (r.slot != 0) {
-            pair_button(i, at(r.slot == 1 ? -186 : 170, 205));
+            const glm::vec4 box = paint(sel ? kSmallButtonOn : kSmallButton, r.slot == 1 ? C(118, 516) : C(504, 516));
+            say(r.label, mid(box), kWhite);
+            rc.row = rc.control = box;
             continue;
         }
         const glm::vec4 label_color = sel ? kHighlight : kLabel;
         switch (r.kind) {
             case Row::Kind::Button: {
-                const glm::vec2 c = at(-13, y + 33);
-                rc.row = rc.control = frame(sel ? kButtonOn : kButton, c);
-                say(r.label, c, kWhite);
-                y += 66;
+                const glm::vec4 box = paint(sel ? kButtonOn : kButton, C(150, y));
+                say(r.label, mid(box), kWhite);
+                rc.row = rc.control = box;
+                y += 72;
                 break;
             }
             case Row::Kind::Toggle: {
-                // The label on the left, the original's switch on the right: blue on, red off.
-                const float cy = y + 33;
-                say(r.label, at(-305, cy), label_color, {0.0f, 0.5f});
-                const glm::vec4 b = art ? Hud::frame_bounds(*art, kToggleOn) : glm::vec4(0, 0, 133, 60);
-                const glm::vec2 c = at(275, cy) - glm::vec2((b.z - b.x) * 0.5f * art_scale, 0);
-                rc.control = frame(r.on ? kToggleOn : kToggleOff, c);
-                say(r.value, c - glm::vec2(0, 2 * u), kWhite);
-                rc.row = {at(-320, cy - 33), at(290, cy + 33)};
-                y += 67;
+                // The original's switch: blue on, red off, its ON/OFF on it.
+                rc.control = paint(r.on ? kToggleOn : kToggleOff, C(648, y));
+                const float cy = (rc.control.y + rc.control.w) * 0.5f;
+                say(r.label, {C(150, 0).x, cy}, label_color, {0.0f, 0.5f});
+                say(r.value, mid(rc.control) - glm::vec2(0, 2 * px), kWhite);
+                rc.row = {C(140, 0).x, rc.control.y, rc.control.z, rc.control.w};
+                y += 72;
                 break;
             }
             case Row::Kind::Choice: {
-                // The label on the left, the value between the original's arrow brackets.
-                const float cy = y + 33;
-                say(r.label, at(-305, cy), label_color, {0.0f, 0.5f});
-                frame(sel ? kArrowLeftOn : kArrowLeft, at(70, cy));
-                frame(sel ? kArrowRightOn : kArrowRight, at(265, cy));
-                say(r.value, at(167, cy), kWhite);
-                rc.control = {at(50, cy - 30), at(285, cy + 30)};
-                rc.row = {at(-320, cy - 33), at(290, cy + 33)};
-                y += 67;
+                // As a toggle, the value between the original's arrow brackets in the switch's place.
+                const glm::vec2 c = C(648, y) + glm::vec2((toggle_b.x + toggle_b.z) * 0.5f * k, (toggle_b.y + toggle_b.w) * 0.5f * k);
+                const float half = (toggle_b.z - toggle_b.x) * 0.5f * k + 20 * px;
+                say(r.label, {C(150, 0).x, c.y}, label_color, {0.0f, 0.5f});
+                frame(sel ? kArrowLeftOn : kArrowLeft, c - glm::vec2(half, 0));
+                frame(sel ? kArrowRightOn : kArrowRight, c + glm::vec2(half, 0));
+                say(r.value, c, kWhite);
+                rc.control = {c.x - half - 20 * px, c.y - toggle_h * 0.5f, c.x + half + 20 * px, c.y + toggle_h * 0.5f};
+                rc.row = {C(140, 0).x, rc.control.y, rc.control.z, rc.control.w};
+                y += 72;
                 break;
             }
             case Row::Kind::Slider: {
-                // The label above; the original's slider (- track +), its knob at the value.
-                say(r.label, at(-7, y + 13), label_color);
-                const glm::vec2 c = at(-7, y + 50);
-                const glm::vec4 box = frame(kSlider, c);
-                float x0 = c.x - 220 * u, x1 = c.x + 215 * u;
+                // The original's slider (- track +) with its knob at the value; its label 28 above.
+                const float bar_y = y + 42;
+                say(r.label, C(480, bar_y - 28), label_color, {0.5f, 1.0f});
+                const glm::vec4 box = paint(kSlider, C(228, bar_y));
+                float x0 = box.x, x1 = box.z;
                 if (art) x0 = glm::mix(box.x, box.z, kSliderTrack.x), x1 = glm::mix(box.x, box.z, kSliderTrack.y);
-                frame(sel ? kSliderKnobOn : kSliderKnob, {x0 + (x1 - x0) * r.fraction, c.y});
-                rc.control = {x0, c.y - 25 * u, x1, c.y + 25 * u};
-                rc.row = {at(-320, y), at(290, y + 85)};
-                y += 85;
+                const float cy = (box.y + box.w) * 0.5f;
+                frame(sel ? kSliderKnobOn : kSliderKnob, {x0 + (x1 - x0) * r.fraction, cy});
+                rc.control = {x0, cy - 25 * px, x1, cy + 25 * px};
+                rc.row = {C(140, bar_y - 60), C(820, bar_y + 40)};
+                y += 100;
                 break;
             }
         }
