@@ -211,7 +211,7 @@ public:
     // SendEvent orders to an NPC: follow_mode, lock_in_cover/locked_in_cover/imobile,
     // lock_ai (bool); link_region (ai_region id, 0 none); run/fly (waypoint);
     // use_machinegun (gun). False if `npc` is no actor or the event is not an order.
-    bool npc_order(int npc, const std::string& order, int arg, bool flag);
+    bool npc_order(int npc, const std::string& order, int arg, bool flag, float extra1 = 0, float extra2 = 0);
     bool ignore_target(int npc, int target, bool on);
     // IsParalyzed: an object the Paralyze power has frozen (doors, power modules, enemies).
     // -1 if it has no health.
@@ -591,6 +591,17 @@ private:
         float jump_speed = 30, jump_gravity = 30, jump_cool_min = 20, jump_cool_max = 25, jump_hit_left = 0.244f, jump_hit_right = 0.212f;
         int jump_type_left = 11, jump_type_right = 12;   // the claws' damage types
         std::string jump_start = "JumpStart", jump_land = "JumpLand";
+        // A Red Fury trooper's jetpack (CRedFuryAiComponent, 0x59; its aggro level [22][0]:
+        // [2]-[3] m from the target and [4]-[5] up in the air, [22]-[23] ms flying before it
+        // lands, firing [26] ms then holding [27]-[28] ms): SendEvent "fly" (waypoint, speed,
+        // steering) takes it up to the waypoint; there it fights from the air, moving between
+        // points round its target, then lands and fights on foot (an AirOnly one stays up).
+        bool red_fury = false, rf_air = false, rf_air_only = false, rf_fire_on = false, rf_landing = false, rf_directed = false;
+        bool rf_spell_sounded = false;
+        float rf_mode_timer = 0, rf_fire_timer = 0, rf_shot = 0, rf_repick = 0, rf_land_t = 0;
+        float rf_air_min = 15, rf_air_max = 25, rf_h_min = 5, rf_h_max = 7, rf_time_min = 8, rf_time_max = 12;
+        float rf_fire_on_s = 1.5f, rf_fire_off_min = 3, rf_fire_off_max = 4, rf_speed = 7, rf_accel = 10;
+        glm::vec3 rf_vel{0}, rf_dest{0};
         int jump_phase = 0;   // 0 none, 1 start, 2 in the air, 3 landing
         bool jump_right = false;
         glm::vec3 jump_vel{0}, jump_goal{0};
@@ -1055,6 +1066,8 @@ private:
     void melee_hit_player(float amount, const glm::vec3& from, int type);
     std::unordered_map<int, std::vector<std::string>> melee_sounds_;
     void start_melee(Target& t);
+    bool update_red_fury(Target& t, float dt, const glm::vec3& feet, const glm::vec3& chest, bool sees);
+    void red_fury_pick_point(Target& t, const glm::vec3& feet);
     bool update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist);
     int mech_ = -1;                // the mech piloted (its health is the player's)
     float own_health_ = 0, own_max_health_ = 0;

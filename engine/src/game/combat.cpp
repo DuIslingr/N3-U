@@ -1412,11 +1412,17 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         return true;
     };
     t.attached.clear(), t.armed = false, t.muzzle_object = size_t(-1), t.muzzle_type = -1;
-    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 1 && (*npc)[1].size() > 0) {
-        const Value& slot = (*npc)[1][0];
-        const int weapon = slot[0].i;
+    // A Red Fury trooper's pistols (CRedFuryAiComponent [0] its weapon, in both hands: [2] right,
+    // [1] left) instead.
+    const Value* rf = component(o, 0x59);
+    const Value* npc = component(o, kCompNpc);
+    const bool rf_armed = rf && rf->size() > 2 && (*rf)[1].type == Value::String && !(npc && npc->size() > 1 && (*npc)[1].size() > 0);
+    if (rf_armed || (npc && npc->size() > 1 && (*npc)[1].size() > 0)) {
+        const Value* slot_p = rf_armed ? nullptr : &(*npc)[1][0];
+        const int weapon = rf_armed ? (*rf)[0].i : (*slot_p)[0].i;
         if (auto w = gol_.find(weapon); w != gol_.end()) {
-            if (slot.size() > 1 && slot[1].type == Value::String) t.armed = attach(weapon, slot[1].s);
+            if (rf_armed) t.armed = attach(weapon, (*rf)[2].s), attach(weapon, (*rf)[1].s);
+            else if (slot_p->size() > 1 && (*slot_p)[1].type == Value::String) t.armed = attach(weapon, (*slot_p)[1].s);
             if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
                 if (nw->size() > 22) t.fire_sounds = sound_list((*nw)[22]);
                 if (nw->size() > 23) t.reload_sounds = sound_list((*nw)[23]);
@@ -1463,6 +1469,15 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
     t.aggro_sounds.clear();
+    t.red_fury = t.rf_air = false;
+    if (const Value* rf = component(o, 0x59); rf && rf->size() > 22 && (*rf)[22].size() > 0 && (*rf)[22][0].size() > 28) {
+        const Value& a = (*rf)[22][0];   // its first aggro level ("Normal")
+        t.red_fury = true;
+        t.rf_air_only = lower(o.name).find("aironly") != std::string::npos;
+        t.rf_air_min = num(a, 2, 15), t.rf_air_max = num(a, 3, 25), t.rf_h_min = num(a, 4, 5), t.rf_h_max = num(a, 5, 7);
+        t.rf_time_min = num(a, 22, 8000) / 1000.0f, t.rf_time_max = num(a, 23, 12000) / 1000.0f;
+        t.rf_fire_on_s = num(a, 26, 1500) / 1000.0f, t.rf_fire_off_min = num(a, 27, 3000) / 1000.0f, t.rf_fire_off_max = num(a, 28, 4000) / 1000.0f;
+    }
     t.spider = t.pounces = false, t.jump_phase = 0;
     if (const Value* sp = component(o, 0x55); sp && sp->size() > 7)   // CBigSpiderAiComponent::CheckJumpAttack
         t.spider = t.pounces = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
@@ -1735,7 +1750,7 @@ Combat::Target* Combat::find_target(int id) {
     return nullptr;
 }
 
-bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
+bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, float extra1, float extra2) {
     Target* t = find_target(npc);
     if (t && t->dropship) {   // CDropShipAIComponent::OnEvent (18): a fire now, or no more turning
         if (order == "fire") t->ds_fire_at = 0;
@@ -1755,6 +1770,15 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
             const glm::vec3 half = glm::abs(scene_.level().objects[r->index].base->scale);
             t->has_region = true, t->region_min = r->position - half, t->region_max = r->position + half;
         }
+    } else if (order == "fly" && t->red_fury) {   // CRedFuryAiComponent::OnEvent: up and to the waypoint
+        const LevelLogic::Object* wp = logic_.object(arg);
+        if (!wp) return false;
+        if (!t->rf_air) t->rf_vel = glm::vec3(0, 0, 3), play_state(*t, "FlyTakeOff", false);
+        t->rf_air = t->rf_directed = true, t->rf_landing = false, t->tri = -1, t->rf_dest = wp->position;
+        if (extra1 > 0) t->rf_speed = extra1;
+        if (extra2 > 0) t->rf_accel = extra2;
+        leave_cover(*t);
+        t->goals.clear();
     } else if (order == "run" || order == "fly") {
         const LevelLogic::Object* wp = logic_.object(arg);
         if (!wp) return false;
@@ -2216,6 +2240,7 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
     if (t.pounces && update_spider_jump(t, dt, target, on_player, sees, dist)) return;
+    if (t.red_fury && update_red_fury(t, dt, target, chest, sees)) return;
     if (t.mobile && !t.hold && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
             glm::vec3 to;
@@ -2384,6 +2409,98 @@ const std::unordered_map<std::string, Combat::StateDef>& Combat::states_of(int t
     };
     gather(type);
     return out;
+}
+
+// A point to fight from in the air: round the target, near where it is, the target in sight.
+void Combat::red_fury_pick_point(Target& t, const glm::vec3& feet) {
+    std::uniform_real_distribution<float> u(0, 1);
+    const glm::vec2 from = glm::vec2(t.pos - feet);
+    const float base = glm::length(from) > 0.1f ? std::atan2(from.y, from.x) : u(rng_) * 6.2832f;
+    for (int k = 0; k < 8; ++k) {
+        const float a = base + (u(rng_) - 0.5f) * glm::radians(120.0f);
+        const float d = t.rf_air_min + (t.rf_air_max - t.rf_air_min) * u(rng_);
+        const glm::vec3 p = feet + glm::vec3(std::cos(a) * d, std::sin(a) * d, t.rf_h_min + (t.rf_h_max - t.rf_h_min) * u(rng_));
+        float s = 1;
+        if (scene_.collision().raycast(t.pos, p, s) || !line_clear(p, feet + glm::vec3(0, 0, 1.2f))) continue;
+        t.rf_dest = p;
+        return;
+    }
+    t.rf_dest = t.pos;   // nowhere better: hold
+}
+
+// CRedFuryAiComponent::UpdateGoal / UpdateAction in the air (goals 1-2 and 7-8): flying to a
+// waypoint, then between points round the target, shooting in spells, until it lands.
+bool Combat::update_red_fury(Target& t, float dt, const glm::vec3& feet, const glm::vec3& chest, bool sees) {
+    if (!t.rf_air) return false;
+    std::uniform_real_distribution<float> u(0, 1);
+    if ((t.rf_fire_timer -= dt) <= 0) {
+        t.rf_fire_on = !t.rf_fire_on, t.rf_spell_sounded = false;
+        t.rf_fire_timer = t.rf_fire_on ? t.rf_fire_on_s : t.rf_fire_off_min + (t.rf_fire_off_max - t.rf_fire_off_min) * u(rng_);
+    }
+    const bool target = t.aware && t.enemy != kNoEnemy;
+    // Its time up there over: down to the floor below.
+    if (!t.rf_directed && !t.rf_landing && !t.rf_air_only && target && (t.rf_mode_timer -= dt) <= 0) {
+        glm::vec3 on;
+        if (nav_.nearest(t.pos, 30.0f, on) >= 0) t.rf_landing = true, t.rf_dest = on + glm::vec3(0, 0, 0.1f), t.rf_land_t = 0;
+        else t.rf_mode_timer = 2;
+    }
+    if (!t.rf_directed && !t.rf_landing) {
+        if (target && ((t.rf_repick -= dt) <= 0 || glm::distance(t.pos, t.rf_dest) < 1.5f))
+            red_fury_pick_point(t, feet), t.rf_repick = 2.5f + 2.0f * u(rng_);
+        else if (!target)
+            t.rf_dest = t.pos;
+    }
+    // Steering: to the point at its speed, slowing as it gets there.
+    const glm::vec3 to = t.rf_dest - t.pos;
+    const float dist = glm::length(to);
+    const glm::vec3 want = dist > 0.05f ? to / dist * std::min(t.rf_speed, dist * 1.5f) : glm::vec3(0);
+    const glm::vec3 dv = want - t.rf_vel;
+    const float step = t.rf_accel * dt;
+    t.rf_vel += glm::length(dv) > step ? glm::normalize(dv) * step : dv;
+    glm::vec3 next = t.pos + t.rf_vel * dt;
+    float s = 1;
+    // (A scripted flight follows the designers' clear route; the original's air navigation.)
+    if (!t.rf_directed && scene_.collision().raycast(t.pos + glm::vec3(0, 0, 0.9f), next + glm::vec3(0, 0, 0.9f), s))
+        next = t.pos, t.rf_vel *= 0.2f, t.rf_repick = 0;
+    t.pos = next;
+    if (t.rf_directed && dist < 1.5f) {   // at the waypoint: the fight in the air starts
+        t.rf_directed = false;
+        t.rf_mode_timer = t.rf_time_min + (t.rf_time_max - t.rf_time_min) * u(rng_);
+        t.rf_repick = 0;
+    }
+    if (t.rf_landing) {
+        t.rf_land_t += dt;
+        if (dist < 0.4f || t.rf_land_t > 6.0f) {   // touched down: on foot again
+            glm::vec3 on;
+            const int tri = nav_.nearest(t.pos, 4.0f, on);
+            if (tri >= 0) t.tri = tri, t.pos = on;
+            t.rf_air = t.rf_landing = false, t.rf_vel = glm::vec3(0);
+            t.state = Target::State::Chase, t.timer = 0;
+            play_state(t, "FlyLand", false);
+            scene_.set_object_pose(t.object, t.pos, t.yaw);
+            return true;
+        }
+    }
+    // Facing the target (else where it goes); the flight clip by how it moves.
+    if (target && sees) face(t, feet, dt);
+    else if (glm::length(glm::vec2(t.rf_vel)) > 0.5f) face(t, t.pos + t.rf_vel, dt);
+    const float y = glm::radians(t.yaw);
+    const glm::vec2 v(t.rf_vel), ahead(-std::sin(y), std::cos(y)), right(std::cos(y), std::sin(y));
+    const float f = glm::dot(v, ahead), r = glm::dot(v, right);
+    std::string state = "FlyIdle";
+    if (t.rf_landing && dist < 3.0f) state = "FlyPrepLand";
+    else if (glm::length(v) > 1.0f) state = std::abs(f) >= std::abs(r) ? (f > 0 ? "FlyFront" : "FlyBack") : (r > 0 ? "FlyRight" : "FlyLeft");
+    const int type = scene_.level().objects[t.object].type;
+    const bool taking_off = t.playing == logic_.state_clip(type, "FlyTakeOff") && !scene_.clip_finished(t.object);
+    if (!taking_off && t.playing != logic_.state_clip(type, state)) play_state(t, state, state != "FlyPrepLand");
+    // Shooting in spells while it sees the target.
+    if (target && sees && t.rf_fire_on && t.ranged && (t.rf_shot -= dt) <= 0) {   // (goal 8: on the way too)
+        if (!t.rf_spell_sounded) sound(t.fire_sounds, &t.pos), t.rf_spell_sounded = true;   // the weapon's sounds are whole bursts
+        fire_bolt(t, chest);
+        t.rf_shot = std::max(t.burst_gap, 0.2f);
+    }
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    return true;
 }
 
 // A blow: a creature without a gun uses its states set's attack (AttackLeft/AttackRight, or
