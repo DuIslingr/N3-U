@@ -1119,8 +1119,9 @@ int api_switch_to_player_on_foot(lua_State* L) {
     return 0;
 }
 
-int api_set_max_active_enemies(lua_State* L) {   // SetMaxActiveEnemies(n): attack tokens
-    if (Combat* c = ctx(L).combat) c->set_max_shooters(int(lua_tointeger(L, 1)));
+int api_set_max_active_enemies(lua_State* L) {   // SetMaxActiveEnemies(n[, allow 0]): attack tokens
+    const int n = int(lua_tointeger(L, 1));
+    if (Combat* c = ctx(L).combat) c->set_max_shooters(n < 1 && !lua_toboolean(L, 2) ? 1 : n);   // CAIController::SetMaxActiveEnemies
     return 0;
 }
 int api_enable_fall_damage(lua_State* L) {

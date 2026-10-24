@@ -782,7 +782,8 @@ private:
     // One of the clips of a state of the target's type (StateSetMarine's DeathHeadShot,
     // HurtLeftLeg, ...) that its animation has; empty if none.
     std::string state_variant(const Target& t, const std::string& state);
-    int max_shooters_ = 2;   // enemies firing at the player at once (attack tokens; SetMaxActiveEnemies)
+    int max_shooters_ = 2;   // enemies firing at the player at once (attack tokens; SetMaxActiveEnemies;
+                             // CComponentAIController [0] of gol AIController, as min_enemies_on_player is [1])
     static constexpr float kBurstInterval = 1.2f;   // seconds between any two bursts starting
     float burst_cooldown_ = 0;
     glm::vec3 last_eye_{0}, last_aim_{0, 1, 0};

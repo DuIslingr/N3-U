@@ -831,7 +831,7 @@ void Combat::start(bool keep_stats) {
     live_grenades_.clear();   // their objects went with the old level
     tracers_.clear(), trail_pool_.clear(), beams_.clear();
     throw_delay_ = -1;
-    min_enemies_on_player = 1;
+    min_enemies_on_player = 1, max_shooters_ = 2;
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
