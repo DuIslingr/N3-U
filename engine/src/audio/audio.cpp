@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -34,6 +35,8 @@ Audio::Audio(const Vfs& vfs, bool device) : vfs_(vfs) {
         if (i == 0) table_ = std::move(t);
         else merge_sound_table(table_, t);
     }
+    if (const auto& banks = vfs_.find("nova3_reverbs.fxb"); !banks.empty()) reverb_presets_ = load_reverb_bank(vfs_.read(banks.front()));
+    reverb_.set_rate(rate_);
     if (!device) {
         offline_ = true;
         return;
@@ -284,6 +287,7 @@ int Audio::start(const SoundDef& def, const Params& p, const std::string& tag) {
     const std::string slider = g != table_.groups.end() ? g->second.slider : "SFX";
     v.bus = slider == "MUSIC" ? music : slider == "VFX" ? voices : sfx;
     v.positional = p.position && g != table_.groups.end() && g->second.positional;
+    v.aux = g != table_.groups.end() && g->second.bus == "AUX1";
     if (p.position) v.position = *p.position;
     if (p.fade_in_ms > 0) {
         v.fade = 0;
@@ -371,6 +375,20 @@ void Audio::stop(int handle, float fade_ms) {
         v.fade_target = 0;
         v.fade_step = fade_ms > 0 ? 1.0f / (fade_ms * 0.001f * float(rate_)) : 1.0f;
     }
+}
+
+void Audio::set_reverb_preset(const std::string& name, float ms) {
+    // VoxSoundManager::SetDSPPreset: the bank's patch of that name (strcasecmp: a name with
+    // trailing spaces, as a few scripts write, finds none), else vox::ReverbHQParameters' own.
+    ReverbParams p;
+    for (const ReverbPreset& r : reverb_presets_)
+        if (r.name.size() == name.size() &&
+            std::equal(r.name.begin(), r.name.end(), name.begin(), [](char a, char b) { return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b)); })) {
+            p = r.params;
+            break;
+        }
+    Lock lock(mutex_);
+    reverb_.set_params(p, ms / 1000.0f);
 }
 
 void Audio::set_paused(bool paused, const std::string& except) {
@@ -495,9 +513,11 @@ void Audio::render(float* out, int frames) {
     mix(out, frames);
 }
 
-void Audio::mix(float* out, int frames) {
+void Audio::mix(float* final_out, int frames) {
     const float smooth = 1.0f / 256.0f;   // 3D gain changes glide over ~5 ms
+    aux_.assign(size_t(frames) * 2, 0.0f);
     for (Voice& v : voices_) {
+        float* out = v.aux ? aux_.data() : final_out;
         if (paused_ && !v.ui && !(v.def && !unpaused_.empty() && v.def->label == unpaused_)) continue;   // held
         const std::vector<float>& s = v.clip->samples;
         const bool interactive = v.clip->interactive();
@@ -540,7 +560,8 @@ void Audio::mix(float* out, int frames) {
                                      return !v.loop && v.frame >= v.clip->samples.size() / 2;
                                  }),
                   voices_.end());
-    for (int i = 0; i < frames * 2; ++i) out[i] = std::clamp(out[i], -1.0f, 1.0f);
+    reverb_.process(aux_.data(), final_out, frames);   // MiniAuxBus: AUX1 through its DSP
+    for (int i = 0; i < frames * 2; ++i) final_out[i] = std::clamp(final_out[i], -1.0f, 1.0f);
 }
 
 }  // namespace nova

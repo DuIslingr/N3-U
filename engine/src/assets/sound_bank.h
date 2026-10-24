@@ -25,6 +25,7 @@ struct SoundEvent {
 
 struct SoundGroup {
     std::string name, slider;      // slider: MUSIC, SFX, VFX
+    std::string bus;               // Music, SFX, VFX, or AUX1 (through the reverb)
     bool positional = false;
 };
 

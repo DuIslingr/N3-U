@@ -16,6 +16,7 @@
 #include <glm/glm.hpp>
 
 #include "assets/sound_bank.h"
+#include "audio/reverb.h"
 #include "core/bytes.h"
 
 struct SDL_AudioStream;
@@ -58,6 +59,10 @@ public:
     // The pause menu, the main menu, the loading screen: voices hold where they are, but
     // those of the sound `except` (the title music) play on.
     void set_paused(bool paused, const std::string& except = {});
+    // SetDSPPreset(name, ms): the reverb's preset (by its exact name, any case; one the bank
+    // lacks gets the defaults), reached over `ms`. DeviceOptions' "Reverb" is on, as on all
+    // but single-core devices.
+    void set_reverb_preset(const std::string& name, float ms);
     void set_position(int handle, const glm::vec3& position);
     bool playing(int handle) const;
     bool playing(const std::string& name) const;   // any voice of this sound label
@@ -112,6 +117,7 @@ private:
         bool positional = false;
         glm::vec3 position{0};
         float gain = 1, bus = 1;      // the caller's gain, the group's volume
+        bool aux = false;             // on the AUX1 bus: through the reverb
         float left = 1, right = 1;    // 3D gains (target)
         float cur_left = 0, cur_right = 0;
         float fade = 1, fade_target = 1, fade_step = 0;   // per frame
@@ -146,6 +152,9 @@ private:
     bool paused_ = false;
     std::string unpaused_;
     std::vector<float> scratch_;
+    Reverb reverb_;
+    std::vector<ReverbPreset> reverb_presets_;
+    std::vector<float> aux_;          // the AUX1 bus's mix, before the reverb
     int next_handle_ = 1;
     uint64_t counter_ = 0;
     glm::vec3 listener_{0}, forward_{0, 1, 0}, up_{0, 0, 1};

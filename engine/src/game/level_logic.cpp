@@ -286,7 +286,7 @@ void LevelLogic::start(StartMode mode) {
     camera_held_ = restore_view_ = false;
     state_chains_.clear(), interaction_ = Interaction{}, in_range_ = -1, weapon_hidden_ = false;
     tutorial_ = TutorialStep{};
-    if (audio && !keep_player) audio->stop_all(), music_ = -1, music_wait_ = 1, jetpack_sound_ = -1, breath_sound_ = -1;
+    if (audio && !keep_player) audio->stop_all(), audio->set_reverb_preset("", 0), music_ = -1, music_wait_ = 1, jetpack_sound_ = -1, breath_sound_ = -1;
     music_event_.clear();
     dialog_.clear(), dialog_active_ = false, dialog_voice_ = -1, dialog_wait_ = 0;
     if (!keep_player) fading_ = false, shake_left_ = 0, time_factor_left_ = 0;

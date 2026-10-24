@@ -110,6 +110,7 @@ SoundTable parse_sound_table(const std::string& xml) {
             SoundGroup g;
             g.name = to_str(a, "name");
             g.slider = to_str(a, "volumeslider");
+            g.bus = to_str(a, "bus");
             g.positional = to_str(a, "pos3d") == "yes";
             t.groups[to_int(a, "uid", 0)] = g;
         } else {

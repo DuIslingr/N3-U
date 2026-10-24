@@ -972,6 +972,12 @@ int api_set_global_awareness_factor(lua_State* L) {
     return 0;
 }
 
+// SetDSPPreset(name[, ms]): the reverb's preset for the area (sounds on the AUX1 bus).
+int api_set_dsp_preset(lua_State* L) {
+    LevelLogic& c = ctx(L);
+    if (c.audio) c.audio->set_reverb_preset(str_arg(L, 1), lua_isnumber(L, 2) ? float(lua_tonumber(L, 2)) : 0.0f);
+    return 0;
+}
 int api_set_color_grading(lua_State* L) {   // SetColorGrading(lut, ms)
     ctx(L).set_color_grading(str_arg(L, 1), float(lua_tonumber(L, 2)));
     return 0;
@@ -1346,7 +1352,7 @@ const Entry kImplemented[] = {
     {"GiveSplashDamage", api_give_splash_damage},
     {"PlayAnimation", api_play_animation},
     {"LoadTexture", api_ignore},
-    {"SetDSPPreset", api_ignore},
+    {"SetDSPPreset", api_set_dsp_preset},
     {"QTEAddSlowTime", api_qte_add_slow_time},
     {"QTEStart", api_qte_start},
     {"QTEStop", api_qte_stop},
