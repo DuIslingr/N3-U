@@ -78,6 +78,11 @@ struct WeaponDef {
     int cross_px = 15;
     bool cross_plus = false, cross_aiming = false, scope = false;
     float aim_move = 1;                // [52]: the player's speed aiming (GetAimPlayerMoveFactor)
+    // Lock-on (CWeaponComponent::UpdateTarget): [20] ms on a target before the lock (< 0:
+    // none), [21] degrees off the view it is kept. Its projectile's [15] homing (how fast
+    // it turns to the target), [16] only when locked.
+    float lock_ms = -1, lock_cone = 0, homing = 0;
+    bool homing_needs_lock = false;
     // CProjectileComponent::GetDamage: `near` damage up to near_dist, `far` beyond far_dist.
     float damage_near = 2, damage_far = 1, near_dist = 30, far_dist = 30;
     // Sounds (CComponentWeapon fire mode): one per shot, or a loop while firing and its end.
@@ -664,6 +669,8 @@ private:
         std::vector<int> fx{};         // its effects' handles
         int body_type = -1;            // its model's object
         size_t body = size_t(-1);
+        int home = -1;                 // the target it homes on (index), -1 none
+        float homing = 0, speed = 0;
     };
     // A bullet's streak (CProjectileComponent::LaunchBullet / UpdateBullet): its trail
     // object flies from the muzzle to where the shot ends at the bullet's speed, growing
@@ -1023,6 +1030,15 @@ private:
     float fire_cooldown_ = 0, reload_left_ = 0;
     bool reload_filled_ = false;
     int low_shield_voice_ = -1;   // sfx_shield_low playing
+    // The player's lock-on: the target (index, -1 none), time on it, locked, the lock's
+    // hold after locking (CWeaponComponent +0x1ec, 5 s), and the RLTarget marker.
+    int lock_target_ = -1;
+    float lock_time_ = 0, lock_hold_ = 0;
+    bool locked_ = false;
+    size_t lock_marker_ = size_t(-1);
+    std::string lock_marker_node_;
+    void update_lock(float dt, const glm::vec3& eye, const glm::vec3& aim);
+    void stop_lock();
     // The spread (degrees; CWeaponComponent +0x5c), whether aiming, where the player was
     // (walking or not), the crosshair's fade (0..1) and fire kick (0..1, +0x1fc), and how
     // far off what the crosshair is on is (-1: nothing within 200 m).

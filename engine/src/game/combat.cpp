@@ -369,6 +369,76 @@ void Combat::aggro_sound(const Target& t) {
     logic_.audio->play(last_aggro_, p);
 }
 
+void Combat::stop_lock() {
+    lock_target_ = -1, lock_time_ = 0, lock_hold_ = 0, locked_ = false;
+    if (lock_marker_ != size_t(-1)) scene_.set_object_visible(lock_marker_, false);
+}
+
+// CWeaponComponent::UpdateTarget / CLevel::StartTargetingEffect, StartTargetingLockEffect,
+// UpdateLockTarget: with a lock-on weapon, a lockable target under the crosshair starts the
+// targeting (the RLTarget marker's Targeting, its "target" rings closing over the lock
+// time); held there that long (not firing or reloading) it locks ("target_locked", the
+// lock sound) and the lock holds 5 s while it stays within the weapon's cone of the view.
+// The marker sits on the line to the target in front of the eye, facing it (the original
+// draws it in its own scene; its size here is a choice).
+void Combat::update_lock(float dt, const glm::vec3& eye, const glm::vec3& aim) {
+    const WeaponDef& w = weapon();
+    if (w.lock_ms < 0 || player_dead || logic_.limited_active()) {
+        if (lock_target_ >= 0) stop_lock();
+        return;
+    }
+    // What the crosshair is on: a hostile target in the line of fire.
+    float t_hit = 0;
+    glm::vec3 point;
+    const int under = ray_target(eye, aim, 300.0f, t_hit, point);
+    const bool lockable = under >= 0 && targets_[size_t(under)].hostile && line_clear(eye, point - aim * 0.3f);
+    // The lock is lost out of the cone (or with its target).
+    if (lock_target_ >= 0) {
+        const Target& t = targets_[size_t(lock_target_)];
+        const glm::vec3 to = t.pos + glm::vec3(0, 0, t.height * 0.5f) - eye;
+        if (!alive(t) || glm::dot(glm::normalize(to), aim) < std::cos(glm::radians(w.lock_cone))) stop_lock();
+    }
+    lock_hold_ = std::max(lock_hold_ - dt, 0.0f);
+    if (lockable && under != lock_target_ && lock_hold_ <= 0) {
+        stop_lock();
+        lock_target_ = under;
+        if (lock_marker_ == size_t(-1))
+            for (const auto& [id, type] : gol_)
+                if (type.name == "RLTarget") lock_marker_ = scene_.spawn_object(id, -5000 - attachment_id_++, eye, 0);
+        if (lock_marker_ != size_t(-1)) {
+            const std::string clip = logic_.state_clip(scene_.level().objects[lock_marker_].type, "Targeting");
+            if (!clip.empty()) {
+                scene_.play_clip(lock_marker_, clip, false);
+                const float len = scene_.clip_length(lock_marker_, clip);
+                scene_.set_clip_speed(lock_marker_, len > 0 ? len / std::max(w.lock_ms / 1000.0f, 0.001f) : 1.0f);
+            }
+            scene_.set_node_visible(lock_marker_, "target", true);
+            scene_.set_node_visible(lock_marker_, "target_locked", false);
+        }
+    }
+    if (lock_target_ < 0) return;
+    // Held on it while the weapon is idle or walking: the lock.
+    if (!locked_ && reload_left_ <= 0 && !firing() && (lock_time_ += dt * 1000.0f) > w.lock_ms) {
+        locked_ = true, lock_hold_ = 5.0f;
+        if (logic_.audio) logic_.audio->play("sfx_rocket_target_locked");
+        if (lock_marker_ != size_t(-1)) {
+            scene_.set_node_visible(lock_marker_, "target", false);
+            scene_.set_node_visible(lock_marker_, "target_locked", true);
+        }
+    }
+    if (lock_marker_ == size_t(-1)) return;
+    const Target& t = targets_[size_t(lock_target_)];
+    const glm::vec3 dir = glm::normalize(t.pos + glm::vec3(0, 0, t.height * 0.5f) - eye);
+    // About 8 degrees across (its outer ring is some 12 units wide).
+    constexpr float kDistance = 1.0f, kScale = 1.0f / 80.0f;
+    const glm::vec3 right = glm::normalize(glm::cross(dir, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0)), up = glm::cross(right, dir);
+    glm::mat4 m(1);
+    m[0] = glm::vec4(right * kScale, 0), m[1] = glm::vec4(-dir * kScale, 0), m[2] = glm::vec4(up * kScale, 0);
+    m[3] = glm::vec4(eye + dir * kDistance, 1);
+    scene_.set_object_transform(lock_marker_, m);
+    scene_.set_object_visible(lock_marker_, true);
+}
+
 void Combat::acquire_bark(const Target& t) {
     if (t.enemy == -1 && logic_.player_vehicle() >= 0) return bark(25, &t);   // the player in a jeep
     if (t.enemy == -1 && logic_.in_mech()) return bark(26, &t);              // in the mech
@@ -1073,6 +1143,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
             w.scope = f[46].i != 0;
         }
         if (f.size() > 52) w.aim_move = num(f, 52, 1);
+        if (f.size() > 21 && f[20].i >= 0) w.lock_ms = float(f[20].i), w.lock_cone = num(f, 21, 30);
         if (f.size() > 35 && f[35].type == Value::String) w.sprite = f[35].s;
         // Fire modes {?, projectile type, continuous, continuous delay (ms), ...}.
         if (f[4].size() > 0 && f[4][0].size() > 3) {
@@ -1094,6 +1165,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                     // [8] speed (per ms times 1000: CProjectileComponent::LaunchBullet).
                     w.bullet_speed = num(*pr, 8, 0);
                     w.splash_damage = num(*pr, 6, 0), w.splash_radius = num(*pr, 7, 0);
+                    if (pr->size() > 16) w.homing = num(*pr, 15, 0), w.homing_needs_lock = (*pr)[16].i != 0;
                     if (pr->size() > 39) w.bullet_life = std::max((*pr)[39].as_float() / 1000.0f, 0.1f);
                     w.looks = read_looks(mode[1].i);
                     if (pr->size() > 32 && (*pr)[32].i != 0 && (*pr)[30].type == Value::String)
@@ -1273,6 +1345,7 @@ void Combat::start(bool keep_stats) {
     load_jump_points();
     load_barks();
     bark_voice_ = -1, bark_playing_ = nullptr, bark_next_ = bark_clock_ = 0;
+    lock_target_ = -1, lock_time_ = lock_hold_ = 0, locked_ = false, lock_marker_ = size_t(-1);
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
         std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, " +
         std::to_string(breakables_.size()) + " breakables, nav mesh " +
@@ -3108,6 +3181,9 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     } else if (w.flies) {   // a projectile from the muzzle at what the crosshair is on; it hits as it gets there
         Bolt b{from, glm::normalize(end - from) * w.bullet_speed, w.damage_near, w.bullet_life, glm::vec4(1, 0.6f, 0.3f, 1), -1};
         b.splash = w.splash_damage, b.radius = w.splash_radius, b.weapon = current_;
+        // Fired on a lock (or, without needing one, at the target being locked): it homes.
+        if (w.homing > 0 && lock_target_ >= 0 && (locked_ || !w.homing_needs_lock))
+            b.home = lock_target_, b.homing = w.homing, b.speed = w.bullet_speed;
         launch_bolt(b, w.looks);
     } else {
         launch_trail(w, from, end);
@@ -3153,6 +3229,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     update_pickups(dt);
     update_damage_zones(dt);
     update_barks(dt);
+    update_lock(dt, eye, aim);
     burst_cooldown_ = std::max(burst_cooldown_ - dt, 0.0f);
     player_hurt_wait_ = std::max(player_hurt_wait_ - dt, 0.0f);
     view_hurt_wait_ = std::max(view_hurt_wait_ - dt, 0.0f);
@@ -3206,6 +3283,17 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
 
     // Projectiles: move, hit the player or the world.
     for (Bolt& b : bolts_) {
+        // CProjectileComponent::UpdateBullet: homing on a target ahead, the heading pulled
+        // towards it by homing x the step (at most twice the difference).
+        if (b.home >= 0 && size_t(b.home) < targets_.size() && alive(targets_[size_t(b.home)]) && b.speed > 0) {
+            const Target& h = targets_[size_t(b.home)];
+            const glm::vec3 to = glm::normalize(h.pos + glm::vec3(0, 0, h.height * 0.5f) - b.pos);
+            glm::vec3 dir = b.vel / b.speed;
+            if (glm::dot(to, dir) > 0) {
+                dir += (to - dir) * std::clamp(dt * b.homing, 0.0f, 2.0f);
+                b.vel = dir * b.speed;
+            }
+        }
         const glm::vec3 next = b.pos + b.vel * dt;
         b.life -= dt;
         float t = 1;
