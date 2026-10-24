@@ -518,6 +518,8 @@ private:
         std::string root_clip;
         glm::vec3 root_prev{0};
         bool root_moves = true;        // false: a clip it only waits out (getting up after the roll)
+        float root_scale = 1;          // the root's travel scaled (a vault to the cover's depth)
+        bool root_vault = false;       // vaulting a cover: off the walkable area until it lands
         int root_cover = -1;           // rolling into this cover: hidden there when the clip ends
         float crouch_left = 0;         // crouched in the open, firing (UpdateCrouch), this much longer
         bool cover_next_loop = false;
@@ -652,6 +654,9 @@ private:
         glm::vec3 pos{0}, dir{0, 1, 0};
         bool low = true;
         bool left = false, right = false;   // [8]/[9]: its sides to come out of (CCoverPoint bits 4, 8)
+        // [7]: one to vault over (bit 2), as far as its facing scaled by the object's (+0x40).
+        bool jumpable = false;
+        float jump_dist = 1;
         int holder = -1;   // the target index holding it
     };
     std::vector<CoverPoint> covers_;
@@ -662,7 +667,8 @@ private:
     bool cover_protects(const CoverPoint& c, const glm::vec3& from) const;
     int choose_cover(const Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_eye) const;
     void leave_cover(Target& t);
-    void start_root_motion(Target& t, const std::string& clip, bool moves = true, bool reverse = false);
+    void start_root_motion(Target& t, const std::string& clip, bool moves = true, bool reverse = false, float scale = 1);
+    bool try_vault(Target& t, const CoverPoint& c);
     bool update_root_motion(Target& t);   // false once the clip is over
     // Dash to (near) `to` if it can (`forced`: a script's order, whatever the wait); the
     // way there must be clear and, when it has an enemy, show it from there.

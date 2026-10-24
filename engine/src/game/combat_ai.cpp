@@ -46,6 +46,8 @@ void Combat::load_covers() {
             p.dir = glm::normalize(glm::vec3(m * glm::vec4(-std::sin(a), std::cos(a), 0, 0)));
             p.low = e[6].i != 0;
             p.left = e[8].i != 0, p.right = e[9].i != 0;
+            p.jumpable = e[7].i != 0;
+            p.jump_dist = glm::length(glm::vec3(m * glm::vec4(-std::sin(a), std::cos(a), 0, 0)));
             glm::vec3 on;
             if (nav_.nearest(p.pos + glm::vec3(0, 0, 0.3f), 1.5f, on) >= 0) p.pos = on;   // standing on the walkable area
             covers_.push_back(p);
@@ -170,8 +172,9 @@ void Combat::set_crouched(Target& t, bool on) {
     t.height = on ? t.stand_height * 0.6f : t.stand_height;
 }
 
-void Combat::start_root_motion(Target& t, const std::string& clip, bool moves, bool reverse) {
+void Combat::start_root_motion(Target& t, const std::string& clip, bool moves, bool reverse, float scale) {
     if (scene_.play_clip(t.object, clip, false, reverse)) t.playing = clip;
+    t.root_scale = scale, t.root_vault = false;
     t.root_clip = t.playing == clip ? clip : std::string();
     t.root_moves = moves && !reverse;
     glm::mat4 local;
@@ -187,15 +190,21 @@ bool Combat::update_root_motion(Target& t) {
         // The root's sideways travel since the last step, through the actor's placement (the
         // scene holds the root itself in place).
         const glm::vec3 now(local[3]);
-        const glm::vec3 d = glm::mat3(scene_.object_matrix(t.object)) * glm::vec3(now.x - t.root_prev.x, now.y - t.root_prev.y, 0);
+        const glm::vec3 d = glm::mat3(scene_.object_matrix(t.object)) * glm::vec3(now.x - t.root_prev.x, now.y - t.root_prev.y, 0) * t.root_scale;
         t.root_prev = now;
         t.pos += glm::vec3(d.x, d.y, 0);
-        stay_on_mesh(t);
+        if (!t.root_vault) stay_on_mesh(t);
         scene_.set_object_pose(t.object, t.pos, t.yaw);
     }
     if (on && !scene_.clip_finished(t.object)) return true;
-    const bool rolled = t.root_moves;
+    const bool rolled = t.root_moves && !t.root_vault;
     t.root_clip.clear();
+    if (std::exchange(t.root_vault, false)) {   // landed beyond the cover: back on the ground, fighting
+        stay_on_mesh(t);
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        if (logic_.trace) log(std::to_string(t.id) + " landed at (" + std::to_string(t.pos.x) + " " + std::to_string(t.pos.y) + ")");
+        return false;
+    }
     if (const int into = std::exchange(t.root_cover, -1); into >= 0 && t.cover == into) {   // in it, crouched
         if (logic_.trace) {
             char line[128];
@@ -559,6 +568,27 @@ void Combat::update_flight(Target& o, float dt) {
     if (LevelLogic::Object* lo = logic_.object(o.id)) lo->position = o.pos, logic_.move_effects(*lo);
 }
 
+// CNPCComponent::ExitLowCoverStand / CheckJumpOverCover: out of a cover one can jump, over
+// it (JumpOverCoverFromCoverLeft/Right), its root's travel scaled to the cover's depth.
+bool Combat::try_vault(Target& t, const CoverPoint& c) {
+    if (!c.low || !c.jumpable || t.cover_phase == Target::CoverPhase::Moving) return false;
+    const std::string clip = logic_.state_clip(scene_.level().objects[t.object].type,
+                                               t.cover_left ? "JumpOverCoverFromCoverLeft" : "JumpOverCoverFromCoverRight");
+    glm::mat4 a, b;
+    float length = 0;
+    if (clip.empty() || !scene_.sample_node(t.object, "Bip01", clip, 0, a, &length) || !scene_.sample_node(t.object, "Bip01", clip, length, b))
+        return false;
+    const float travel = glm::length(glm::vec2(b[3]) - glm::vec2(a[3]));
+    if (travel < 0.1f) return false;
+    leave_cover(t);
+    t.cover_eval = std::uniform_real_distribution<float>(3.0f, 5.0f)(rng_);
+    t.yaw = glm::degrees(std::atan2(-c.dir.x, c.dir.y));
+    start_root_motion(t, clip, true, false, c.jump_dist / travel);
+    t.root_vault = true;
+    if (logic_.trace) log(std::to_string(t.id) + " vaults over its cover (" + clip + ")");
+    return true;
+}
+
 void Combat::leave_cover(Target& t) {
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
@@ -589,7 +619,10 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
     // The cover still hides it? Flanked, or the enemy upon it: out (CheckPositionIsSafe).
     if (t.cover >= 0) {
         const CoverPoint& c = covers_[size_t(t.cover)];
-        if (glm::distance(glm::vec2(c.pos), glm::vec2(target)) < 4.0f || !cover_protects(c, enemy_eye)) leave_cover(t), t.cover_eval = 0;
+        if (glm::distance(glm::vec2(c.pos), glm::vec2(target)) < 4.0f || !cover_protects(c, enemy_eye)) {
+            if (try_vault(t, c)) return true;
+            leave_cover(t), t.cover_eval = 0;
+        }
     }
     // Looking for a cover every 3-5 s while it has none (timer 9).
     if (t.cover < 0) {
