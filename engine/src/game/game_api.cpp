@@ -988,6 +988,16 @@ int api_fog_animation_stop(lua_State* L) {
     ctx(L).fog_animation(false);
     return 0;
 }
+// SetMinEnemiesOnPlayer(n) / RestoreMinEnemiesOnPlayer(): how many hostile actors at least
+// fight the player (CAIController).
+int api_set_min_enemies_on_player(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->min_enemies_on_player = int(lua_tointeger(L, 1));
+    return 0;
+}
+int api_restore_min_enemies_on_player(lua_State* L) {
+    if (Combat* c = ctx(L).combat) c->min_enemies_on_player = 1;
+    return 0;
+}
 int api_set_color_grading(lua_State* L) {   // SetColorGrading(lut, ms)
     ctx(L).set_color_grading(str_arg(L, 1), float(lua_tonumber(L, 2)));
     return 0;
@@ -1338,7 +1348,8 @@ const Entry kImplemented[] = {
     {"SetFogZColor", api_set_fog_z_color},
     {"LoadObjectType", api_ignore},
     {"SetMaxActiveEnemies", api_set_max_active_enemies},
-    {"SetMinEnemiesOnPlayer", api_ignore},
+    {"SetMinEnemiesOnPlayer", api_set_min_enemies_on_player},
+    {"RestoreMinEnemiesOnPlayer", api_restore_min_enemies_on_player},
     {"Player_EnableFallDamage", api_enable_fall_damage},
     {"HideMessage", api_hide_message},
     {"ResetTriggerRunCount", api_reset_trigger_run_count},

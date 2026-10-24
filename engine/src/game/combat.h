@@ -230,6 +230,9 @@ public:
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
+    // SetMinEnemiesOnPlayer / RestoreMinEnemiesOnPlayer (CAIController +0xac, 1 to start
+    // with): how many hostile actors at least fight the player rather than its allies.
+    int min_enemies_on_player = 1;
     // Weapons the player has (unlocked); `select` indices for CombatInput.
     int weapon_count() const;
     int owned_weapon(int k) const;          // the k-th weapon the player has, -1 if none
@@ -633,6 +636,7 @@ private:
     bool enemy_points(const Target& t, int enemy, glm::vec3& feet, glm::vec3& chest) const;
     bool sees_point(const Target& t, const glm::vec3& point) const;
     bool fights(const Target& t, int enemy) const;   // a valid enemy for t
+    void keep_enemies_on_player();
     int choose_enemy(const Target& t) const;
     Target* find_target(int id);
     const Target* find_target(int id) const { return const_cast<Combat*>(this)->find_target(id); }

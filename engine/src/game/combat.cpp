@@ -831,6 +831,7 @@ void Combat::start(bool keep_stats) {
     live_grenades_.clear();   // their objects went with the old level
     tracers_.clear(), trail_pool_.clear(), beams_.clear();
     throw_delay_ = -1;
+    min_enemies_on_player = 1;
     targets_.clear();
     spawners_.clear();
     bolts_.clear();
@@ -1248,6 +1249,32 @@ bool Combat::fights(const Target& t, int enemy) const {
     if (enemy == -1) return (t.attacks & kPlayerTeamBit) != 0 && !player_dead;
     const Target& e = targets_[size_t(enemy)];
     return &e != &t && e.actor && alive(e) && (t.attacks & (1u << e.team)) != 0;
+}
+
+void Combat::keep_enemies_on_player() {
+    // CAIController::Update: if fewer than that many (or than there are hostile actors) of
+    // the aware ones have the player as their target, the nearest of the others who could
+    // fight it (not locked on another, not ignoring it) turn to it.
+    if (player_dead || min_enemies_on_player <= 0) return;
+    int registered = 0, on_player = 0;
+    std::vector<std::pair<float, size_t>> could;
+    const glm::vec3 player = logic_.player.center;
+    for (size_t i = 0; i < targets_.size(); ++i) {
+        const Target& t = targets_[i];
+        if (!t.actor || !t.hostile || !alive(t)) continue;
+        if (const LevelLogic::Object* o = logic_.object(t.id); !o || !o->enabled) continue;
+        ++registered;
+        if (!t.aware) continue;
+        if (t.enemy == -1) ++on_player;
+        else if (t.locked < 0 && fights(t, -1)) could.push_back({glm::distance(t.pos, player), i});
+    }
+    int want = std::min(registered, min_enemies_on_player) - on_player;
+    if (want <= 0 || could.empty()) return;
+    std::sort(could.begin(), could.end());
+    for (size_t k = 0; k < could.size() && want > 0; ++k, --want) {
+        Target& t = targets_[could[k].second];
+        t.enemy = -1, t.choose_timer = 0.4f;
+    }
 }
 
 int Combat::choose_enemy(const Target& t) const {
@@ -2324,6 +2351,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         if ((t.timer += dt) > 8.0f)
             if (LevelLogic::Object* o = logic_.object(t.id); o && o->visible) logic_.show(*o, false);
     }
+    keep_enemies_on_player();
     for (Target& t : targets_) {
         LevelLogic::Object* o = logic_.object(t.id);
         if (!o || !o->enabled) continue;
