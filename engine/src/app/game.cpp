@@ -174,6 +174,7 @@ Game::Game(const Options& options, const Vfs& vfs_, const Gol& gol_, SDL_Window*
         viewmodel.start();
         hud.start();
         flares.start();
+        listen_at_player();
         if (opt.list_actors)
             for (const std::string& line : combat.describe()) std::printf("  %s\n", line.c_str());
     }
@@ -498,6 +499,7 @@ void Game::load_level(const std::string& level) {
     viewmodel.start();
     hud.start();
     flares.start();
+    listen_at_player();
 }
 
 // Continue (Application::Load): the save's level from its checkpoint (as a respawn
@@ -515,6 +517,7 @@ void Game::resume(const SaveGame& g) {
         viewmodel.start();
         hud.start();
         flares.start();
+        listen_at_player();
     } else {
         load_level(g.level);
         if (g.has_arsenal) combat.restore_arsenal(g.arsenal), shop.apply_owned(combat, settings);
@@ -540,6 +543,7 @@ void Game::step_logic(float dt) {
         viewmodel.start();
         hud.start();
         flares.start();
+        listen_at_player();
     }
     if (logic.respawn_pending) {   // the player died: the level again, at the checkpoint
         std::printf("[script] respawning at checkpoint %d\n", logic.checkpoint());
@@ -551,6 +555,7 @@ void Game::step_logic(float dt) {
         viewmodel.start();
         hud.start();
         flares.start();
+        listen_at_player();
     }
     // EndLevel: a moment on the faded screen, then the next campaign level (the
     // same one again after a failure). The arsenal carries over.
@@ -600,6 +605,11 @@ void Game::spawn_at_option() {
         if (!o) throw std::runtime_error("no object with id " + opt.spawn_at);
         player.spawn(o->position, o->yaw);
     }
+    listen_at_player();
+}
+
+void Game::listen_at_player() {
+    if (logic.audio) logic.audio->set_listener(player.eye(), player.view_forward(), glm::vec3(0, 0, 1));
 }
 
 // CWeaponComponent::DrawTargetCrossHair: the weapon's sprite's frame 4 in the middle and its

@@ -73,6 +73,9 @@ private:
 
     // A fixed step of level logic (and what it sets off: sections, respawns, level ends).
     void step_logic(float dt);
+    // The listener at the player's eyes (after a load or spawn, before the frame sets it from
+    // the camera), so sounds started by the first logic step are heard.
+    void listen_at_player();
     void movement_states(bool aim);
     // The player's footsteps, jumps and landings (PlayerComponent::Update's step timer and
     // CActorSoundsComponent by the ground's material).
