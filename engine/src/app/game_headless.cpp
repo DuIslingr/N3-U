@@ -282,7 +282,7 @@ int Game::run_screenshot() {
             arms_distort();
             if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(h);
             movement_states(false);
-            vm.firing = combat.since_shot() < 0.2f;
+            vm.firing = combat.firing();
             vm.reloading = combat.reloading();
             viewmodel.update(kPhysicsStep, player.eye(), player.yaw, player.pitch, vm);
             logic.weapon_playing = viewmodel.state();
@@ -335,7 +335,7 @@ int Game::run_screenshot() {
         vm.cockpit = logic.in_mech();
         if (!logic.weapon_state.empty()) viewmodel.set_state(logic.weapon_state), logic.weapon_state.clear();
         arms_distort();
-        vm.firing = combat.since_shot() < 0.2f;
+        vm.firing = combat.firing();
         vm.reloading = combat.reloading();
         viewmodel.update(1.0f / 60.0f, cam.position, cam.yaw, cam.pitch, vm);
     }

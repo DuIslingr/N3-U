@@ -322,6 +322,9 @@ public:
     // CLevel::DrawGrenades: enemy grenades that can reach the player (where they are).
     std::vector<glm::vec3> grenade_threats() const;
     float since_shot() const { return since_shot_; }   // seconds since the last shot
+    // Shooting (CWeaponComponent's firing flag: set by FireButtonPress, cleared by
+    // FireButtonRelease): the trigger held with shots still coming.
+    bool firing() const { return trigger_held_ && since_shot_ < 0.2f; }
     int ammo_reserve() const { return reserve_[size_t(current_)]; }
     const Navigation& nav() const { return nav_; }
     std::function<void(const std::string&)> log = [](const std::string&) {};

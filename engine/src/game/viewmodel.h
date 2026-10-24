@@ -43,8 +43,10 @@ public:
     // CPlayerBaseComponent::ReceiveDamage: Hurt_front, IronSight_Hurt_left_heavy, ...),
     // one of its clips at random, over whatever the hands are playing.
     void camera_state(const std::string& state) { camera_request_ = state; }
-    // That clip's move of the camera from where it starts, in the view's frame (x right,
-    // y forward, z up); identity when none plays. The world is seen through it, the hands
+    // The view's move from where the rig's camera rests (in the weapon's idle clip), in the
+    // view's frame (x right, y forward, z up): the hands' own clips move the camera too (the
+    // ironsight fire's kick back and up), the hands staying put in front of it; and that
+    // clip's move of it from where it starts, the world seen through it while the hands
     // stay where the rig's unmoved camera puts them.
     const glm::mat4& camera_offset() const { return camera_offset_; }
     // PlayerComponent::distort_push / distort_pop / distort_change_blend: the rig drawn with
@@ -108,7 +110,7 @@ private:
     const Clips& clips(const std::string& weapon);
     // Play a state (one of its clips at random); false if it has none. One that does not
     // loop holds the others off until it ends (left_), then its next state follows.
-    bool play(const Clips& c, const std::string& state);
+    bool play(const Clips& c, const std::string& state, float fade_ms = 0);
     void show_weapon(const std::string& node);
 
     Scene& scene_;

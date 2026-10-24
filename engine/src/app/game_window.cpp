@@ -552,7 +552,7 @@ void Game::run_window() {
             const bool* k = SDL_GetKeyboardState(nullptr);
             vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D] ||
                                              touch_in.forward != 0 || touch_in.right != 0);
-            vm.firing = combat.since_shot() < 0.2f;
+            vm.firing = combat.firing();
             vm.reloading = combat.reloading();
             Camera v = cam;
             v.yaw += logic.shake_offset().x, v.pitch += logic.shake_offset().y;

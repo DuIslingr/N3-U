@@ -119,14 +119,14 @@ void ViewModel::show_weapon(const std::string& node) {
 
 void ViewModel::set_state(const std::string& state) { requested_ = state; }
 
-bool ViewModel::play(const Clips& c, const std::string& state) {
+bool ViewModel::play(const Clips& c, const std::string& state, float fade_ms) {
     auto it = c.index.find(state);
     if (it == c.index.end()) return false;
     const State& s = c.states[size_t(it->second)];
     if (s.clips.empty()) return false;
     const auto& [clip, speed] = s.clips[s.clips.size() > 1 ? size_t(std::rand()) % s.clips.size() : 0];
     const float rate = speed == 0 ? 1.0f : std::fabs(speed);   // 0: the postures, posed by the view's turn
-    if (!scene_.play_clip(object_, clip, s.loop, speed < 0)) return false;
+    if (!scene_.play_clip(object_, clip, s.loop, speed < 0, fade_ms)) return false;
     scene_.set_clip_speed(object_, rate);
     current_ = it->second, playing_ = state;
     Scene::ClipState cs;
@@ -214,6 +214,16 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
         movement_.clear();
     }
 
+    // CWeaponComponent::Update / FireStop: a fire loop (type 37) ends as soon as the trigger
+    // is let go (or the clip is empty), into the stop state (AimStopAttack while aiming,
+    // Attack_End) or else straight to the idle. Faded: the fire clip is cut mid-way.
+    bool stopped = false;
+    if (cur && cur->type == 37 && !in.firing && !lowered_) {
+        constexpr float kFireCutMs = 120;
+        stopped = play(c, in.aiming ? "AimStopAttack" : "Attack_End", kFireCutMs) ||
+                  play(c, in.aiming ? "AimIdle" : "Idle", kFireCutMs);
+        cur = current_ >= 0 && size_t(current_) < c.states.size() ? &c.states[size_t(current_)] : nullptr;
+    }
     // The looping state the input asks for, and the move into it from the last one.
     std::string base;
     if (in.aiming) base = in.firing ? "AimAttack" : in.moving ? "AimWalk" : "AimIdle";
@@ -221,7 +231,7 @@ void ViewModel::update(float dt, const glm::vec3& eye, float yaw_deg, float pitc
     else if (in.moving && in.running && c.has("RushWalk")) base = "RushWalk";
     else base = in.moving ? "Walk" : "Idle";
     if (!c.has(base)) base = in.aiming && c.has("AimIdle") ? "AimIdle" : "Idle";
-    if (base != base_ && !base_.empty() && !lowered_ && !busy) {
+    if (base != base_ && !base_.empty() && !lowered_ && !busy && !stopped) {
         const bool was_aim = base_.rfind("Aim", 0) == 0, aim = base.rfind("Aim", 0) == 0;
         std::string move;
         if (aim && !was_aim) move = "Aim";
@@ -287,10 +297,20 @@ void ViewModel::update_camera_layer(float dt, const Clips& c) {
 void ViewModel::place(size_t rig, const glm::vec3& eye, float yaw_deg, float pitch_deg) {
     // The rig's camera (Collada: looking down -Z) turned to look along +Y, in rig space.
     glm::mat4 placement = scene_.object_matrix(rig);
+    const glm::mat4 turn = glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1, 0, 0));
     const glm::mat4 cam_world = scene_.object_matrix(rig, "Camera01");
-    const glm::mat4 cam_rig = glm::inverse(placement) * cam_world * glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1, 0, 0));
+    glm::mat4 cam_rig = glm::inverse(placement) * cam_world * turn;
     const glm::mat4 view = glm::rotate(glm::rotate(glm::translate(glm::mat4(1), eye), glm::radians(yaw_deg), glm::vec3(0, 0, 1)),
                                        glm::radians(pitch_deg), glm::vec3(1, 0, 0));
+    // The game sees through the rig's animated camera: placed by where it rests, the view
+    // moved by the rest of the way (camera_offset).
+    if (glm::mat4 rest; rig == object_ && !weapon_.empty() &&
+                        scene_.sample_node(rig, "Camera01", clips(weapon_).get("Idle"), 0, rest)) {
+        // (sample_node: in its parent's frame.)
+        const glm::mat4 rest_rig = glm::inverse(placement) * scene_.object_matrix(rig, "dummy_camera") * rest * turn;
+        camera_offset_ = glm::inverse(rest_rig) * cam_rig * camera_offset_;
+        cam_rig = rest_rig;
+    }
     scene_.set_object_transform(rig, view * glm::inverse(cam_rig));
     if (rig != object_) return;
     place_muzzle();

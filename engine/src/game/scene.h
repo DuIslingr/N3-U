@@ -63,8 +63,9 @@ public:
     void set_object_collision(size_t object, bool enabled) { collision_.set_owner_enabled(uint32_t(object), enabled); }
     // Debugging: hide every placement whose model name contains `substring`; returns how many.
     size_t hide_models(const std::string& substring);
-    // Play a named clip of the object's animation; false if it has none.
-    bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false);
+    // Play a named clip of the object's animation; false if it has none. With `fade_ms`, the
+    // nodes move from where they are into the new clip over that long.
+    bool play_clip(size_t object, const std::string& clip, bool loop, bool reverse = false, float fade_ms = 0);
     // The object's current clip has played through (never true for looping clips).
     bool clip_finished(size_t object) const;
     // Every node's rotation `ms` into a clip of the object's animation (its rest rotation
@@ -232,6 +233,9 @@ private:
         bool reverse = false;                          // play the clip backwards (door closing)
         std::string clip_name;                         // as play_clip was given it
         uint32_t clip_serial = 0;                      // bumped by each play_clip
+        std::vector<NodePose> local;                   // per node, as last posed
+        std::vector<NodePose> fade_from;               // per node: the pose being faded out of
+        float fade_ms = 0, fade_len = 0;
         std::vector<const std::vector<AnimTrack>*> tracks;   // per node, or null
         std::vector<glm::mat4> world;                  // per node
         std::vector<std::array<glm::mat4, kMaxJoints>> palettes;   // per skin

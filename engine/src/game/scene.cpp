@@ -221,6 +221,7 @@ size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, con
         anim->overrides.resize(m.cpu.materials.size());
         anim->library = lib;
         anim->world.assign(m.cpu.nodes.size(), glm::mat4(1));
+        anim->local.assign(m.cpu.nodes.size(), NodePose{glm::vec3(0), glm::quat(1, 0, 0, 0), glm::vec3(1)});
         anim->palettes.resize(m.cpu.skins.size());
         anim->tracks.assign(m.cpu.nodes.size(), nullptr);
         if (lib) {
@@ -622,6 +623,13 @@ void Scene::pose(AnimatedInstance& a) {
         const ModelNode& node = m.cpu.nodes[n];
         NodePose p{node.translation, node.rotation, node.scale};
         if (a.tracks[n]) sample_tracks(*a.tracks[n], t, p);
+        if (a.fade_ms > 0 && n < a.fade_from.size()) {   // crossfading out of the last clip
+            const NodePose& f = a.fade_from[n];
+            const float w = a.fade_ms / a.fade_len;
+            p.translation = glm::mix(p.translation, f.translation, w), p.scale = glm::mix(p.scale, f.scale, w);
+            p.rotation = glm::slerp(p.rotation, f.rotation, w);
+        }
+        if (n < a.local.size()) a.local[n] = p;
         if (n < a.additive.size()) p.rotation = p.rotation * a.additive[n];
         if (auto moved = a.node_translation.find(int(n)); moved != a.node_translation.end()) p.translation = moved->second;
         if (int(n) == a.root_lock) p.translation.x = a.root_xy.x, p.translation.y = a.root_xy.y;
@@ -689,6 +697,7 @@ void Scene::update(float dt, const glm::vec3& camera) {
     for (auto& a : animated_) {
         if (!a->library) continue;
         a->time += dt * a->speed;
+        a->fade_ms = std::max(a->fade_ms - dt * 1000.0f, 0.0f);
         pose(*a);
     }
     // Collision parts follow their nodes; what stands on one is carried by its animation (the
@@ -951,13 +960,15 @@ bool Scene::object_hidden(size_t object) const {
     return inst.draw_count == 0 || draws_[inst.first_draw].hidden;
 }
 
-bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool reverse) {
+bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool reverse, float fade_ms) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return false;
     AnimatedInstance* a = instances_[it->second].anim;
     if (!a || !a->library) return false;
     const AnimClip* c = a->library->clip(clip);
     if (!c) return false;
+    if (fade_ms > 0 && a->local.size() == a->model->cpu.nodes.size()) a->fade_from = a->local, a->fade_ms = a->fade_len = fade_ms;
+    else a->fade_ms = 0;
     a->clip = *c;
     a->clip_name = clip;
     ++a->clip_serial;
