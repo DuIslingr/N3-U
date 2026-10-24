@@ -1022,6 +1022,7 @@ private:
     unsigned shots_ = 0;
     float fire_cooldown_ = 0, reload_left_ = 0;
     bool reload_filled_ = false;
+    int low_shield_voice_ = -1;   // sfx_shield_low playing
     // The spread (degrees; CWeaponComponent +0x5c), whether aiming, where the player was
     // (walking or not), the crosshair's fade (0..1) and fire kick (0..1, +0x1fc), and how
     // far off what the crosshair is on is (-1: nothing within 200 m).

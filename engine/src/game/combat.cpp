@@ -2828,7 +2828,12 @@ void Combat::damage_player(float amount, const glm::vec3& from) {
     const bool critical = player_health < player_max_health * 0.3f;
     if (critical && !critical_ && player_health > 0) ++stats_.criticals;
     critical_ = critical;
+    // Below 30% the shield's alarm (sfx_shield_low), unless it still sounds.
+    if (critical && player_health > 0 && logic_.audio && !logic_.audio->playing(low_shield_voice_))
+        low_shield_voice_ = logic_.audio->play("sfx_shield_low");
     if (player_health <= 0) {
+        if (logic_.audio && low_shield_voice_ >= 0) logic_.audio->stop(low_shield_voice_);   // StopLowShieldSound
+        low_shield_voice_ = -1;
         player_health = 0;
         player_dead = true;
         dead_timer_ = 0;
@@ -3310,8 +3315,12 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     regen_delay_ -= dt;
     hud_damage_wait_ = std::max(hud_damage_wait_ - dt, 0.0f);
     if (regen_delay_ < 0 && player_health < player_max_health) blood_fade_ = true;   // RegenerateHealth
-    if (regen_delay_ <= 0 && player_health < player_max_health)
+    if (regen_delay_ <= 0 && player_health < player_max_health) {
         player_health = std::min(player_health + regen_rate_ * dt, player_max_health);
+        // CPlayerBaseComponent::RegenerateHealth: full again.
+        if (player_health >= player_max_health && logic_.audio && !logic_.audio->playing("sfx_mc_health_regen_end"))
+            logic_.audio->play("sfx_mc_health_regen_end");
+    }
 
     // Grenades: the throw animation starts, the grenade leaves the hand a moment later.
     grenade_cooldown_ = std::max(grenade_cooldown_ - dt, 0.0f);
@@ -3337,6 +3346,9 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         current_ = in.select;
         reload_left_ = 0;
         fire_cooldown_ = 0.4f;
+        // CWeaponManager::UpdateWeaponChange: the weapon manager's change sound
+        // (WeaponManager_Default [3]) as the old weapon goes down.
+        if (logic_.audio) logic_.audio->play("sfx_change_weapon");
     }
     fire_cooldown_ = std::max(fire_cooldown_ - dt, 0.0f);
     {   // CWeaponManager::UpdateWeaponFire, off the trigger: walking (not just after a shot)
@@ -3376,6 +3388,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             const int i = (current_ + k) % int(weapons_.size());
             if (owned_[size_t(i)] && (clip_[size_t(i)] > 0 || reserve_[size_t(i)] != 0)) {
                 current_ = i, fire_cooldown_ = 0.4f;
+                if (logic_.audio) logic_.audio->play("sfx_change_weapon");
                 break;
             }
         }
