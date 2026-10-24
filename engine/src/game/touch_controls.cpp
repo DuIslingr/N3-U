@@ -160,7 +160,15 @@ void TouchControls::draw(ParticleList& out) {
             hud_.draw_frame(out, *s, kPadRing, pad_, fs, white);
         }
     }
-    if (shown.sprint) hud_.draw_frame(out, *s, kSprint, pad_, fs, run_ ? glm::vec4(0.6f, 1, 1, 1) : glm::vec4(1, 1, 1, 0.75f));
+    if (shown.sprint) {
+        // CLevel::Render2DInterface: the rush icon filled from the bottom by what is left of
+        // the rush (GetRushPercent), tinted while held; the spent part faint.
+        const glm::vec4 b = Hud::frame_bounds(*s, kSprint);
+        const float top = pad_.y + b.y * fs.y, bottom = pad_.y + b.w * fs.y, fill = bottom - (bottom - top) * std::clamp(rush, 0.0f, 1.0f);
+        hud_.draw_frame(out, *s, kSprint, pad_, fs, glm::vec4(1, 1, 1, 0.3f), {-1e9f, -1e9f, 1e9f, fill});
+        hud_.draw_frame(out, *s, kSprint, pad_, fs, run_ ? glm::vec4(0x65 / 255.0f, 0xdf / 255.0f, 1, 1) : white,
+                        {-1e9f, fill, 1e9f, 1e9f});
+    }
     if (shown.fire) hud_.draw_frame(out, *s, held(Part::Fire) ? kFirePressed : kFire, cluster_, fs, white);
     if (shown.power) {
         const bool power = held(Part::Power) != nullptr;

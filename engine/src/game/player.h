@@ -25,6 +25,11 @@ public:
     float step_snap = 0.3f;         // when grounded, follow the floor down this far per step
     // PlayerComponent::ComputeStepTimer: ms between footsteps, [72] slow to [71] at full speed.
     float step_min_ms = 400, step_max_ms = 600;
+    // PlayerComponent::ComputeControlVelocity: a rush (sprint) lasts [21] seconds; spent, it
+    // comes back over [22] seconds, and one starts only with [23] seconds of it back.
+    float rush_limit = 2.5f, rush_recover = 3.0f, rush_restart = 1.0f;
+    float rush_used = 0;            // seconds of it spent (+0x324)
+    float rush_left() const { return rush_limit > 0 ? 1.0f - rush_used / rush_limit : 1.0f; }   // GetRushPercent
 
     glm::vec3 center{0};
     glm::vec3 push{0};              // an outside pull, m/s (SetAttractionDirection), added to the walk

@@ -378,6 +378,7 @@ void Game::draw_text(FrameParams& f, int w, int h) {
             if (!hs.visible) touch.shown = {false, false, qte == "fire", false, false, qte == "repel"};   // a QTE in a cinematic
             touch.layout(w, h);
             touch.power_ready = combat.power_ready();
+            touch.rush = player.rush_left();
             touch.power = combat.power();
             touch.draw(hud_sprites);
         } else {

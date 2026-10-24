@@ -558,7 +558,7 @@ void Game::run_window() {
             player_sounds(dt, !flying && !mech && !logic.seated());
             update_frost(dt);
             vm.aiming = aiming;
-            vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);
+            vm.running = player.rushing;   // (not once the rush is spent)
             const bool* k = SDL_GetKeyboardState(nullptr);
             vm.moving = player.on_ground && (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_S] || k[SDL_SCANCODE_A] || k[SDL_SCANCODE_D] ||
                                              touch_in.forward != 0 || touch_in.right != 0);

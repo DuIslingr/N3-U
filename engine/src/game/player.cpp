@@ -10,7 +10,7 @@ void Player::spawn(const glm::vec3& feet, float yaw_deg) {
     yaw = yaw_deg;
     pitch = 0;
     ++spawns;
-    vertical_speed = 0, landing_speed = 0, fall_speed = 0, jump_left = 0;
+    vertical_speed = 0, landing_speed = 0, fall_speed = 0, jump_left = 0, rush_used = 0, rushing = false;
     on_ground = false;
     stuck_time = escape_time = 0;
 }
@@ -27,10 +27,15 @@ void Player::update(const CollisionWorld& world, const PlayerInput& in, float dt
     const glm::vec3 right(std::cos(y), std::sin(y), 0);
     glm::vec3 wish = fwd * in.forward + right * in.right;
     if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
-    const glm::vec3 step = wish * (in.run ? run_speed : walk_speed) * dt + glm::vec3(push.x, push.y, 0) * dt;
+    // A rush goes on while it lasts; a new one needs enough of it back.
+    const bool moving = glm::length(glm::vec2(in.forward, in.right)) > 0.1f;
+    const bool can_rush = rush_used < (rushing ? rush_limit : rush_limit - rush_restart);
+    rushing = in.run && moving && can_rush;
+    if (rushing) rush_used = std::min(rush_used + dt, rush_limit);
+    else rush_used = std::max(rush_used - dt * rush_limit / std::max(rush_recover, 1e-3f), 0.0f);
+    const glm::vec3 step = wish * (rushing ? run_speed : walk_speed) * dt + glm::vec3(push.x, push.y, 0) * dt;
 
     thrusting = jetpack && in.jump;
-    rushing = in.run && glm::length(glm::vec2(in.forward, in.right)) > 0.1f;
     if (jetpack) {
         // Thrust while the jump is held (it beats gravity); otherwise a slow descent.
         if (in.jump) vertical_speed = std::min(vertical_speed + (gravity + 14.0f) * dt, 7.0f), on_ground = false;

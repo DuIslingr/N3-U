@@ -50,6 +50,7 @@ public:
     } shown;
     glm::vec2 pad_anchor() const { return pad_; }
     bool power_ready = true;   // else the power's icon shows red (recharging)
+    float rush = 1;            // what is left of the rush, 0..1
     bool mirror = false;       // left-handed layout (set before layout(); w_ = 0 forces it again)
     void relayout() { w_ = h_ = 0; }
     std::string power = "Repel";   // the selected power, for its icon
