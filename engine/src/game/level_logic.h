@@ -262,6 +262,12 @@ public:
     void start_script(const std::string& function, int owner);
     void send_event_later(const std::string& event, float seconds, int id = -1);
     void fade_fog(int what, glm::vec4 target, float seconds);   // 0 colour, 1 near, 2 far, 3 density
+    // Fog_AnimationStart(density %, near %, far %, min ms, max ms) / Fog_AnimationStop
+    // (CLevelFog::AnimationStart, Update): the fog breathes, each swing taking a random time
+    // between min and max to go out and back, by up to those shares of its values.
+    void fog_animation(bool on, float density = 0, float near = 0, float far = 0, float min_ms = 0, float max_ms = 0);
+    // The swing now, added to the fog drawn: near, far, density.
+    glm::vec3 fog_swing() const { return fog_anim_.on ? fog_anim_.offset : glm::vec3(0); }
 
     Scene& scene;
     Player& player;
@@ -445,6 +451,12 @@ private:
     void update_triggers();
     void update_doors(float dt);
     void update_fog(float dt);
+    struct FogAnimation {
+        bool on = false, new_swing = true;
+        float share_density = 0, share_near = 0, share_far = 0, min_ms = 0, max_ms = 0;
+        float time = 0, direction = 1, length = 1, sign = 1;
+        glm::vec3 amplitude{0}, offset{0};   // near, far, density
+    } fog_anim_;
 
     struct DelayedEvent {
         std::string event;

@@ -270,9 +270,10 @@ FrameParams Game::frame(const Camera& cam_in, int w, int h) {
     if (opt.scripts) combat.build_beams(f.camera, particle_list);
     f.particles = &particle_list;
     f.fog_color = scene.fog_color;
-    f.fog_start = scene.fog_start;
-    f.fog_end = scene.fog_end;
-    f.fog_density = scene.fog_density;
+    const glm::vec3 swing = opt.scripts ? logic.fog_swing() : glm::vec3(0);   // Fog_AnimationStart
+    f.fog_start = scene.fog_start + swing.x;
+    f.fog_end = scene.fog_end + swing.y;
+    f.fog_density = scene.fog_density + swing.z;
     f.time = clock;
     f.lights = scene.lights();
     f.post = post_params;

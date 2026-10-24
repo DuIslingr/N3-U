@@ -311,6 +311,7 @@ void LevelLogic::start(StartMode mode) {
     level_ended = false;
     pending_section = 0;
     fog_locked = false;
+    fog_anim_ = FogAnimation{};
     fog_zone_ = -2;
     level_fog_color_ = scene.fog_color;
     level_fog_start_ = scene.fog_start;
@@ -703,6 +704,17 @@ void LevelLogic::update_zone_fog() {
     fade_fog(3, glm::vec4(density), seconds);
 }
 
+void LevelLogic::fog_animation(bool on, float density, float near, float far, float min_ms, float max_ms) {
+    FogAnimation& a = fog_anim_;
+    a.on = on;
+    if (!on) return;
+    a.new_swing = true;
+    a.share_density = std::clamp(density * 0.01f, 0.0f, 1.0f);
+    a.share_near = std::clamp(near * 0.01f, 0.0f, 1.0f);
+    a.share_far = std::clamp(far * 0.01f, 0.0f, 1.0f);
+    a.min_ms = min_ms, a.max_ms = max_ms;
+}
+
 void LevelLogic::update_fog(float dt) {
     for (int i = 0; i < 4; ++i) {
         FogFade& f = fog_[i];
@@ -716,6 +728,25 @@ void LevelLogic::update_fog(float dt) {
         else scene.fog_density = v.x;
         if (t >= 1) f.active = false;
     }
+    FogAnimation& a = fog_anim_;
+    if (!a.on) return;
+    auto percent = [] { return float(std::rand() % 100); };
+    if (a.new_swing) {   // a new swing: its length, how far each value goes, and which way
+        a.length = a.min_ms + (a.max_ms - a.min_ms) * 0.01f * percent();
+        a.amplitude.z = a.share_density * scene.fog_density * 0.01f * percent();
+        a.amplitude.x = a.share_near * scene.fog_start * 0.01f * percent();
+        a.amplitude.y = a.share_far * scene.fog_end * 0.01f * percent();
+        a.direction = 1, a.new_swing = false;
+        a.sign = std::rand() % 100 < 50 ? -1.0f : 1.0f;
+    }
+    const float k = a.length != 0 ? a.time / a.length : 0.0f;
+    a.time += dt * 1000.0f * a.direction;
+    if (a.direction <= 0) {
+        if (a.time < 0) a.time = 0, a.new_swing = true;
+    } else if (a.time > a.length) {
+        a.time = a.length, a.direction = -1;
+    }
+    a.offset = a.amplitude * k * a.sign;
 }
 
 // CTriggerComponent::Update / TestTargetForAction / DoAction for the player: the

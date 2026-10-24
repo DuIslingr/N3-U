@@ -978,6 +978,16 @@ int api_set_dsp_preset(lua_State* L) {
     if (c.audio) c.audio->set_reverb_preset(str_arg(L, 1), lua_isnumber(L, 2) ? float(lua_tonumber(L, 2)) : 0.0f);
     return 0;
 }
+// Fog_AnimationStart(density %, near %, far %, min ms, max ms) (integers), Fog_AnimationStop().
+int api_fog_animation_start(lua_State* L) {
+    ctx(L).fog_animation(true, float(lua_tointeger(L, 1)), float(lua_tointeger(L, 2)), float(lua_tointeger(L, 3)),
+                         float(lua_tointeger(L, 4)), float(lua_tointeger(L, 5)));
+    return 0;
+}
+int api_fog_animation_stop(lua_State* L) {
+    ctx(L).fog_animation(false);
+    return 0;
+}
 int api_set_color_grading(lua_State* L) {   // SetColorGrading(lut, ms)
     ctx(L).set_color_grading(str_arg(L, 1), float(lua_tonumber(L, 2)));
     return 0;
@@ -1336,8 +1346,8 @@ const Entry kImplemented[] = {
     {"EnterInvisibility", api_invisibility<false>},
     {"ExitInvisibility", api_invisibility<true>},
     {"NpcCmd_Crouch", api_npc_crouch},
-    {"Fog_AnimationStart", api_ignore},
-    {"Fog_AnimationStop", api_ignore},
+    {"Fog_AnimationStart", api_fog_animation_start},
+    {"Fog_AnimationStop", api_fog_animation_stop},
     {"Vehicle_MoveOnPath", api_vehicle_move_on_path},
     {"Vehicle_Stop", api_vehicle_stop},
     {"Vehicle_SetMaxSpeed", api_vehicle_set<0>},
