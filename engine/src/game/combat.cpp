@@ -203,6 +203,8 @@ Combat::GrenadeDef Combat::read_grenade(const Gol& gol, int id) {
         if (!str(*g, 10).empty()) d.effect = str(*g, 10);
         d.bounce_sound = str(*g, 15);
         d.explode_sounds = sound_list((*g)[18]);
+        for (const Value& e : (*g)[12].list)
+            if (e.size() > 0 && e[0].i == 22) d.burst_on_actor = true;
     }
     if (const Value* fx = resolved_template(it->second, gol, 0x92); fx && fx->size() > 0 && (*fx)[0].size() > 0)
         d.trail = str((*fx)[0][0], 0);
@@ -320,10 +322,15 @@ void Combat::update_grenades(float dt) {
         } else {
             g.pos = to;
         }
+        bool burst = false;
+        if (g.def->burst_on_actor)
+            for (const Target& t : targets_)
+                if (t.actor && alive(t) && glm::length(glm::vec2(g.pos - t.pos)) < t.radius && g.pos.z > t.pos.z && g.pos.z < t.pos.z + t.height)
+                    burst = true;
         g.spin += glm::length(g.vel) * dt * 4.0f;
         scene_.set_object_transform(g.object, glm::rotate(glm::translate(glm::mat4(1), g.pos), g.spin, glm::vec3(1, 0, 0)));
         if (g.trail >= 0) scene_.particles().move(g.trail, glm::translate(glm::mat4(1), g.pos));
-        if (!g.def->sticky && (g.fuse -= dt) <= 0) {
+        if (!g.def->sticky && ((g.fuse -= dt) <= 0 || burst)) {
             g.live = false;
             scene_.set_object_visible(g.object, false);
             if (g.trail >= 0) scene_.particles().stop(g.trail), g.trail = -1;
@@ -682,7 +689,9 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                 w.shot_sounds = sound_list(mode[15]);
                 w.reload_sound = mode[16].s, w.loop_sound = mode[17].s, w.end_sound = mode[18].s;
             }
-            if (auto p = gol_.find(mode[1].i); p != gol_.end()) {
+            if (auto p = gol_.find(mode[1].i); p != gol_.end() && resolved_template(p->second, gol_, 0x26)) {
+                w.grenade = mode[1].i;   // fired like a throw (CWeaponComponent::Shoot: StartRealThrow)
+            } else if (p != gol_.end()) {
                 if (const Value* pr = resolved_template(p->second, gol_, kCompProjectile); pr && pr->size() > 4) {
                     w.damage_far = num(*pr, 1, 1), w.damage_near = num(*pr, 2, 2);
                     w.far_dist = num(*pr, 3, 30), w.near_dist = num(*pr, 4, 30);
@@ -1579,6 +1588,9 @@ std::vector<std::string> Combat::first_state_clips(int type) const {
         if (const Value& st = (*v)[1][0]; st.size() > 11)
             for (const Value& clip : st[11].list)
                 if (clip.size() > 0 && clip[0].type == Value::String) out.push_back(clip[0].s);
+    if (const Value* a = resolved_template(p->second, gol_, 0x0c); out.empty() && a && a->size() > 1 && (*a)[1].type == Value::String &&
+        !(*a)[1].s.empty())
+        out.push_back((*a)[1].s);   // no states: its animation's clip
     return out;
 }
 
@@ -1908,7 +1920,11 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
     const glm::vec3 end = hit >= 0 ? point : eye + dir * (wall ? wall_t * range : range);
     const glm::vec3 from = has_muzzle_ ? muzzle_ : eye + aim_dir * 0.6f + right * 0.18f - up * 0.16f;
-    if (w.flies) {   // a projectile from the muzzle at what the crosshair is on; it hits as it gets there
+    if (w.grenade >= 0) {   // a grenade out of the muzzle at what the crosshair is on
+        auto [it, fresh] = fired_grenades_.try_emplace(w.grenade);
+        if (fresh) it->second = read_grenade(gol_, w.grenade);
+        launch_grenade(it->second, from, glm::normalize(end - from) * it->second.speed, false);
+    } else if (w.flies) {   // a projectile from the muzzle at what the crosshair is on; it hits as it gets there
         Bolt b{from, glm::normalize(end - from) * w.bullet_speed, w.damage_near, w.bullet_life, glm::vec4(1, 0.6f, 0.3f, 1), -1};
         b.splash = w.splash_damage, b.radius = w.splash_radius, b.weapon = current_;
         launch_bolt(b, w.looks);

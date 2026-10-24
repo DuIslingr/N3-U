@@ -363,12 +363,17 @@ void ViewModel::flash(bool aiming) {
         m.object = scene_.spawn_object(type, -1100 - int(muzzles_.size()), glm::vec3(0), 0);
         if (m.object == size_t(-1)) return;
         scene_.set_object_viewmodel(m.object);
-        // Its states set's first state (Idle): one clip per shot, at random.
-        if (const GolType* t = gol_.count(type) ? &gol_.at(type) : nullptr)
+        // Its states set's first state (Idle): one clip per shot, at random. Without one, its
+        // animation's clip from the start (CAnimationComponent::SetCurrentAnimationTime 0).
+        if (const GolType* t = gol_.count(type) ? &gol_.at(type) : nullptr) {
             if (const Value* v = resolved_template(*t, gol_, kCompStatesSet); v && v->size() > 1 && (*v)[1].size() > 0)
                 if (const Value& st = (*v)[1][0]; st.size() > 11)
                     for (const Value& clip : st[11].list)
                         if (clip.size() > 0 && clip[0].type == Value::String) m.clips.push_back(clip[0].s);
+            if (const Value* a = resolved_template(*t, gol_, 0x0c); m.clips.empty() && a && a->size() > 1 && (*a)[1].type == Value::String &&
+                !(*a)[1].s.empty())
+                m.clips.push_back((*a)[1].s);
+        }
     }
     if (m.object == size_t(-1) || m.clips.empty()) return;
     if (flashing_ >= 0 && flashing_ != type) scene_.set_object_visible(muzzles_[flashing_].object, false);

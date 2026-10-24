@@ -16,6 +16,7 @@
 #include <array>
 #include <deque>
 #include <functional>
+#include <map>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -70,6 +71,7 @@ struct WeaponDef {
     // an instant hit) when slow with looks of its own, or when it explodes: the rocket
     // launcher, the plasma guns.
     float bullet_speed = 0;
+    int grenade = -1;                  // the projectile is a grenade (CGrenadeComponent): its type
     ProjectileLooks looks;
     float splash_damage = 0, splash_radius = 0, bullet_life = 3;
     bool flies = false;
@@ -588,6 +590,7 @@ private:
         int type = -1;
         float fuse = 2.3f, damage = 40, radius = 10, speed = 25;
         bool sticky = false;           // a mine: stuck where it lands, set off by the detonation
+        bool burst_on_actor = false;   // [12] explodes on collision with 22 (characters): the launcher's
         std::string effect = "explosion", trail, bounce_sound;
         std::vector<std::string> explode_sounds;
     };
@@ -608,6 +611,7 @@ private:
     // An NPC's throw (CNPCComponent::ThrowGrenadeFromCover): lobbed to land at the target.
     void npc_throw_grenade(Target& t, const glm::vec3& target);
     GrenadeDef npc_grenade_def_;
+    std::map<int, GrenadeDef> fired_grenades_;   // weapons firing grenades (the grenade launcher), per type
     void update_grenades(float dt);
     void explode(const Grenade& g);
     GrenadeDef grenade_def_, mine_def_;
