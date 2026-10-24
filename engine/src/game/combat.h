@@ -463,6 +463,7 @@ private:
         float bolt_splash = 0, bolt_radius = 0;   // its explosion (rockets)
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
+        float melee_at = 0.45f;   // seconds into the blow it lands
         bool invulnerable = false;
         bool spawned = false;
         // Who it fights: -1 the player, >= 0 a target index, kNoEnemy none. Scripts can
@@ -580,12 +581,16 @@ private:
         // firing loop [17] and its end [18]): what it sees, its gun turns to and fires at,
         // a shot per loop of the gun's Attack_AI clip; destroyed, it plays Death.
         bool car = false, vehicle = false;   // vehicle: any CVehicleCar (0x96)
-        // A big spider's jump attack (CBigSpiderAiComponent, 0x55: [6] farthest, [7] nearest
-        // it jumps from): JumpStart, a ballistic leap at the target (30 m/s, gravity 30),
-        // a claw in the air as it reaches it (JumpAirAttackLeft/Right, event 5), JumpLand;
-        // then 20-25 s before the next.
-        bool spider = false;
+        // A jump attack: a big spider's (CBigSpiderAiComponent, 0x55: [6] farthest, [7] nearest
+        // it jumps from, 30 m/s under gravity 30, 20-25 s between) or a fiend's
+        // (CCybertoothAiComponent, 0x57: [7] farthest, [8] nearest, [10] speed, [11] gravity,
+        // [19]-[20] s between): its start state, a ballistic leap at the target (JumpAir), a
+        // claw in the air as it reaches it (JumpAirAttackLeft/Right, its event 5), its landing.
+        bool spider = false, pounces = false;
         float jump_min = 10, jump_max = 20, jump_cool = 0, jump_timer = 0, jump_event = -1;
+        float jump_speed = 30, jump_gravity = 30, jump_cool_min = 20, jump_cool_max = 25, jump_hit_left = 0.244f, jump_hit_right = 0.212f;
+        int jump_type_left = 11, jump_type_right = 12;   // the claws' damage types
+        std::string jump_start = "JumpStart", jump_land = "JumpLand";
         int jump_phase = 0;   // 0 none, 1 start, 2 in the air, 3 landing
         bool jump_right = false;
         glm::vec3 jump_vel{0}, jump_goal{0};
@@ -1049,6 +1054,7 @@ private:
     // the type's impact sound (PlayerComponent [melee sounds]).
     void melee_hit_player(float amount, const glm::vec3& from, int type);
     std::unordered_map<int, std::vector<std::string>> melee_sounds_;
+    void start_melee(Target& t);
     bool update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist);
     int mech_ = -1;                // the mech piloted (its health is the player's)
     float own_health_ = 0, own_max_health_ = 0;

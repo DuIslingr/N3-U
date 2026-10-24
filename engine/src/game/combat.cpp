@@ -1463,9 +1463,16 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
     t.aggro_sounds.clear();
-    t.spider = false, t.jump_phase = 0;
+    t.spider = t.pounces = false, t.jump_phase = 0;
     if (const Value* sp = component(o, 0x55); sp && sp->size() > 7)   // CBigSpiderAiComponent::CheckJumpAttack
-        t.spider = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
+        t.spider = t.pounces = true, t.jump_max = num(*sp, 6, 20), t.jump_min = num(*sp, 7, 10), t.jump_cool = 0;
+    if (const Value* cy = component(o, 0x57); cy && cy->size() > 20) {   // CCybertoothAiComponent::TryJumpAttack
+        t.pounces = true, t.jump_max = num(*cy, 7, 15), t.jump_min = num(*cy, 8, 7), t.jump_cool = 0;
+        t.jump_speed = num(*cy, 10, 15), t.jump_gravity = num(*cy, 11, 15);
+        t.jump_cool_min = num(*cy, 19, 3), t.jump_cool_max = num(*cy, 20, 5);
+        t.jump_start = "JumpAttackStart", t.jump_land = "JumpAttackLand";
+        t.jump_hit_left = 0.292f, t.jump_hit_right = 0.270f, t.jump_type_left = t.jump_type_right = 5;
+    }
     if (const Value* cfg = component(o, 0x4c); cfg && cfg->size() > 0) t.weapon_kind = (*cfg)[0].i;   // CNPCComponent::LoadConfig
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 55)
         t.aggro_sounds = sound_list((*npc)[55]);
@@ -1649,7 +1656,7 @@ void Combat::melee_hit_player(float amount, const glm::vec3& from, int type) {
 
 // CBigSpiderAiComponent::CheckJumpAttack / SetAction(6) / JumpInit / UpdateAction(6).
 bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool on_player, bool sees, float dist) {
-    constexpr float kSpeed = 30, kGravity = 30;
+    const float kSpeed = t.jump_speed, kGravity = t.jump_gravity;
     if (t.jump_phase == 0) {
         t.jump_cool -= dt;
         if (t.jump_cool > 0 || !t.aware || t.enemy == kNoEnemy || !sees || t.state == Target::State::Hurt ||
@@ -1658,9 +1665,9 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
         const float y = glm::radians(t.yaw);
         const glm::vec2 to = glm::normalize(glm::vec2(feet - t.pos) + glm::vec2(1e-6f, 0));
         if (glm::dot(to, glm::vec2(-std::sin(y), std::cos(y))) <= 0.85f) return false;   // facing it
-        t.jump_cool = std::uniform_real_distribution<float>(20.0f, 25.0f)(rng_);
+        t.jump_cool = std::uniform_real_distribution<float>(t.jump_cool_min, std::max(t.jump_cool_max, t.jump_cool_min))(rng_);
         t.jump_phase = 1, t.jump_timer = 0, t.jump_event = -1;
-        play_state(t, "JumpStart", false);
+        play_state(t, t.jump_start, false);
         if (logic_.trace) log(std::to_string(t.id) + " jumps at its target from " + std::to_string(int(dist)) + " m");
         return true;
     }
@@ -1686,7 +1693,7 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
         if (t.jump_event < 0 && t.enemy != kNoEnemy) {
             const float y = glm::radians(t.yaw);
             t.jump_right = glm::dot(glm::vec2(feet - t.pos), glm::vec2(std::cos(y), std::sin(y))) > 0;
-            const float hit_at = t.jump_right ? 0.212f : 0.244f;
+            const float hit_at = t.jump_right ? t.jump_hit_right : t.jump_hit_left;
             if (glm::distance(feet, t.pos) / speed < hit_at) {
                 play_state(t, t.jump_right ? "JumpAirAttackRight" : "JumpAirAttackLeft", false);
                 t.jump_event = t.jump_timer + hit_at;
@@ -1695,7 +1702,7 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
         if (t.jump_event >= 0 && t.jump_timer >= t.jump_event) {
             t.jump_event = 1e9f;
             if (on_player && glm::distance(feet, t.pos) < t.melee_range + 1.0f && std::abs(feet.z - t.pos.z) < 2.0f) {
-                melee_hit_player(t.melee_damage, t.pos, t.jump_right ? 12 : 11);
+                melee_hit_player(t.melee_damage, t.pos, t.jump_right ? t.jump_type_right : t.jump_type_left);
             }
         }
         // Down on the ground (or too long in the air): landing.
@@ -1708,7 +1715,7 @@ bool Combat::update_spider_jump(Target& t, float dt, const glm::vec3& feet, bool
             if (tri >= 0) t.tri = tri, t.pos = on;
             else if (ground) t.pos.z = floor_z;
             t.jump_phase = 3, t.jump_timer = 0;
-            if (t.jump_event < 0) play_state(t, "JumpLand", false);
+            if (t.jump_event < 0) play_state(t, t.jump_land, false);
         }
         scene_.set_object_pose(t.object, t.pos, t.yaw);
         return true;
@@ -2208,7 +2215,7 @@ void Combat::update_actor(Target& t, float dt) {
         update_gunner(t, dt, chest, sees);
         return;
     }
-    if (t.spider && update_spider_jump(t, dt, target, on_player, sees, dist)) return;
+    if (t.pounces && update_spider_jump(t, dt, target, on_player, sees, dist)) return;
     if (t.mobile && !t.hold && !nav_.empty() && (t.leaping || t.tri < 0) && (t.aware || t.spawned)) {
         if (!t.leaping) {
             glm::vec3 to;
@@ -2283,7 +2290,7 @@ void Combat::update_actor(Target& t, float dt) {
         break;
     case S::Melee:
         face(t, target, dt);
-        if (!t.melee_hit && t.timer > 0.45f) {
+        if (!t.melee_hit && t.timer > t.melee_at) {
             t.melee_hit = true;
             if (dist < t.melee_range + 0.8f && std::abs(target.z - t.pos.z) < 2.5f) {
                 if (on_player) melee_hit_player(t.melee_damage, t.pos, t.spider ? 11 : 5);   // a spider: its left claw
@@ -2302,8 +2309,7 @@ void Combat::update_actor(Target& t, float dt) {
         // Lost the line of fire, or too far: close in again.
         if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
         if (dist < t.melee_range && !t.clip_melee.empty() && t.fire_timer > 0.3f) {
-            t.state = S::Melee, t.timer = 0, t.melee_hit = false;
-            play(t, t.clip_melee, false);
+            start_melee(t);
         }
         break;
     case S::Idle:
@@ -2312,8 +2318,7 @@ void Combat::update_actor(Target& t, float dt) {
         t.state = S::Chase;
         const bool in_melee = dist < t.melee_range;
         if (in_melee && !t.ranged) {
-            t.state = S::Melee, t.timer = 0, t.melee_hit = false;
-            play(t, t.clip_melee, false);
+            start_melee(t);
             break;
         }
         if (t.ranged && sees && dist < t.fire_range) {
@@ -2379,6 +2384,35 @@ const std::unordered_map<std::string, Combat::StateDef>& Combat::states_of(int t
     };
     gather(type);
     return out;
+}
+
+// A blow: a creature without a gun uses its states set's attack (AttackLeft/AttackRight, or
+// Attack), the hit at the clip's damage event (5, 14 or 15); otherwise its melee clip, the hit
+// 0.45 s in.
+void Combat::start_melee(Target& t) {
+    t.state = Target::State::Melee, t.timer = 0, t.melee_hit = false, t.melee_at = 0.45f;
+    if (!t.ranged) {
+        const auto& st = states_of(scene_.level().objects[t.object].type);
+        std::vector<const StateDef*> pick;
+        for (const char* name : {"AttackLeft", "AttackRight"})
+            if (auto it = st.find(name); it != st.end() && !it->second.clips.empty()) pick.push_back(&it->second);
+        if (pick.empty())
+            if (auto it = st.find("Attack"); it != st.end() && !it->second.clips.empty()) pick.push_back(&it->second);
+        if (!pick.empty()) {
+            const StateDef& d = *pick[size_t(rng_()) % pick.size()];
+            const auto& c = d.clips[size_t(rng_()) % d.clips.size()];
+            for (const auto& [ms, id] : c.second)
+                if (id == 5 || id == 14 || id == 15) {
+                    t.melee_at = ms / 1000.0f;
+                    break;
+                }
+            if (scene_.play_clip(t.object, c.first, false)) {
+                t.playing = c.first;
+                return;
+            }
+        }
+    }
+    play(t, t.clip_melee, false);
 }
 
 bool Combat::play_attack_state(Target& t, const std::string& state) {
