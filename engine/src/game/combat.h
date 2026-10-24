@@ -584,7 +584,7 @@ private:
         int trail_type = -1;           // its streak: object and where it started
         size_t trail = size_t(-1);
         glm::vec3 from{0};
-        std::vector<int> fx;           // its effects' handles
+        std::vector<int> fx{};         // its effects' handles
         int body_type = -1;            // its model's object
         size_t body = size_t(-1);
     };
