@@ -211,8 +211,9 @@ void ParticleSystem::build(const glm::vec3& eye, const std::function<const GpuTe
                     uv += glm::vec4(off, off);
                 }
                 const uint32_t rgba = pack_rgba(c);
-                const ParticleVertex v[4] = {{p.pos - hx + hy, {uv.x, uv.y}, rgba}, {p.pos + hx + hy, {uv.z, uv.y}, rgba},
-                                             {p.pos + hx - hy, {uv.z, uv.w}, rgba}, {p.pos - hx - hy, {uv.x, uv.w}, rgba}};
+                // The rectangle's u0 on the screen's right, its v1 at the top (spark's corners).
+                const ParticleVertex v[4] = {{p.pos - hx + hy, {uv.x, uv.w}, rgba}, {p.pos + hx + hy, {uv.z, uv.w}, rgba},
+                                             {p.pos + hx - hy, {uv.z, uv.y}, rgba}, {p.pos - hx - hy, {uv.x, uv.y}, rgba}};
                 out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
                 batch.count += 6;
             }
