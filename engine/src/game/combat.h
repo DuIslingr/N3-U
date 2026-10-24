@@ -497,6 +497,7 @@ private:
         // "hurt" false: no hurt reactions (CNPCComponent flag 5); "exit_area": leaving, gone
         // once out of the player's sight (StartAutoDisable).
         bool no_hurt = false, exiting = false;
+        bool no_weapons = false;   // "use_ranged_weapons" false (flag 14, CanUseWeapons): melee only
         float exit_time = 0;
         float paralyzed = 0;   // seconds left frozen by the Paralyze power
         float paralyze_time = 5;   // CHealthComponent::GetParalyzeDuration (health [3], ms)

@@ -1847,6 +1847,12 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         const bool cloak = order == "cloack";
         scene_.set_object_visible(t->object, !cloak);
         t->invulnerable = cloak;
+    } else if (order == "invisible_behavior") {   // SetFlag(9): UpdateInvisibility's cloaking when hurt
+        t->auto_cloak = flag;
+    } else if (order == "use_ranged_weapons") {   // SetFlag(14)
+        t->no_weapons = !flag;
+    } else if (order == "reset_attack_timers") {
+        t->fire_timer = 0, t->jump_cool = 0;
     } else if (order == "hurt") {   // CNPCComponent::OnEvent: SetFlag(5, !arg)
         t->no_hurt = !flag;
     } else if (order == "show_weapons") {   // ShowWeapons: what it holds (not its linked objects)
@@ -2443,6 +2449,10 @@ void Combat::update_actor(Target& t, float dt) {
         if (scene_.clip_finished(t.object) || t.timer > 1.4f) t.state = S::Chase, t.timer = 0;
         break;
     case S::Attack:
+        if (t.no_weapons) {
+            t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
+            break;
+        }
         face(t, target, dt);
         if (t.reload_left <= 0 && t.attack_state.empty()) {   // between attacks by states: their attack idle
             const std::vector<std::string> idle = t.mech_ai                ? logic_.state_clips(scene_.level().objects[t.object].type, "AI_Idle")
@@ -2462,11 +2472,11 @@ void Combat::update_actor(Target& t, float dt) {
     default: {
         t.state = S::Chase;
         const bool in_melee = dist < t.melee_range;
-        if (in_melee && !t.ranged) {
+        if (in_melee && (!t.ranged || t.no_weapons)) {
             start_melee(t);
             break;
         }
-        if (t.ranged && sees && dist < t.fire_range) {
+        if (t.ranged && !t.no_weapons && sees && dist < t.fire_range) {
             t.state = S::Attack, t.timer = 0;
             break;
         }
