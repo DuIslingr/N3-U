@@ -347,6 +347,11 @@ private:
         // parameter runs from start to end (per ms x 0.001), a hit restarting it once it
         // passed `again`; the hit's point in a parameter. hurt_time < 0: not on.
         std::string hurt_technique, hurt_param, hurt_impact_param;
+        // Its death look (CComponentHealth [13] model, [14] material, [20] sound): after the
+        // death clip the body dissolves through it over 1.5 s and goes
+        // (CHealthComponent::ActivateDeathEffect). dissolve < 0: not begun.
+        std::string death_model, death_material, vanish_sound;
+        float dissolve = -1;
         float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
         // rounds left, a reload under way (its clip's seconds left) and its sounds ([23]).

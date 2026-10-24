@@ -886,6 +886,11 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             }
         }
     }
+    if (const Value* h = component(o, kCompHealth); h && h->size() > 20 && (*h)[13].type == Value::String) {
+        t.death_model = (*h)[13].s, t.death_material = (*h)[14].s;
+        if ((*h)[20].type == Value::String) t.vanish_sound = (*h)[20].s;
+    }
+    t.dissolve = -1;
     // CComponentEffectsLocal: [1] technique, [3] time parameter, [4] start, [5] end, [6]
     // restart from, [7] the impact point wanted, [8] its parameter.
     if (const Value* hl = component(o, 0x93); hl && hl->size() > 8 && (*hl)[1].type == Value::String && !(*hl)[1].s.empty()) {
@@ -1358,10 +1363,32 @@ void Combat::update_actor(Target& t, float dt) {
     t.timer += dt;
     t.hurt_cooldown = std::max(t.hurt_cooldown - dt, 0.0f);
     if (t.state == S::Dying) {
-        if (scene_.clip_finished(t.object)) t.state = S::Dead;
+        if (scene_.clip_finished(t.object)) {
+            t.state = S::Dead;
+            // The death clip done: dissolving through the death material, with its sound.
+            if (!t.death_model.empty() && scene_.set_object_material(t.object, t.death_model, t.death_material)) {
+                t.dissolve = 0;
+                scene_.set_object_param(t.object, "BlendFactor", glm::vec4(-0.5f), 1);
+                if (!t.vanish_sound.empty()) {
+                    const glm::vec3 at = t.pos + glm::vec3(0, 0, 0.5f);
+                    sound({t.vanish_sound}, &at);
+                }
+            }
+        }
         return;
     }
-    if (t.state == S::Dead) return;
+    if (t.state == S::Dead) {
+        if (t.dissolve >= 0) {   // BlendFactor -0.5 (all there) to 0.5 (all gone) over 1.5 s
+            t.dissolve += dt;
+            scene_.set_object_param(t.object, "BlendFactor", glm::vec4(std::min(t.dissolve / 1.5f, 1.0f) - 0.5f), 1);
+            if (t.dissolve >= 1.5f) {
+                t.dissolve = -1;
+                if (LevelLogic::Object* o = logic_.object(t.id); o && o->visible) logic_.show(*o, false);
+                scene_.set_object_material(t.object, "", "");   // its own materials again, should it come back
+            }
+        }
+        return;
+    }
     if (!t.goals.empty()) {
         run_goal(t, dt);
         return;
