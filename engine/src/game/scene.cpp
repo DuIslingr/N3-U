@@ -1111,6 +1111,13 @@ bool Scene::set_object_transform(size_t object, const glm::mat4& placement) {
     return true;
 }
 
+void Scene::set_object_ground_shadow(size_t object) {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return;
+    const Instance& inst = instances_[it->second];
+    for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].ground_shadow = true;
+}
+
 void Scene::set_object_viewmodel(size_t object) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return;
@@ -1280,6 +1287,7 @@ void Scene::set_node_worlds(size_t object, std::unordered_map<int, glm::mat4> wo
     a.world_override = std::move(worlds);
     pose(a);
 }
+
 
 int Scene::node_index(size_t object, const std::string& node) const {
     const AnimatedInstance* a = object_anim(object);
@@ -1479,6 +1487,22 @@ bool Scene::set_object_material(size_t object, const std::string& model_file, co
         else if (const GpuMaterial* gm = materials_->get(*source, draw_info_[i].skinned)) draws_[i].material = gm;
     }
     return true;
+}
+
+bool Scene::object_param_default(size_t object, const std::string& param, glm::vec4& out) const {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return false;
+    const Instance& inst = instances_[it->second];
+    for (size_t i = inst.first_draw; i < inst.first_draw + inst.draw_count && i < draw_info_.size(); ++i) {
+        if (!draw_info_[i].source) continue;
+        for (const MaterialParam& p : draw_info_[i].source->params) {
+            if (p.name != param || p.value.empty()) continue;
+            out = glm::vec4(0);
+            for (size_t k = 0; k < 4 && k < p.value.size(); ++k) out[int(k)] = p.value[k];
+            return true;
+        }
+    }
+    return false;
 }
 
 void Scene::set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count) {

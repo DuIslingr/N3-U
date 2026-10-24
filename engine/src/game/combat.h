@@ -390,6 +390,16 @@ private:
         int ragdoll_kind = 0;
         float ragdoll_hit = 90, ragdoll_hit_max = 100, ragdoll_blast = 32;
         std::shared_ptr<Ragdoll> ragdoll;   // falling
+        // CCharacterShadowPlaneComponent (0xa3): a shadow plane model ([0]) under it, [1]-[3]
+        // from its feet turned with it; its material told where the bones of [9] are
+        // (SPosition0...) and faded (Factor) by whether the player sees it ([4]).
+        size_t shadow = size_t(-1);
+        glm::vec3 shadow_offset{0};
+        std::vector<std::string> shadow_nodes;
+        std::vector<float> shadow_low;   // each node's least height (its material's SPosition z)
+        std::vector<float> shadow_radius;   // and its spot's size (SRadius)
+        bool shadow_seen = false;
+        float shadow_factor = 0;
         float last_damage = 0;
         float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the

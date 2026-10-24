@@ -57,6 +57,7 @@ struct DrawItem {
     const struct ObjectLighting* lighting = nullptr;   // probe and nearest light (defaults if null)
     bool sky = false;                           // skybox: drawn first, around the camera, at the far depth
     bool viewmodel = false;                     // first-person hands and weapon: drawn last, in front of the world
+    bool ground_shadow = false;                 // a character's shadow plane: after the level, before the characters
     bool hud = false;                           // the 3D HUD (NV_hud.bdae): drawn in the HUD pass with its own camera
     const std::vector<struct ParamOverride>* overrides = nullptr;   // animated material parameters
 };
@@ -301,6 +302,7 @@ private:
     GpuTexture white_, white_cube_;
     std::vector<std::unique_ptr<GpuProgram>> programs_;
     std::unordered_map<std::string, SDL_GPUGraphicsPipeline*> material_pipelines_;   // program/state/format
+    std::unordered_map<const GpuMaterial*, GpuMaterial> shadow_materials_;   // ground shadows' depth-tested copies
     std::vector<std::unique_ptr<GpuModel>> models_;
     std::vector<std::unique_ptr<GpuTexture>> textures_;
 };

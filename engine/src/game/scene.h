@@ -113,6 +113,8 @@ public:
     bool set_object_lightmap(size_t object, const std::string& texture);
     // A material parameter of every draw of the object (SetFogZColor), first `count` components.
     void set_object_param(size_t object, const std::string& param, const glm::vec4& value, int count);
+    // A material parameter's value as the object's model gives it (its first material with it).
+    bool object_param_default(size_t object, const std::string& param, glm::vec4& out) const;
     // GameObject_Material_SetTechnique: draw the object's `material` with another technique
     // of its effect (false if it has no such material or technique).
     bool set_object_technique(size_t object, const std::string& material, const std::string& technique);
@@ -124,6 +126,8 @@ public:
     bool set_object_material(size_t object, const std::string& model_file, const std::string& material);
     // Draw the object as the first-person view model (in front of the world, no zone).
     void set_object_viewmodel(size_t object);
+    // Its draws are a character's shadow plane (drawn after the level, before the characters).
+    void set_object_ground_shadow(size_t object);
     std::vector<std::string> node_names(size_t object) const;
     // The first mesh at or under a node, as a quad: its first four vertices in world space,
     // their UVs and its diffuse texture (the HUD draws such quads itself, e.g. clipped).

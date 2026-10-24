@@ -990,6 +990,28 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     t.dissolve = -1;
     t.ragdoll.reset();
     t.has_ragdoll = false;
+    if (const Value* sp = component(o, 0xa3); sp && sp->size() > 9 && (*sp)[0].type == Value::String && t.shadow == size_t(-1)) {
+        t.shadow = scene_.spawn_model((*sp)[0].s, false);
+        t.shadow_offset = glm::vec3(num(*sp, 1, 0), num(*sp, 2, 0), num(*sp, 3, 0));
+        t.shadow_seen = (*sp)[4].i != 0;
+        t.shadow_nodes.clear();
+        for (const Value& n : (*sp)[9].list)
+            if (n.size() > 0 && n[0].type == Value::String) t.shadow_nodes.push_back(n[0].s);
+        if (t.shadow != size_t(-1)) {
+            scene_.set_object_visible(t.shadow, false);
+            scene_.set_object_ground_shadow(t.shadow);
+            // NV_CharacterShadow's technique by how many feet it follows (ONEPED ... FIVEPED).
+            static const char* const kPeds[] = {"ONEPED", "BIPED", "TRIPED", "QUADRUPED", "FIVEPED"};
+            if (!t.shadow_nodes.empty()) scene_.set_object_technique_all(t.shadow, kPeds[std::min<size_t>(t.shadow_nodes.size(), 5) - 1]);
+            // OnObjActivate: the material's own SPosition heights are the least each may sink to.
+            t.shadow_low.assign(t.shadow_nodes.size(), 0.0f), t.shadow_radius.assign(t.shadow_nodes.size(), 0.3f);
+            for (size_t i = 0; i < t.shadow_nodes.size(); ++i) {
+                if (glm::vec4 v; scene_.object_param_default(t.shadow, "SPosition" + std::to_string(i), v)) t.shadow_low[i] = v.z;
+                if (glm::vec4 v; scene_.object_param_default(t.shadow, "SRadius" + std::to_string(i), v)) t.shadow_radius[i] = v.x;
+                scene_.set_object_param(t.shadow, "SRadius" + std::to_string(i), glm::vec4(t.shadow_radius[i]), 1);
+            }
+        }
+    }
     if (const Value* r = component(o, 0x8e); r && r->size() > 19 && (*r)[0].i != 0) {   // CPhysicsRagdollComponent
         t.has_ragdoll = ragdolls_.shapes.count((*r)[1].i) > 0, t.ragdoll_kind = (*r)[1].i;
         t.ragdoll_hit = num(*r, 17, 90) * num(*r, 18, 1), t.ragdoll_hit_max = num(*r, 19, 100), t.ragdoll_blast = num(*r, 11, 32);
@@ -2034,6 +2056,36 @@ void Combat::update_hurt_looks(float dt) {
 }
 
 void Combat::place_attachments() {
+    // CCharacterShadowPlaneComponent::Update: each actor's shadow under it while it lives.
+    for (Target& t : targets_) {
+        if (t.shadow == size_t(-1)) continue;
+        const LevelLogic::Object* o = logic_.object(t.id);
+        const bool shown = o && o->visible && o->enabled && alive(t) && t.cloak == Target::Cloak::Visible;
+        scene_.set_object_visible(t.shadow, shown);
+        if (!shown) {
+            t.shadow_factor = 0;
+            continue;
+        }
+        const float y = glm::radians(t.yaw);
+        const glm::vec3 at = t.pos + glm::vec3(t.shadow_offset.x * std::cos(y) - t.shadow_offset.y * std::sin(y),
+                                               t.shadow_offset.x * std::sin(y) + t.shadow_offset.y * std::cos(y), t.shadow_offset.z);
+        scene_.set_object_pose(t.shadow, at + glm::vec3(0, 0, 0.02f), t.yaw);   // just off the floor: depth-tested here
+        const glm::mat4 into = glm::inverse(scene_.object_matrix(t.shadow));   // the shader works in the plane's space
+        for (size_t i = 0; i < t.shadow_nodes.size(); ++i) {
+            glm::vec3 d(into * scene_.object_matrix(t.object, t.shadow_nodes[i])[3]);
+            d.z = std::clamp(d.z, i < t.shadow_low.size() ? t.shadow_low[i] : 0.0f, 100.0f);
+            scene_.set_object_param(t.shadow, "SPosition" + std::to_string(i), glm::vec4(d, 0), 3);
+        }
+        // Faded in while the player sees it (within 32 m), out when not: a tenth of the way a frame.
+        float target = 1;
+        if (t.shadow_seen) {
+            const glm::vec3 eye = player_.eye(), to = at + glm::vec3(0, 0, 0.02f) - eye;
+            const float len = glm::length(to);
+            target = len < 1e-3f || line_clear(eye, eye + to * (std::min(len, 32.0f) / len)) ? 1.0f : 0.0f;
+        }
+        t.shadow_factor += (target - t.shadow_factor) * 0.1f;
+        scene_.set_object_param(t.shadow, "Factor", glm::vec4(t.shadow_factor), 1);
+    }
     for (Target& t : targets_) {
         if (t.attached.empty()) continue;
         const LevelLogic::Object* o = logic_.object(t.id);

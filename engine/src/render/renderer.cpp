@@ -795,12 +795,13 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
     mu.camera = glm::vec4(frame.camera, 1);
 
     // Sky first, then opaque, then translucent back to front.
-    std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended, refracting;
+    std::vector<const DrawItem*> opaque, blended, sky, view_opaque, view_blended, refracting, shadows;
     for (const auto& it : items) {
         if (!it.visible || it.hidden || it.anim_hidden || it.zone_hidden || it.occluded || !it.model->vertices) continue;
         if (it.hud != hud_pass_) continue;
         const bool blend = it.material ? it.material->state.blend : it.blend;
         if (it.sky) sky.push_back(&it);
+        else if (it.ground_shadow) shadows.push_back(&it);
         else if (it.viewmodel) (blend ? view_blended : view_opaque).push_back(&it);
         else if (split && it.material && it.material->screen_slot >= 0) refracting.push_back(&it);
         else (blend ? blended : opaque).push_back(&it);
@@ -924,6 +925,21 @@ void Renderer::encode_scene(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, S
         SDL_SetGPUViewport(pass, &vp);
     }
     for (const DrawItem* it : opaque) draw(*it, pipes.opaque);
+    // The characters' shadow planes (CCharacterShadowPlaneComponent): the game draws them without
+    // a depth test between the level and the characters; here after both, depth-tested (and not
+    // written), which hides them the same way under feet and behind walls.
+    for (const DrawItem* it : shadows) {
+        if (!it->material) continue;
+        auto v = shadow_materials_.find(it->material);
+        if (v == shadow_materials_.end()) {
+            GpuMaterial m = *it->material;
+            m.state.depth_test = true, m.state.depth_write = false;
+            v = shadow_materials_.emplace(it->material, std::move(m)).first;
+        }
+        DrawItem tested = *it;
+        tested.material = &v->second;
+        draw(tested, pipes.blend);
+    }
     for (const DrawItem* it : blended) draw(*it, pipes.blend);
     if (particles) {
         SDL_GPUBufferBinding vb{particle_buffer_.buffer, 0};
