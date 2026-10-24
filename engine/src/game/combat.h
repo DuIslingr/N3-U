@@ -351,6 +351,7 @@ private:
         // death clip the body dissolves through it over 1.5 s and goes
         // (CHealthComponent::ActivateDeathEffect). dissolve < 0: not begun.
         std::string death_model, death_material, vanish_sound;
+        std::string paralyze_model, paralyze_material;   // [15]/[16]: worn while paralyzed
         float dissolve = -1;
         float hurt_start = 0.1f, hurt_end = 1, hurt_again = 0.6f, hurt_time = -1;
         // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
@@ -540,6 +541,8 @@ private:
     size_t take_trail(int type, const glm::vec3& at);
     static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
     void hurt_look(Target& t, const glm::vec3* at);   // a hit: the hurt technique on (or again)
+    void paralyze_target(Target& t);                    // frozen, wearing its paralyze material
+    void update_paralysis(Target& t, float dt);
     void update_hurt_looks(float dt);
     void set_hurt_time(Target& t);
     ProjectileLooks read_looks(int type) const;

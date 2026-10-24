@@ -396,7 +396,7 @@ void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
     glm::vec3 hit_at;
     if (const int hit = ray_target(eye, aim, 500.0f, hit_t, hit_at); hit >= 0 && line_clear(eye, hit_at - aim * 0.2f)) {
         Target& t = targets_[size_t(hit)];
-        if (!t.actor || t.hostile) t.paralyzed = t.paralyze_time;
+        if (!t.actor || t.hostile) paralyze_target(t);
         if (paralyze_damage > 0 && t.actor && t.hostile) apply_damage(t, paralyze_damage, true);
     }
     for (Target& t : targets_) {
@@ -405,8 +405,24 @@ void Combat::paralyze(const glm::vec3& eye, const glm::vec3& aim) {
         const glm::vec3 to = c - eye;
         const float d = glm::length(to);
         if (d > 40.0f || d < 1e-3f || glm::dot(to / d, aim) < 0.85f || !line_clear(eye, c)) continue;
-        t.paralyzed = t.paralyze_time;
+        paralyze_target(t);
     }
+}
+
+void Combat::paralyze_target(Target& t) {
+    if (t.paralyzed <= 0 && !t.paralyze_model.empty()) scene_.set_object_material(t.object, t.paralyze_model, t.paralyze_material);
+    t.paralyzed = t.paralyze_time;
+}
+
+// CHealthComponent::Update: the paralyze texture runs up the body as the time goes
+// (TexFactor (0, 0.5 - left / duration)); its own materials again at the end.
+void Combat::update_paralysis(Target& t, float dt) {
+    t.paralyzed -= dt;
+    if (t.paralyze_model.empty()) return;
+    if (t.paralyzed > 0)
+        scene_.set_object_param(t.object, "TexFactor", glm::vec4(0, 0.5f - t.paralyzed / std::max(t.paralyze_time, 0.01f), 0, 0), 2);
+    else
+        scene_.set_object_material(t.object, "", "");
 }
 
 int Combat::paralyzed(int id) const {
@@ -888,6 +904,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     if (const Value* h = component(o, kCompHealth); h && h->size() > 20 && (*h)[13].type == Value::String) {
         t.death_model = (*h)[13].s, t.death_material = (*h)[14].s;
+        if ((*h)[15].type == Value::String) t.paralyze_model = (*h)[15].s, t.paralyze_material = (*h)[16].s;
         if ((*h)[20].type == Value::String) t.vanish_sound = (*h)[20].s;
     }
     t.dissolve = -1;
@@ -1394,7 +1411,7 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
     if (t.paralyzed > 0) {   // the Paralyze power: frozen in place
-        t.paralyzed -= dt;
+        update_paralysis(t, dt);
         scene_.set_object_pose(t.object, t.pos, t.yaw);
         return;
     }
@@ -2112,7 +2129,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             continue;
         }
         if (t.actor) update_actor(t, dt);
-        else if (t.paralyzed > 0) t.paralyzed -= dt;
+        else if (t.paralyzed > 0) update_paralysis(t, dt);
     }
     // Keep actors apart.
     for (size_t i = 0; i < targets_.size(); ++i) {
