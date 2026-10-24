@@ -38,7 +38,9 @@ struct EffectEmitter {
     bool uv_anim = false;
     int uv_cols = 1, uv_rows = 1;     // sprite sheet: cells the size of `uv`, stepping right then down
     int uv_period = 1000;             // ms per pass through the sheet
-    glm::vec4 uv{0, 0, 1, 1};         // atlas rectangle u0, v0, u1, v1 (the first cell)
+    // Atlas rectangles (u0, v0, u1, v1); each particle takes one at random. Animated: the
+    // grid's first cell of the whole texture, stepped through.
+    std::vector<glm::vec4> frames{{0, 0, 1, 1}};
     // Curves over the particle's life (0..1); the first two keys hold the start value.
     std::vector<std::pair<float, glm::vec4>> color_keys;   // RGBA 0..255
     std::vector<std::pair<float, glm::vec2>> size_keys;

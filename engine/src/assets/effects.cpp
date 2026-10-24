@@ -35,7 +35,7 @@ EffectEmitter read_emitter(DictStream& st) {
     e.technique = st.s();
     if (material != "DiffuseVC-fx") e.technique.clear();
     const int nparams = st.i();
-    st.i();                                   // mask
+    const int own_textures = st.i();          // a mask of the params with a texture of their own (not the atlas)
     for (int k = 0; k < nparams; ++k) {
         const std::string name = st.s();
         const int kind = st.i(), type = st.i();
@@ -90,12 +90,18 @@ EffectEmitter read_emitter(DictStream& st) {
     e.uv_cols = std::max<int>(uint8_t(st.c()), 1);
     e.uv_rows = std::max<int>(uint8_t(st.c()), 1);
     e.uv_period = std::max(st.i(), 1);
+    // CEmitterInstance::Deserialize: the whole texture for one of its own; the grid's first
+    // cell for an animated one.
     const int nframes = st.i();
+    e.frames.clear();
     for (int k = 0; k < nframes; ++k) {
-        const glm::vec4 r{st.f(), st.f(), st.f(), st.f()};
+        glm::vec4 r{st.f(), st.f(), st.f(), st.f()};
         st.f(), st.f();
-        if (k == 0) e.uv = r;
+        if (own_textures) r = {0, 1, 1, 0};
+        if (e.uv_anim) r = {0, 1.0f / float(e.uv_rows), 1.0f / float(e.uv_cols), 0};
+        e.frames.push_back(r);
     }
+    if (e.frames.empty()) e.frames.push_back({0, 0, 1, 1});
     st.c();                                   // directional rotation
     st.i();
     st.s();

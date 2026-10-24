@@ -108,7 +108,7 @@ void ParticleSystem::spawn(Instance& inst, EmitterState& s) {
     p.color = glm::mix(glm::vec4(d.color_min), glm::vec4(d.color_max), uniform(0, 1));
     p.rot = uniform(float(d.rotation_min), float(d.rotation_max));
     p.spin = uniform(float(d.spin_min), float(d.spin_max));
-    p.cell = std::min(int(uniform(0, float(d.uv_cols * d.uv_rows))), d.uv_cols * d.uv_rows - 1);
+    p.cell = std::min(int(uniform(0, float(d.frames.size()))), int(d.frames.size()) - 1);   // CEmitterInstance::Spawn
     s.particles.push_back(p);
 }
 
@@ -202,12 +202,12 @@ void ParticleSystem::build(const glm::vec3& eye, const std::function<const GpuTe
                     }
                 }
                 const glm::vec3 hx = right * (size.x * 0.5f), hy = up * (size.y * 0.5f);
-                // Texture rectangle, or one cell of the animation grid inside it.
-                glm::vec4 uv = d.uv;
-                if (const int frames = d.uv_cols * d.uv_rows; frames > 1) {
-                    const int f = d.uv_anim ? int(p.age / float(d.uv_period) * float(frames)) % frames : p.cell;
-                    const glm::vec2 step(std::abs(uv.z - uv.x), std::abs(uv.w - uv.y));
-                    const glm::vec2 off = glm::vec2(float(f % d.uv_cols), float(f / d.uv_cols)) * step;
+                // Its frame; animated, the grid's cell for the time into the period
+                // (CParticle::computeVertices).
+                glm::vec4 uv = d.frames[size_t(p.cell)];
+                if (const int frames = d.uv_cols * d.uv_rows; d.uv_anim && frames > 1) {
+                    const int f = std::min(frames * (int(p.age) % (d.uv_period + 1)) / (d.uv_period + 1), frames - 1);
+                    const glm::vec2 off = glm::vec2(float(f % d.uv_cols) * (uv.z - uv.x), float(f / d.uv_cols) * (uv.y - uv.w));
                     uv += glm::vec4(off, off);
                 }
                 const uint32_t rgba = pack_rgba(c);
