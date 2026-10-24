@@ -166,7 +166,12 @@ public:
     bool man_gun(int id);
     bool enter_mech(int id);   // SwitchToMech: the player pilots the mech
     bool in_mech() const { return player_mech_ >= 0; }
-    bool seated() const { return player_vehicle_ >= 0 || player_gun_ >= 0 || player_mech_ >= 0; }   // in a vehicle, on a gun or in the mech
+    bool seated() const { return player_vehicle_ >= 0 || player_gun_ >= 0 || player_mech_ >= 0; }
+    // A mover travelling its path (GameObject_MotionOnPath...).
+    bool mover_moving(int id) {
+        const Mover* m = mover(id);
+        return m && m->moving;
+    }   // in a vehicle, on a gun or in the mech
     void leave_vehicle();
     int player_vehicle() const { return player_vehicle_; }   // -1 on foot
     int player_gun() const { return player_gun_; }

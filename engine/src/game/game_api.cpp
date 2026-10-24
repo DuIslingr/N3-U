@@ -147,8 +147,19 @@ int api_get_position(lua_State* L) {
     lua_pushnumber(L, p.z);
     return 3;
 }
+// Object_SetPosition(id, x, y, z): the object there (CGameObject::SetPosition), its
+// collision and effects with it; an actor through its AI.
 int api_set_position(lua_State* L) {
-    if (auto* o = obj(L, 1)) o->position = {lua_tonumber(L, 2), lua_tonumber(L, 3), lua_tonumber(L, 4)};
+    LevelLogic& c = ctx(L);
+    auto* o = obj(L, 1);
+    if (!o) return 0;
+    o->position = {lua_tonumber(L, 2), lua_tonumber(L, 3), lua_tonumber(L, 4)};
+    if (c.combat && c.combat->is_actor(o->id)) {
+        c.combat->place_actor(o->id, o->position);
+    } else if (o->index < c.scene.level().objects.size()) {
+        if (!c.scene.move_object(o->index, o->position)) c.scene.set_object_pose(o->index, o->position, o->yaw);
+        c.move_effects(*o);
+    }
     return 0;
 }
 // GetPlayerPositionFromCameraPosition() -> x, y, z: where the player stands to see from

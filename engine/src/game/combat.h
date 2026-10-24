@@ -554,6 +554,15 @@ private:
         // held, then flying on a ballistic arc (CPhysicsObjectComponent::Throw) until it lands.
         bool throwable = false;
         float throw_speed = 22, throw_lift = 1;   // [6]; CThrowMotionComponent [6]: raised this far when grabbed
+        // A dropship (CDropShipAIComponent, gol 0x9f: [0] its rocket, [1] the muzzle node, [2]
+        // turn speed and [3] its acceleration (degrees a second), [5] its bank, [7] seconds
+        // between attacks, [8]-[9] the rockets' miss (degrees), [10] a sound): hovering, it
+        // turns to face its target; facing it, Attack, a rocket at the fire clip's event.
+        bool dropship = false;
+        std::string ds_muzzle, ds_sound;
+        float ds_turn_max = 20, ds_turn_accel = 10, ds_pause = 1, ds_miss_min = 15, ds_miss_max = 30;
+        float ds_yaw = 0, ds_turn = 0, ds_fire_at = -1, ds_wait = 0;
+        bool ds_no_turn = false;      // disable_rotation
         int flight = 0, thrower = -1;   // flight: 1 pulled, 2 held, 3 flying, 4 reached for
         bool flung = false;             // flying thrown (it goes off where it lands), not dropped
         glm::vec3 flight_from{0}, flight_vel{0};
@@ -744,6 +753,7 @@ private:
     std::unordered_map<int, GunDef> guns_;
     const GunDef* gun_def(int type);
     void update_gunner(Target& t, float dt, const glm::vec3& chest, bool sees);
+    void update_dropship(Target& t, float dt);
     // Waypoints flagged as jump points ([9], CWayPointObject::IsJumpPoint) and where each
     // lands (its next waypoint).
     struct JumpPoint {

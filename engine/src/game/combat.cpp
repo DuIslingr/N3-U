@@ -1102,6 +1102,18 @@ void Combat::start(bool keep_stats) {
         const bool ai = component(o, kCompAi) || component(o, 0x55) || component(o, 0x21) || component(o, 0x57) ||
                         component(o, 0x59) || component(o, 0x23);
         if (ai && (component(o, kCompGroundNavigation) || component(o, kCompAirNavigation))) setup_actor(t, o);
+        if (const Value* ds = component(o, 0x9f); ds && ds->size() >= 10 && !t.actor) {   // CDropShipAIComponent::Load
+            t.dropship = true;
+            set_projectile(t, (*ds)[0].i);
+            t.ds_muzzle = str(*ds, 1), t.ds_sound = str(*ds, 10);
+            t.ds_turn_max = num(*ds, 2, 20), t.ds_turn_accel = std::max(num(*ds, 3, 10), 1.0f);
+            t.ds_pause = num(*ds, 7, 1), t.ds_miss_min = num(*ds, 8, 15), t.ds_miss_max = num(*ds, 9, 30);
+            t.ds_yaw = obj.yaw;
+            if (const Value* aw = component(o, kCompAwareness); aw && aw->size() > 2)
+                t.team = (*aw)[0].i, t.attacks = uint32_t((*aw)[1].i), t.sight = num(*aw, 2, 700);
+            t.hostile = (t.attacks & kPlayerTeamBit) != 0;
+            t.radius = 4, t.height = 3, t.pos.z -= 1.5f;   // a hull to hit
+        }
         targets_.push_back(std::move(t));
         ++stats_.targets;
         if (targets_.back().actor) ++stats_.actors;
@@ -1385,6 +1397,12 @@ Combat::Target* Combat::find_target(int id) {
 
 bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
     Target* t = find_target(npc);
+    if (t && t->dropship) {   // CDropShipAIComponent::OnEvent (18): a fire now, or no more turning
+        if (order == "fire") t->ds_fire_at = 0;
+        else if (order == "disable_rotation") t->ds_no_turn = true;   // (whatever the argument)
+        else return false;
+        return true;
+    }
     if (!t || !t->actor) return false;
     if (order == "follow_mode") t->follow = flag;
     else if (order == "lock_in_cover" || order == "locked_in_cover" || order == "imobile") t->hold = flag;
@@ -2426,6 +2444,53 @@ void Combat::update_gunner(Target& t, float dt, const glm::vec3& chest, bool see
     }
 }
 
+// CDropShipAIComponent::Update / Fire.
+void Combat::update_dropship(Target& t, float dt) {
+    if (!alive(t)) return;
+    const glm::vec3 at(scene_.object_matrix(t.object)[3]);
+    const glm::vec3 eye = player_.eye();
+    const bool target = t.hostile && !player_dead && glm::distance(at, eye) < t.sight && line_clear(at, eye);
+    const float off = target ? angle_diff(t.ds_yaw, yaw_towards(at, eye)) : 0.0f;
+    // Hovering (not on its path), it turns to face its target: up to its turn speed, slowing
+    // to stop facing it.
+    if (!t.ds_no_turn && !logic_.mover_moving(t.id) && target && std::abs(off) > 30.0f) {
+        const float most = std::min(t.ds_turn_max, std::sqrt(2 * t.ds_turn_accel * std::abs(off)));
+        const float want = off > 0 ? most : -most;
+        t.ds_turn += std::clamp(want - t.ds_turn, -t.ds_turn_accel * dt, t.ds_turn_accel * dt);
+    } else {
+        t.ds_turn -= std::clamp(t.ds_turn, -t.ds_turn_accel * dt, t.ds_turn_accel * dt);
+    }
+    if (std::abs(t.ds_turn) > 1e-3f) {
+        t.ds_yaw += t.ds_turn * dt;
+        scene_.set_object_pose(t.object, at, t.ds_yaw);
+    }
+    // Facing it: Attack (its fire clip at half speed, the rocket at 321 ms of it), then a
+    // pause before the next.
+    if (t.ds_fire_at >= 0) {
+        if ((t.ds_fire_at -= dt) > 0) return;
+        t.ds_fire_at = -1, t.ds_wait = t.ds_pause;
+        if (!target) return;
+        glm::vec3 muzzle = at;
+        if (!t.ds_muzzle.empty()) scene_.node_position(t.object, t.ds_muzzle, muzzle);
+        glm::vec3 dir = glm::normalize(eye - muzzle);
+        // Off by [8]-[9] degrees, any way round.
+        const glm::vec3 side = glm::normalize(glm::cross(dir, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0)), up = glm::cross(side, dir);
+        const float miss = glm::radians(std::uniform_real_distribution<float>(t.ds_miss_min, std::max(t.ds_miss_max, t.ds_miss_min))(rng_));
+        const float round = std::uniform_real_distribution<float>(0, glm::two_pi<float>())(rng_);
+        dir = glm::normalize(dir * std::cos(miss) + (side * std::cos(round) + up * std::sin(round)) * std::sin(miss));
+        Bolt b{muzzle, dir * t.bolt_speed, t.bolt_damage, 5.0f, t.bolt_color, int(&t - targets_.data())};
+        b.splash = t.bolt_splash, b.radius = t.bolt_radius;
+        launch_bolt(b, t.bolt_looks);
+        if (!t.ds_sound.empty()) sound(t.ds_sound, &muzzle);
+        ++stats_.enemy_shots;
+        return;
+    }
+    if ((t.ds_wait -= dt) <= 0 && target && std::abs(off) <= 30.0f) {
+        play_state(t, "Attack", false);
+        t.ds_fire_at = 0.321f / 0.5f;
+    }
+}
+
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
@@ -2837,6 +2902,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             continue;
         }
         if (t.actor) update_actor(t, dt), update_cloak(t, dt);
+        else if (t.dropship) update_dropship(t, dt);
         else if (t.flight) update_flight(t, dt);
         else if (t.paralyzed > 0) update_paralysis(t, dt);
     }
