@@ -13,9 +13,12 @@ CollisionMesh load_col(const Bytes& data) {
     CollisionMesh mesh;
     const int groups = st.i();
     for (int g = 0; g < groups; ++g) {
-        st.s();   // group name
+        CollisionMesh::Group group;
+        group.name = st.s();
         const int n = st.i();
         if (n < 0 || st.pos + size_t(n) * 37 > st.end) throw FormatError("bad .col triangle count");
+        group.first = mesh.materials.size(), group.count = size_t(n);
+        if (n > 0) mesh.groups.push_back(std::move(group));
         for (int t = 0; t < n; ++t) {
             for (int v = 0; v < 3; ++v) mesh.vertices.push_back({st.f(), st.f(), st.f()});
             mesh.materials.push_back(uint8_t(st.c()));

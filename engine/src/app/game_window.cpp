@@ -530,6 +530,9 @@ void Game::run_window() {
             }
         }
         scene.update(dt, cam.position);
+        // Standing on a moving collision part (the lava surf's rocks, a cart): carried along.
+        if (float turn = 0; !flying && !(opt.scripts && logic.seated()) && scene.collision().carry(player.center - glm::vec3(0, 0, player.radius.z - 0.3f), 0.8f, player.center, turn))
+            cam.yaw += turn;
         if (opt.scripts) combat.place_attachments();
         if (opt.scripts) {
             ViewModel::Input vm;

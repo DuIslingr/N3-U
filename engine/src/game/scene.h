@@ -322,6 +322,8 @@ private:
         size_t first_draw = 0, draw_count = 0;
         ObjectLighting lighting;
         struct AnimatedInstance* anim = nullptr;
+        const LoadedModel* model = nullptr;
+        glm::mat4 placement{1};
         int zone = ZoneSystem::kNone;
         bool never_culled = false;                       // the HUD and the first-person view model
         glm::vec3 world_min{0}, world_max{0}, local_min{0}, local_max{0};   // bounds (local: placement space)
@@ -354,6 +356,16 @@ private:
     std::string level_name_;
     uint32_t section_ = 1;
     std::vector<std::unique_ptr<AnimatedInstance>> animated_;
+    // Collision parts that follow an animated object's nodes (collisionPart_* groups).
+    struct CollisionPart {
+        uint32_t part;
+        const AnimatedInstance* anim;
+        size_t node;
+        glm::mat4 local;   // the node in the object's space, as last placed
+    };
+    std::vector<CollisionPart> collision_parts_;
+    // A node's world transform: animated, as posed now; else in the model's bind pose.
+    bool node_world(size_t object, const std::string& node, glm::mat4& out) const;
     std::vector<LodInstance> lod_instances_;
     std::vector<DistanceFade> fades_;
     struct Corona {

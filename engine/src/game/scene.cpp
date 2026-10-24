@@ -205,6 +205,7 @@ glm::mat4 local_matrix(const glm::vec3& t, const glm::quat& r, const glm::vec3& 
 size_t Scene::add_instance(const LoadedModel& m, const glm::mat4& placement, const Placement* p, bool sky) {
     Instance& inst = instances_.emplace_back();
     inst.first_draw = draws_.size();
+    inst.model = &m, inst.placement = placement;
     glm::vec3 bounds_min(std::numeric_limits<float>::max()), bounds_max(-std::numeric_limits<float>::max());
     glm::vec3 local_min = bounds_min, local_max = bounds_max;
     const glm::mat4 to_local = glm::inverse(placement);
@@ -690,6 +691,16 @@ void Scene::update(float dt, const glm::vec3& camera) {
         a->time += dt * a->speed;
         pose(*a);
     }
+    // Collision parts follow their nodes; what stands on one is carried by its animation (the
+    // object's own moves, elevators and platforms, carry the player themselves).
+    for (CollisionPart& c : collision_parts_) {
+        const glm::mat4& world = c.anim->world[c.node];
+        const glm::mat4 local = glm::inverse(c.anim->placement) * world;
+        const bool moved = local != c.local;
+        collision_.set_part_transform(c.part, world,
+                                      moved ? c.anim->placement * local * glm::inverse(c.local) * glm::inverse(c.anim->placement) : glm::mat4(1));
+        c.local = local;
+    }
     for (LodInstance& li : lod_instances_) select_lods(li, camera);
     // CCoronasControllerNode: a ray from the camera to each corona; seen, it fades in
     // over 200 ms, blocked it fades out four times faster.
@@ -755,6 +766,7 @@ void Scene::update(float dt, const glm::vec3& camera) {
 
 void Scene::build_collision() {
     collision_ = CollisionWorld();
+    collision_parts_.clear();
     std::unordered_map<std::string, std::optional<CollisionMesh>> cache;
     for (const Placement& p : collision_placements(level_, gol_)) {
         const std::string key = to_lower(p.model);
@@ -772,7 +784,21 @@ void Scene::build_collision() {
             ++stats_.missing_collision;
             continue;
         }
-        collision_.add(it->second->vertices, it->second->materials, placement_matrix(p.transform), uint32_t(p.object_index));
+        const CollisionMesh& mesh = *it->second;
+        const glm::mat4 tf = placement_matrix(p.transform);
+        if (mesh.groups.empty()) collision_.add(mesh.vertices, mesh.materials, tf, uint32_t(p.object_index));
+        for (const CollisionMesh::Group& g : mesh.groups) {
+            // A group named after a node of the object's model is in that node's space
+            // (CCollisionComponent); an animated one moves with it.
+            glm::mat4 node;
+            if (!node_world(p.object_index, g.name, node)) {
+                collision_.add(mesh.vertices, mesh.materials, tf, uint32_t(p.object_index), g.first, g.count);
+                continue;
+            }
+            const uint32_t part = collision_.add_part(mesh.vertices, mesh.materials, g.first, g.count, node, uint32_t(p.object_index));
+            if (const AnimatedInstance* a = object_anim(p.object_index))
+                collision_parts_.push_back({part, a, size_t(find_node(*a->model, g.name)), glm::inverse(a->placement) * node});
+        }
         ++stats_.collision_objects;
     }
     collision_.build();
@@ -816,7 +842,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
         }
     }
     stats_.irradiance_volumes = irradiance_.size();
-    animated_.clear();
+    animated_.clear(), collision_parts_.clear();
     lod_instances_.clear();
     corona_controllers_.clear();
     fades_.clear();
@@ -1243,6 +1269,28 @@ glm::mat4 Scene::object_matrix(size_t object, const std::string& node) const {
     return glm::mat4(1);
 }
 
+bool Scene::node_world(size_t object, const std::string& node, glm::mat4& out) const {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end() || node.empty()) return false;
+    const Instance& inst = instances_[it->second];
+    if (inst.anim) {
+        const int n = find_node(*inst.anim->model, node);
+        if (n < 0) return false;
+        out = inst.anim->world[size_t(n)];
+        return true;
+    }
+    if (!inst.model) return false;
+    int n = find_node(*inst.model, node);
+    if (n < 0) return false;
+    out = glm::mat4(1);
+    for (; n >= 0; n = inst.model->parent[size_t(n)]) {
+        const ModelNode& mn = inst.model->cpu.nodes[size_t(n)];
+        out = local_matrix(mn.translation, mn.rotation, mn.scale) * out;
+    }
+    out = inst.placement * out;
+    return true;
+}
+
 bool Scene::node_position(size_t object, const std::string& node, glm::vec3& out) const {
     const AnimatedInstance* a = object_anim(object);
     if (!a) return false;
@@ -1425,10 +1473,23 @@ void Scene::set_object_param(size_t object, const std::string& param, const glm:
 void Scene::cull(const glm::vec3& camera, const glm::mat4& view_proj, int view_zone) {
     int floor_zone = view_zone;
     float floor_z = 0;
-    uint32_t owner = 0;
-    if (view_zone == ZoneSystem::kNone)
-    // (Not from a moving object: it keeps the zone it was placed in.)
-    if (collision_.ray_down(camera, 8.0f, floor_z, &owner) && !moving_.count(owner)) floor_zone = zones_.object_zone(owner);
+    uint32_t owner = 0, tri = 0;
+    // (Not from a moving object: it keeps the zone it was placed in. On an animated collision
+    // part, a cart: its own zone while it stays put, on its way the ground's under it, else the
+    // zone holding the camera.)
+    if (view_zone == ZoneSystem::kNone && collision_.ray_down(camera, 8.0f, floor_z, &owner, &tri) && !moving_.count(owner)) {
+        if (collision_.part_travelling(tri)) {
+            for (int k = 0; k < 4 && floor_zone == ZoneSystem::kNone; ++k) {
+                uint32_t below = 0;
+                if (!collision_.ray_down(glm::vec3(camera.x, camera.y, floor_z - 0.05f), 15.0f, floor_z, &below, &tri)) break;
+                const uint8_t m = collision_.material(tri);   // (not invisible blockers: helper boxes)
+                if (!collision_.in_part(tri) && !moving_.count(below) && m != 255 && !is_invisible_material(m))
+                    floor_zone = zones_.object_zone(below);
+            }
+            if (floor_zone == ZoneSystem::kNone) floor_zone = zones_.zone_at(camera);
+        }
+        if (floor_zone == ZoneSystem::kNone) floor_zone = zones_.object_zone(owner);
+    }
     zones_.update(camera, view_proj, floor_zone);
     for (const Instance& inst : instances_) {
         if (inst.draw_count && draws_[inst.first_draw].sky) continue;

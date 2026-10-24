@@ -23,8 +23,15 @@ inline bool is_invisible_material(uint8_t m) {   // CPhysicsManager::isColMatInv
 }
 
 struct CollisionMesh {
-    std::vector<glm::vec3> vertices;   // 3 per triangle, in the model's space
+    std::vector<glm::vec3> vertices;   // 3 per triangle, in the model's space (a part's: its node's)
     std::vector<uint8_t> materials;    // 1 per triangle
+    // A .col's groups: its name and its triangles. Those named after a node of the object's
+    // model (collisionPart_*) are in that node's space and move with it.
+    struct Group {
+        std::string name;
+        size_t first = 0, count = 0;
+    };
+    std::vector<Group> groups;
     size_t triangle_count() const { return materials.size(); }
 };
 

@@ -48,11 +48,52 @@ struct CollisionWorld::Data {
 };
 
 void CollisionWorld::add(const std::vector<glm::vec3>& v, const std::vector<uint8_t>& m, const glm::mat4& tf,
-                         uint32_t owner) {
-    for (size_t t = 0; t < m.size(); ++t) {
+                         uint32_t owner, size_t first, size_t count) {
+    for (size_t t = first; t < m.size() && t - first < count; ++t) {
         tris_.push_back({glm::vec3(tf * glm::vec4(v[3 * t], 1)), glm::vec3(tf * glm::vec4(v[3 * t + 1], 1)),
                          glm::vec3(tf * glm::vec4(v[3 * t + 2], 1)), m[t], owner});
     }
+}
+
+uint32_t CollisionWorld::add_part(const std::vector<glm::vec3>& v, const std::vector<uint8_t>& m, size_t first, size_t count,
+                                  const glm::mat4& tf, uint32_t owner) {
+    const uint32_t id = uint32_t(parts_.size());
+    Part& part = parts_.emplace_back();
+    part_of_.resize(tris_.size(), 0);
+    for (size_t t = first; t < first + count; ++t) {
+        part.tris.push_back(uint32_t(tris_.size()));
+        part.base.push_back({v[3 * t], v[3 * t + 1], v[3 * t + 2]});
+        tris_.push_back({v[3 * t], v[3 * t + 1], v[3 * t + 2], m[t], owner});
+        part_of_.push_back(id + 1);
+    }
+    set_part_transform(id, tf);
+    return id;
+}
+
+void CollisionWorld::set_part_transform(uint32_t id, const glm::mat4& tf, const glm::mat4& motion) {
+    Part& part = parts_[id];
+    part.motion = motion;
+    part.lo = glm::vec3(1e30f), part.hi = glm::vec3(-1e30f);
+    for (size_t k = 0; k < part.tris.size(); ++k) {
+        Triangle& t = tris_[part.tris[k]];
+        t.a = glm::vec3(tf * glm::vec4(part.base[k][0], 1));
+        t.b = glm::vec3(tf * glm::vec4(part.base[k][1], 1));
+        t.c = glm::vec3(tf * glm::vec4(part.base[k][2], 1));
+        part.lo = glm::min(part.lo, glm::min(glm::min(t.a, t.b), t.c));
+        part.hi = glm::max(part.hi, glm::max(glm::max(t.a, t.b), t.c));
+    }
+}
+
+bool CollisionWorld::carry(const glm::vec3& feet, float reach, glm::vec3& p, float& yaw) const {
+    float z = 0;
+    uint32_t tri = 0;
+    if (!ray_down(feet, reach, z, nullptr, &tri) || tri >= part_of_.size() || part_of_[tri] == 0) return false;
+    const glm::mat4& m = parts_[part_of_[tri] - 1].motion;
+    if (m == glm::mat4(1)) return false;
+    p = glm::vec3(m * glm::vec4(p, 1));
+    const glm::vec3 fwd = glm::vec3(m * glm::vec4(0, 1, 0, 0));
+    yaw += glm::degrees(std::atan2(-fwd.x, fwd.y));
+    return true;
 }
 
 void CollisionWorld::set_owner_enabled(uint32_t owner, bool enabled) {
@@ -67,11 +108,13 @@ void CollisionWorld::set_owner_offset(uint32_t owner, const glm::vec3& offset) {
     auto it = movers_.find(owner);
     if (it == movers_.end()) {
         Mover m;
-        for (uint32_t i = 0; i < tris_.size(); ++i)
-            if (tris_[i].owner == owner) m.tris.push_back(i), m.base.push_back({tris_[i].a, tris_[i].b, tris_[i].c});
+        for (uint32_t i = 0; i < tris_.size(); ++i)   // (its parts follow its nodes)
+            if (tris_[i].owner == owner && !(i < part_of_.size() && part_of_[i]))
+                m.tris.push_back(i), m.base.push_back({tris_[i].a, tris_[i].b, tris_[i].c});
         if (m.tris.empty()) return;
         for (auto& [key, cell] : grid_)
-            cell.erase(std::remove_if(cell.begin(), cell.end(), [&](uint32_t i) { return tris_[i].owner == owner; }), cell.end());
+            cell.erase(std::remove_if(cell.begin(), cell.end(), [&](uint32_t i) {
+                return tris_[i].owner == owner && !(i < part_of_.size() && part_of_[i]); }), cell.end());
         it = movers_.emplace(owner, std::move(m)).first;
     }
     Mover& m = it->second;
@@ -87,7 +130,9 @@ void CollisionWorld::set_owner_offset(uint32_t owner, const glm::vec3& offset) {
 void CollisionWorld::build(float cell_size) {
     cell_ = cell_size;
     grid_.clear();
+    part_of_.resize(tris_.size(), 0);
     for (uint32_t i = 0; i < tris_.size(); ++i) {
+        if (part_of_[i]) continue;   // parts are looked at by their bounds
         const Triangle& t = tris_[i];
         const glm::vec3 lo = glm::min(glm::min(t.a, t.b), t.c), hi = glm::max(glm::max(t.a, t.b), t.c);
         const int x0 = int(std::floor(lo.x / cell_)), x1 = int(std::floor(hi.x / cell_));
@@ -122,6 +167,13 @@ void CollisionWorld::candidates(const glm::vec3& lo, const glm::vec3& hi, std::v
     for (const auto& [owner, m] : movers_) {
         if (owner < owner_disabled_.size() && owner_disabled_[owner]) continue;
         if (glm::any(glm::lessThan(m.hi, lo)) || glm::any(glm::greaterThan(m.lo, hi))) continue;
+        for (uint32_t i : m.tris)
+            if (stamp_[i] != epoch_) stamp_[i] = epoch_, out.push_back(i);
+    }
+    for (const Part& m : parts_) {
+        if (m.tris.empty() || glm::any(glm::lessThan(m.hi, lo)) || glm::any(glm::greaterThan(m.lo, hi))) continue;
+        const uint32_t owner = tris_[m.tris[0]].owner;
+        if (owner < owner_disabled_.size() && owner_disabled_[owner]) continue;
         for (uint32_t i : m.tris)
             if (stamp_[i] != epoch_) stamp_[i] = epoch_, out.push_back(i);
     }
@@ -275,7 +327,7 @@ CollisionWorld::MoveResult CollisionWorld::move(const glm::vec3& position, const
     return r;
 }
 
-bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_z, uint32_t* owner) const {
+bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_z, uint32_t* owner, uint32_t* tri) const {
     std::vector<uint32_t> cand;
     candidates(from - glm::vec3(0.01f, 0.01f, max_dist), from + glm::vec3(0.01f, 0.01f, 0), cand);
     bool any = false;
@@ -295,6 +347,7 @@ bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_
             best = z;
             any = true;
             if (owner) *owner = t.owner;
+            if (tri) *tri = i;
         }
     }
     hit_z = best;
