@@ -71,6 +71,13 @@ public:
     // `normal` (if given) receives the direction of the last push.
     // `from` (if given): where it was before; a triangle it crossed pushes it back to that side.
     bool push_sphere(glm::vec3& p, float radius, glm::vec3* normal = nullptr, const glm::vec3* from = nullptr) const;
+    // The enabled triangles overlapping the box [lo, hi] (roughly: those of the grid cells
+    // it covers within its height), and one of them.
+    void triangles_in(const glm::vec3& lo, const glm::vec3& hi, std::vector<uint32_t>& out) const { candidates(lo, hi, out); }
+    const Triangle& triangle(uint32_t tri) const { return tris_[tri]; }
+    bool owner_enabled(uint32_t owner) const { return owner >= owner_disabled_.size() || !owner_disabled_[owner]; }
+    // On something that moves (a part, an elevator).
+    bool moving(uint32_t tri) const { return in_part(tri) || movers_.count(tris_[tri].owner) != 0; }
     // Owners of triangles with a vertex within `radius` of `p` (diagnostics).
     std::vector<uint32_t> owners_near(const glm::vec3& p, float radius) const;
     // First hit along the segment from -> to, as a fraction of its length; false if none.

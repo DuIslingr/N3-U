@@ -38,6 +38,8 @@ Scene::Scene(const Vfs& vfs, Renderer& renderer, const Gol& gol) : vfs_(vfs), re
 }
 
 void Scene::build_particles(const glm::vec3& eye, ParticleList& out) {
+    out.vertices.clear(), out.batches.clear();
+    decals_.build(collision_, eye, texture("FX_decals_bullets.tga"), out);
     particles_.build(eye, [this](const std::string& image) { return texture(image); }, out);
 }
 
@@ -696,6 +698,7 @@ void Scene::pose(AnimatedInstance& a) {
 
 void Scene::update(float dt, const glm::vec3& camera) {
     particles_.update(dt);
+    decals_.update(dt);
     for (auto& a : animated_) {
         if (!a->library) continue;
         a->time += dt * a->speed;
@@ -822,6 +825,7 @@ void Scene::load_level(const std::string& lvc_name, uint32_t section_mask) {
     const auto t0 = std::chrono::steady_clock::now();
     level_ = nova::load_level(vfs_.read(lvc_name), gol_);
     particles_.clear();
+    decals_.clear();
     keep_section(level_, section_mask);
     level_name_ = lvc_name;
     section_ = section_mask;

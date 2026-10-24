@@ -27,6 +27,7 @@
 #include <glm/glm.hpp>
 
 #include "assets/level.h"
+#include "game/decals.h"
 #include "game/navmesh.h"
 #include "game/ragdoll.h"
 #include "render/renderer.h"
@@ -42,6 +43,7 @@ class LevelLogic;
 struct Impacts {
     std::unordered_map<int, std::string> effects;
     std::unordered_map<int, std::vector<std::string>> sounds;
+    DecalTable decals;
 };
 
 // A projectile's looks in flight (CProjectileComponent and its game object): the object
@@ -742,8 +744,8 @@ private:
     bool effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal = {0, 0, 1});
     void sound(const std::vector<std::string>& names, const glm::vec3* at);
     void sound(const std::string& name, const glm::vec3* at) { if (!name.empty()) sound(std::vector<std::string>{name}, at); }
-    // A projectile hitting the level: the material's effect and sound.
-    void impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal);
+    // A projectile hitting something: the material's effect and sound; on the world (`world`), its decal too.
+    void impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal, bool world = false);
     int fire_loop_ = -1;                // the player's looping fire sound
     std::vector<std::string> player_hurt_sounds_;
     float player_hurt_wait_ = 0;
@@ -772,6 +774,7 @@ private:
         bool burst_on_actor = false;   // [12] explodes on collision with 22 (characters): the launcher's
         std::string effect = "explosion", trail, bounce_sound;
         std::vector<std::string> explode_sounds;
+        DecalTable decals;             // [19]: its scorch mark (CGrenadeComponent::PlaceDecal)
     };
     struct Grenade {
         size_t object = size_t(-1);

@@ -13,6 +13,7 @@
 #include "assets/collision.h"
 #include "assets/irradiance.h"
 #include "assets/level.h"
+#include "game/decals.h"
 #include "game/particles.h"
 #include "game/physics.h"
 #include "game/zones.h"
@@ -181,8 +182,10 @@ public:
 
     // Particle effects (levels/effects.bin); updated with the scene, cleared on load.
     ParticleSystem& particles() { return particles_; }
-    // The particle quads for a camera at `eye`.
+    // The particle quads for a camera at `eye` (the decals' first).
     void build_particles(const glm::vec3& eye, ParticleList& out);
+    // Bullet holes and scorch marks; updated with the scene, cleared on load.
+    Decals& decals() { return decals_; }
 
     // Draw with the game's own shaders (default) or the built-in fallback shader.
     void set_game_shaders(bool on);
@@ -399,6 +402,7 @@ private:
     std::unordered_map<std::string, const GpuTexture*> textures_;    // by lowercase stem
     std::unordered_map<std::string, ParticleEffect> effect_library_;
     ParticleSystem particles_{&effect_library_};
+    Decals decals_;
     SceneStats stats_;
 };
 

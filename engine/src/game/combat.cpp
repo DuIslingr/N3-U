@@ -72,7 +72,7 @@ std::vector<std::string> sound_list(const Value& v) {
     return out;
 }
 
-// CProjectileComponent [18] material -> effect, [20] material -> sounds.
+// CProjectileComponent [18] material -> effect, [20] material -> sounds, [21] -> decal.
 Impacts read_impacts(const Value& pr) {
     Impacts im;
     if (pr.size() > 18)
@@ -81,6 +81,9 @@ Impacts read_impacts(const Value& pr) {
     if (pr.size() > 20)
         for (const Value& e : pr[20].list)
             if (e.size() >= 2) im.sounds[e[0].i] = sound_list(e[1]);
+    if (pr.size() > 21)   // [21]: material -> decal cell, size
+        for (const Value& e : pr[21].list)
+            if (e.size() >= 3) im.decals.entries.push_back({e[0].i, e[1].i, e[2].as_float()});
     return im;
 }
 
@@ -206,6 +209,9 @@ Combat::GrenadeDef Combat::read_grenade(const Gol& gol, int id) {
         if (!str(*g, 10).empty()) d.effect = str(*g, 10);
         d.bounce_sound = str(*g, 15);
         d.explode_sounds = sound_list((*g)[18]);
+        if (g->size() > 19)
+            for (const Value& e : (*g)[19].list)
+                if (e.size() >= 3) d.decals.entries.push_back({e[0].i, e[1].i, e[2].as_float()});
         for (const Value& e : (*g)[12].list)
             if (e.size() > 0 && e[0].i == 22) d.burst_on_actor = true;
     }
@@ -536,6 +542,13 @@ void Combat::explode(const Grenade& g) {
     }
     effect(g.def->effect, g.pos);
     sound(g.def->explode_sounds, &g.pos);
+    // CGrenadeComponent::PlaceDecal: its scorch on the surface under it.
+    const glm::vec3 from = g.pos + glm::vec3(0, 0, 0.3f), to = g.pos - glm::vec3(0, 0, 1.0f);
+    float t = 1, size = 0;
+    uint8_t material = 0;
+    glm::vec3 normal(0, 0, 1);
+    if (int cell = -1; scene_.collision().raycast(from, to, t, &material, &normal, nullptr, true) && g.def->decals.find(material, cell, size))
+        scene_.decals().add(scene_.collision(), from + (to - from) * t, -normal, cell, size);
     splash_damage(g.pos, g.def->damage, g.def->radius, !g.npc);
 }
 
@@ -2408,7 +2421,10 @@ void Combat::sound(const std::vector<std::string>& names, const glm::vec3* at) {
     logic_.audio->play_one_of(names, p);
 }
 
-void Combat::impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal) {
+void Combat::impact(const Impacts& im, uint8_t material, const glm::vec3& at, const glm::vec3& normal, bool world) {
+    // CProjectileComponent::Die on the world: its decal for the material, laid along the hit.
+    int cell = -1;
+    if (float size = 0; world && im.decals.find(material, cell, size)) scene_.decals().add(scene_.collision(), at, -normal, cell, size);
     auto fx = im.effects.find(material);
     if (fx == im.effects.end()) fx = im.effects.find(0);
     if (fx == im.effects.end() || !effect(fx->second, at + normal * 0.02f, normal)) sparks_.push_back({at, 0.1f, {1.0f, 0.8f, 0.4f, 1}});
@@ -2620,7 +2636,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
             apply_damage(t, dmg, true);
             killing_headshot_ = false, damage_point_ = nullptr, damage_cause_ = Cause::Shot, damage_source_ = -1;
         } else if (wall) {
-            impact(w.impacts, material, end, normal);
+            impact(w.impacts, material, end, normal, true);
         }
         shoot_breakables(eye, end, w.damage_near, hit < 0 && wall, wall_owner);
     }
@@ -2736,7 +2752,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             else if (impacts) impact(*impacts, 0, hit_p, -seg / std::max(seg_len, 1e-4f));
             stop = hit_p, stopped = true;
         } else if (wall) {
-            if (impacts) impact(*impacts, material, end, normal);
+            if (impacts) impact(*impacts, material, end, normal, true);
             else if (!effect("impact_plasma", end, normal)) sparks_.push_back({end, 0.15f, b.color});
             stopped = true;
         }

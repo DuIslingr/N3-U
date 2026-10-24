@@ -163,8 +163,6 @@ void ParticleSystem::update(float dt) {
 
 void ParticleSystem::build(const glm::vec3& eye, const std::function<const GpuTexture*(const std::string&)>& texture,
                            ParticleList& out) const {
-    out.vertices.clear();
-    out.batches.clear();
     for (const Instance& inst : instances_) {
         for (const EmitterState& s : inst.emitters) {
             if (s.particles.empty()) continue;
