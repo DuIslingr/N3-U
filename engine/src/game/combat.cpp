@@ -701,6 +701,8 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
                     w.splash_damage = num(*pr, 6, 0), w.splash_radius = num(*pr, 7, 0);
                     if (pr->size() > 39) w.bullet_life = std::max((*pr)[39].as_float() / 1000.0f, 0.1f);
                     w.looks = read_looks(mode[1].i);
+                    if (pr->size() > 32 && (*pr)[32].i != 0 && (*pr)[30].type == Value::String)
+                        w.beam_texture = (*pr)[30].s, w.beam_width = num(*pr, 31, 0.2f);
                     w.flies = (w.splash_damage > 0 && w.splash_radius > 0) ||
                               (w.bullet_speed >= 1 && w.bullet_speed < 150 && (!w.looks.fx.empty() || w.looks.body >= 0));
                 }
@@ -738,7 +740,7 @@ WeaponDef Combat::load_weapon(const std::string& type_name) const {
 void Combat::start(bool keep_stats) {
     nav_.build(scene_.level());
     live_grenades_.clear();   // their objects went with the old level
-    tracers_.clear(), trail_pool_.clear();
+    tracers_.clear(), trail_pool_.clear(), beams_.clear();
     throw_delay_ = -1;
     targets_.clear();
     spawners_.clear();
@@ -1594,6 +1596,25 @@ std::vector<std::string> Combat::first_state_clips(int type) const {
     return out;
 }
 
+void Combat::build_beams(const glm::vec3& eye, ParticleList& out) {
+    // Turned about its length to face the eye; the texture tiles along it (a square per
+    // two widths) and runs forward, the whole fading over a second.
+    for (const Beam& b : beams_) {
+        const GpuTexture* tex = scene_.texture(b.texture);
+        const float len = glm::distance(b.from, b.to);
+        if (!tex || len < 0.01f) continue;
+        const glm::vec3 dir = (b.to - b.from) / len;
+        glm::vec3 side = glm::cross(dir, eye - (b.from + b.to) * 0.5f);
+        side = (glm::length(side) > 1e-4f ? glm::normalize(side) : glm::vec3(0, 0, 1)) * (b.width * 0.5f);
+        const float u0 = -b.age * 4.0f, u1 = u0 + len / (b.width * 2);
+        const uint32_t rgba = pack_rgba(glm::vec4(1, 1, 1, 1 - b.age));
+        const ParticleVertex v[4] = {{b.from + side, {u0, 0}, rgba}, {b.to + side, {u1, 0}, rgba},
+                                     {b.to - side, {u1, 1}, rgba}, {b.from - side, {u0, 1}, rgba}};
+        out.batches.push_back({tex, true, uint32_t(out.vertices.size()), 6});
+        out.vertices.insert(out.vertices.end(), {v[0], v[1], v[2], v[0], v[2], v[3]});
+    }
+}
+
 void Combat::place_attachments() {
     for (Target& t : targets_) {
         if (t.attached.empty()) continue;
@@ -1930,6 +1951,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         launch_bolt(b, w.looks);
     } else {
         launch_trail(w, from, end);
+        if (!w.beam_texture.empty()) beams_.push_back({from, end, w.beam_width, 0, w.beam_texture});
         if (hit >= 0) {
             Target& t = targets_[size_t(hit)];
             const float d = glm::distance(eye, point);
@@ -2087,6 +2109,8 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
     }
     bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(), [](const Bolt& b) { return b.life <= 0; }), bolts_.end());
     update_trails(dt);
+    for (Beam& b : beams_) b.age += dt;
+    std::erase_if(beams_, [](const Beam& b) { return b.age >= 1.0f; });
     for (Spark& s : sparks_) s.life -= dt;
     sparks_.erase(std::remove_if(sparks_.begin(), sparks_.end(), [](const Spark& s) { return s.life <= 0; }), sparks_.end());
 

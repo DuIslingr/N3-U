@@ -75,6 +75,10 @@ struct WeaponDef {
     ProjectileLooks looks;
     float splash_damage = 0, splash_radius = 0, bullet_life = 3;
     bool flies = false;
+    // A rail beam ([32]: CBulletRailGunSceneNode) from the muzzle to the hit: its texture
+    // ([30]) and width ([31]).
+    std::string beam_texture;
+    float beam_width = 0;
 };
 
 // An NPC command (CAIComponent::PushGoal_*, from NpcCmd_* script calls): goals run in
@@ -219,6 +223,8 @@ public:
     void set_muzzle(const glm::vec3* at) { has_muzzle_ = at != nullptr; if (at) muzzle_ = *at; }
     // The actors' weapons and other attachments onto their nodes, after the scene animated.
     void place_attachments();
+    // The rail beams, as textured quads after the particles.
+    void build_beams(const glm::vec3& eye, ParticleList& out);
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
@@ -664,6 +670,12 @@ private:
     int next_spawn_id_ = 2000000;
     std::vector<Bolt> bolts_;
     std::vector<Tracer> tracers_;
+    struct Beam {
+        glm::vec3 from, to;
+        float width, age = 0;
+        std::string texture;
+    };
+    std::vector<Beam> beams_;
     std::unordered_map<int, std::vector<size_t>> trail_pool_;   // hidden trail and projectile objects, per type
     glm::vec3 muzzle_{0};
     bool has_muzzle_ = false;

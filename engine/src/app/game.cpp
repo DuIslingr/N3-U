@@ -267,6 +267,7 @@ FrameParams Game::frame(const Camera& cam_in, int w, int h) {
     if (zfar) cam.zfar = *zfar;
     FrameParams f = cam.frame(w, h);
     scene.build_particles(f.camera, particle_list);
+    if (opt.scripts) combat.build_beams(f.camera, particle_list);
     f.particles = &particle_list;
     f.fog_color = scene.fog_color;
     f.fog_start = scene.fog_start;
