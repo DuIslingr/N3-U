@@ -1393,6 +1393,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         t.attacks = uint32_t((*aw)[1].i);
         t.sight = num(*aw, 2, 40);
         t.fov = num(*aw, 3, 180);
+        if (aw->size() > 8) t.sight_alert = num(*aw, 4, t.sight), t.fov_alert = num(*aw, 7, t.fov), t.hear = num(*aw, 8, 0);
         t.close = num(*aw, 5, 10);
     }
     t.hostile = (t.attacks & kPlayerTeamBit) != 0;
@@ -1597,7 +1598,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     t.stand_height = t.height;
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 7 && npc_grenade_def_.type >= 0 && (*npc)[4].i == npc_grenade_def_.type)
         t.grenades = (*npc)[5].i, t.grenade_min = num(*npc, 6, 20), t.grenade_max = num(*npc, 7, 50);
-    t.fire_range = t.mech_ai ? t.sight : std::min(t.sight, 35.0f);   // a mech: at any target it sees (CheckNext)
+    t.fire_range = t.mech_ai ? std::max(t.sight, t.sight_alert) : std::min(t.sight, 35.0f);   // a mech: at any target it sees (CheckNext)
     t.melee_damage = t.ranged ? 15.0f : 8.0f;
 
     const auto clips = scene_.clip_names(t.object);
@@ -1948,7 +1949,7 @@ int Combat::choose_enemy(const Target& t) const {
         glm::vec3 feet, chest;
         if (!fights(t, enemy) || !enemy_points(t, enemy, feet, chest)) return;
         const float d = glm::distance(t.pos, feet) * (enemy == t.enemy ? 0.8f : 1.0f);   // stay on the current one
-        if (d < best_d && d < t.sight && sees_point(t, chest)) best = enemy, best_d = d;
+        if (d < best_d && (d < t.hear * awareness_factor || (d < sight_range(t) && sees_point(t, chest)))) best = enemy, best_d = d;
     };
     consider(-1);
     for (size_t i = 0; i < targets_.size(); ++i)
@@ -1957,13 +1958,15 @@ int Combat::choose_enemy(const Target& t) const {
     return best;
 }
 
+float Combat::sight_range(const Target& t) { return t.aware && t.sight_alert > 0 ? t.sight_alert : t.sight; }
+
 bool Combat::sees_point(const Target& t, const glm::vec3& target) const {
     const glm::vec3 eye = t.pos + glm::vec3(0, 0, t.height * 0.85f);
     const float d = glm::distance(eye, target);
-    if (d > t.sight) return false;
+    if (d > sight_range(t)) return false;
     if (d > t.close) {
         const float off = std::abs(angle_diff(t.yaw, yaw_towards(t.pos, target)));
-        if (off > t.fov * 0.5f) return false;
+        if (off > (t.aware && t.fov_alert > 0 ? t.fov_alert : t.fov) * 0.5f) return false;
     }
     return line_clear(eye, target);
 }
@@ -2252,6 +2255,8 @@ void Combat::update_actor(Target& t, float dt) {
         t.lost_sight = 0;
     } else {
         t.lost_sight += dt;
+        // Heard (DetectTarget: within [8] m wherever it is), it knows at once.
+        if (t.enemy != kNoEnemy && glm::distance(t.pos, target) < t.hear * awareness_factor) notice(t);
     }
     if (t.gun >= 0) {
         update_gunner(t, dt, chest, sees);

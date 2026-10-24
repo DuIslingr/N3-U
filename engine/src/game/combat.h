@@ -389,6 +389,9 @@ private:
         int team = 2;
         uint32_t attacks = 0;          // bit mask of teams
         float sight = 40, fov = 180, close = 10;
+        // CAwarenessComponent::Alert: once aware, its sight [4] and view cone [7] (unset: the
+        // same); DetectTarget: an enemy within [8] m is heard wherever it is.
+        float sight_alert = -1, fov_alert = -1, hear = 0;
         float run_speed = 4;
         // Ranged attack: bolts.
         float bolt_damage = 3, bolt_speed = 40, burst_gap = 0.1f, burst_pause = 1.6f, fire_range = 35;
@@ -859,6 +862,7 @@ private:
     // The enemy's feet and the point to shoot at; false if it is gone.
     bool enemy_points(const Target& t, int enemy, glm::vec3& feet, glm::vec3& chest) const;
     bool sees_point(const Target& t, const glm::vec3& point) const;
+    static float sight_range(const Target& t);
     bool fights(const Target& t, int enemy) const;   // a valid enemy for t
     void keep_enemies_on_player();
     int choose_enemy(const Target& t) const;
