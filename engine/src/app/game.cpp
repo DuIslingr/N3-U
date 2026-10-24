@@ -5,6 +5,9 @@
 
 #include <SDL3/SDL.h>
 
+#include "audio/audio.h"
+#include "game/anim_sounds.h"
+
 namespace nova {
 
 namespace {
@@ -605,7 +608,42 @@ void Game::fire_step(float dt, const CombatInput& in, const glm::vec3& eye, cons
 void Game::movement_states(bool aim) {
     if (player.jumps != view_jumps) view_jumps = player.jumps, viewmodel.movement_state(aim ? "AimJump" : "Jump");
     static const char* const kLanding[2][3] = {{"Landing", "LandingMed", "LandingHi"}, {"LandingAim", "LandingAimMed", "LandingAimHi"}};
-    if (const int l = combat.take_landing(); l >= 0) viewmodel.movement_state(kLanding[aim][l]);
+    if (const int l = combat.take_landing(); l >= 0) {
+        viewmodel.movement_state(kLanding[aim][l]);
+        if (logic.audio && player_type_ >= 0)   // CActorSoundsComponent: event 44, landing
+            logic.anim_sounds().footstep(*logic.audio, player_type_,
+                                         AnimSounds::ground_material(scene, player.center - glm::vec3(0, 0, player.radius.z)),
+                                         AnimSounds::Step::Land, nullptr);
+    }
+}
+
+void Game::player_sounds(float dt, bool walking) {
+    const glm::vec2 now(player.center);
+    const float speed = dt > 0 ? glm::length(now - step_last_) / dt : 0;
+    step_last_ = now;
+    if (!logic.audio) return;
+    if (player_type_ == -2) {
+        player_type_ = -1;
+        for (const auto& [id, t] : gol)
+            if (t.name == "Player") player_type_ = id;
+    }
+    if (player_type_ < 0) return;
+    AnimSounds& sounds = logic.anim_sounds();
+    const glm::vec3 feet = player.center - glm::vec3(0, 0, player.radius.z);
+    if (player.jumps != sound_jumps_) {
+        sound_jumps_ = player.jumps;
+        sounds.footstep(*logic.audio, player_type_, AnimSounds::ground_material(scene, feet), AnimSounds::Step::Jump, nullptr);
+    }
+    // Moving on the ground: a step at once, then one every ComputeStepTimer (shorter the faster).
+    if (!walking || !player.on_ground || speed < 0.5f) {
+        step_timer_ = 0;
+        return;
+    }
+    if ((step_timer_ -= dt * 1000) >= 0) return;
+    const float k = std::min(speed / player.walk_speed, 1.0f);
+    step_timer_ = player.step_max_ms - k * (player.step_max_ms - player.step_min_ms);
+    sounds.footstep(*logic.audio, player_type_, AnimSounds::ground_material(scene, feet),
+                    player.rushing ? AnimSounds::Step::Run : AnimSounds::Step::Walk, nullptr);
 }
 
 void Game::arms_distort() {

@@ -283,6 +283,7 @@ int Game::run_screenshot() {
             arms_distort();
             if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(h);
             movement_states(false);
+            player_sounds(kPhysicsStep, !logic.in_mech() && !logic.seated());
             vm.firing = combat.firing();
             vm.shot = combat.shots() != vm_shots_, vm_shots_ = combat.shots();
             vm.reloading = combat.reloading();

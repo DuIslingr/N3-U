@@ -555,6 +555,7 @@ void Game::run_window() {
             if (combat.take_power_used()) viewmodel.set_state("Repel");
             if (const std::string h = combat.take_view_hurt(); !h.empty()) viewmodel.camera_state(aiming ? "IronSight_" + h : h);
             movement_states(aiming);
+            player_sounds(dt, !flying && !mech && !logic.seated());
             update_frost(dt);
             vm.aiming = aiming;
             vm.running = logic.controls.rush && (keys[SDL_SCANCODE_LSHIFT] || touch_in.run);

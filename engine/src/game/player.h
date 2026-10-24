@@ -23,6 +23,8 @@ public:
     // for jump_time seconds ([14], [15]) while gravity builds up (CCharacterController::Move).
     float gravity = 9.8f, jump_speed = 8.0f, jump_time = 0.8f, max_fall_speed = 30.0f;
     float step_snap = 0.3f;         // when grounded, follow the floor down this far per step
+    // PlayerComponent::ComputeStepTimer: ms between footsteps, [72] slow to [71] at full speed.
+    float step_min_ms = 400, step_max_ms = 600;
 
     glm::vec3 center{0};
     glm::vec3 push{0};              // an outside pull, m/s (SetAttractionDirection), added to the walk

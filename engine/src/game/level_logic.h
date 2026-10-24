@@ -332,6 +332,7 @@ public:
     void camera_to_player(bool keep_view);
     // The first clip of a state in gol type `type`'s state set ("" if it has none).
     std::string state_clip(int type, const std::string& state);
+    class AnimSounds& anim_sounds() { return *anim_sounds_; }
     std::vector<std::string> state_clips(int type, const std::string& state);   // all its variants
     float state_speed(int type, const std::string& state);   // its clip's speed (negative: backwards); 1 if none
     // Tutorial steps (CLevelTutorial*): Start<Kind>Tutorial(ms) waits for the player to do

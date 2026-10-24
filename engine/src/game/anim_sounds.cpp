@@ -14,6 +14,7 @@ namespace nova {
 namespace {
 
 constexpr int kCompStatesSet = 0x0e;
+constexpr int kCompActorSounds = 0x5a;
 
 std::string lower(std::string s) {
     for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -25,6 +26,18 @@ std::string lower(std::string s) {
 const AnimSounds::TypeInfo& AnimSounds::info(int type) {
     if (auto it = by_type_.find(type); it != by_type_.end()) return it->second;
     TypeInfo& out = by_type_[type];
+    // Its footsteps: [0] {{material, {walk}, {run}, {jump}, {land}, {roll}, {fall}, {sprint}}...}.
+    if (auto g = gol_.find(type); g != gol_.end())
+        if (const Value* v = resolved_template(g->second, gol_, kCompActorSounds); v && v->size() > 0)
+            for (const Value& e : (*v)[0].list) {
+                if (e.size() < 2) continue;
+                StepSet set;
+                set.material = e[0].i;
+                for (size_t k = 0; k < 7 && k + 1 < e.size(); ++k)
+                    for (const Value& snd : e[k + 1].list)
+                        if (snd.size() > 0 && snd[0].type == Value::String) set.sounds[k].push_back(snd[0].s);
+                out.steps.push_back(std::move(set));
+            }
     // The type's states and those of the state sets it derives from (marines keep theirs in
     // a StateSet* parent; the type's own come first).
     std::vector<const Value*> states;
@@ -66,6 +79,14 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
                             if (f == std::string::npos) continue;
                             const size_t b = f + 9, e = code.find('(', b);
                             if (e != std::string::npos) state.scripts.push_back({ev[1].as_float(), code.substr(b, e - b)});
+                        }
+                    if (group.size() >= 3 && group[1].s == "GameEvent")   // [name, start ms, end ms, id, argument]
+                        for (const Value& ev : group[2].list) {
+                            if (ev.size() < 5 || (ev[3].i != 37 && ev[3].i != 43 && ev[3].i != 44)) continue;
+                            std::vector<ActorEvent>& list = out.actor_events[lower(clip[0].s)];
+                            const ActorEvent e{ev[1].as_float(), ev[3].i, ev[4].i};
+                            if (std::none_of(list.begin(), list.end(), [&](const ActorEvent& x) { return x.ms == e.ms && x.id == e.id; }))
+                                list.push_back(e);
                         }
                     if (group.size() < 3 || group[1].s != "Sound") continue;
                     for (const Value& ev : group[2].list) {
@@ -140,10 +161,33 @@ const AnimSounds::State* AnimSounds::state(int type, const std::string& name) {
     return it == t.states.end() ? nullptr : &it->second;
 }
 
+int AnimSounds::ground_material(const Scene& scene, const glm::vec3& p) {
+    float z = 0;
+    uint32_t tri = 0;
+    if (!scene.collision().ray_down(p + glm::vec3(0, 0, 0.5f), 2.5f, z, nullptr, &tri)) return -1;
+    return scene.collision().material(tri);
+}
+
+void AnimSounds::footstep(Audio& audio, int type, int material, Step kind, const glm::vec3* at) {
+    const TypeInfo& ti = info(type);
+    if (ti.steps.empty()) return;
+    // CActorSoundsComponent::StepsSoundsIdx: the set for the material, else the metal one (1).
+    const StepSet* set = &ti.steps[0];
+    for (const StepSet& s : ti.steps)
+        if (s.material == 1) set = &s;
+    for (const StepSet& s : ti.steps)
+        if (s.material == material) set = &s;
+    const std::vector<std::string>& sounds = set->sounds[int(kind)];
+    if (sounds.empty()) return;
+    Audio::Params p;
+    p.position = at;
+    audio.play_one_of(sounds, p);
+}
+
 void AnimSounds::update(Scene& scene, Audio* audio, size_t index, int type) {
     const TypeInfo& ti = info(type);
     const ClipEvents& all = ti.clips;
-    if (all.empty() && ti.effects.empty()) return;
+    if (all.empty() && ti.effects.empty() && ti.actor_events.empty()) return;
     Scene::ClipState cs;
     if (!scene.clip_state(index, cs) || cs.reverse) return;
     Last& last = last_[index];
@@ -156,6 +200,16 @@ void AnimSounds::update(Scene& scene, Audio* audio, size_t index, int type) {
     if (auto fx = ti.effects.find(clip); fx != ti.effects.end())
         for (const EffectEvent& e : fx->second)
             if (passed(e.ms)) scene.particles().start(e.effect, scene.object_matrix(index, e.node));
+    if (auto ae = ti.actor_events.find(clip); audio && ae != ti.actor_events.end() && !ti.steps.empty()) {
+        const glm::vec3 feet(scene.object_matrix(index)[3]);
+        int material = -2;
+        for (const ActorEvent& e : ae->second) {
+            if (!passed(e.ms)) continue;
+            if (material == -2) material = ground_material(scene, feet);
+            const Step kind = e.id == 37 ? (e.arg > 0 ? Step::Run : Step::Walk) : e.id == 43 ? Step::Roll : e.arg != 0 ? Step::Jump : Step::Land;
+            footstep(*audio, type, material, kind, &feet);
+        }
+    }
     auto it = all.find(clip);
     if (it == all.end() || !audio) return;
     const glm::vec3 at(scene.object_matrix(index)[3]);

@@ -153,6 +153,7 @@ Combat::Combat(Scene& scene, Player& player, LevelLogic& logic, const Gol& gol)
         if (const Value* pc = resolved_template(type, gol_, 0x2a); pc && pc->size() > 15) {
             player_.gravity = -num(*pc, 13, -9.8f), player_.max_fall_speed = num(*pc, 6, 30);
             player_.jump_speed = num(*pc, 14, 8), player_.jump_time = num(*pc, 15, 0.8f);
+            player_.step_min_ms = num(*pc, 71, 400), player_.step_max_ms = num(*pc, 72, 600);
             fall_damage_from_ = num(*pc, 7, 15), fall_damage_per_ = num(*pc, 4, 16);
             landing_speeds_ = {num(*pc, 8, 5), num(*pc, 9, 15), num(*pc, 10, 20)};
         }

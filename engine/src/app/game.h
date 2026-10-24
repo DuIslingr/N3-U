@@ -74,6 +74,13 @@ private:
     // A fixed step of level logic (and what it sets off: sections, respawns, level ends).
     void step_logic(float dt);
     void movement_states(bool aim);
+    // The player's footsteps, jumps and landings (PlayerComponent::Update's step timer and
+    // CActorSoundsComponent by the ground's material).
+    void player_sounds(float dt, bool walking);
+    float step_timer_ = 0;
+    glm::vec2 step_last_{0};
+    uint32_t sound_jumps_ = 0;
+    int player_type_ = -2;
     void spawn_at_option();
     // A combat step: the player's bullets leave from the view model's muzzle, which flashes
     // for each shot fired.
