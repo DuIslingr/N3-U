@@ -484,6 +484,7 @@ private:
         // CHealthComponent sounds; the NPC weapon's shot sounds (one per burst) and impacts.
         std::vector<std::string> hurt_sounds, death_sounds, fire_sounds;
         std::vector<std::string> aggro_sounds;   // CComponentNPC [55]: turning on the player
+        int weapon_kind = 1;   // CComponentNPC_Config (0x4c) [0]: 2 rocket launcher, 3 sniper rifle
         float hurt_sound_wait = 0;
         Impacts bolt_impacts;
 

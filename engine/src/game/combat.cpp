@@ -1458,6 +1458,7 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     }
     t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
     t.aggro_sounds.clear();
+    if (const Value* cfg = component(o, 0x4c); cfg && cfg->size() > 0) t.weapon_kind = (*cfg)[0].i;   // CNPCComponent::LoadConfig
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 55)
         t.aggro_sounds = sound_list((*npc)[55]);
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 54)
@@ -2380,8 +2381,8 @@ void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool
             }
             t.shots_left = t.burst;
             // CNPCComponent::StartFire: a rocket marine (36) or a sniper (38) calls it.
-            if (t.bolt_splash > 0) bark(36, &t);
-            else if (lower(t.type).find("sniper") != std::string::npos) bark(38, &t);
+            if (t.weapon_kind == 2) bark(36, &t);
+            else if (t.weapon_kind == 3) bark(38, &t);
             // The type's attack choice (BA_ChooseAttack: by accuracy and chance) picks a
             // behaviour: its shots and the gap between them.
             t.behaviour.clear();
