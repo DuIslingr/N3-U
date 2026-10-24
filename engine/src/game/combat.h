@@ -563,6 +563,16 @@ private:
         float ds_turn_max = 20, ds_turn_accel = 10, ds_pause = 1, ds_miss_min = 15, ds_miss_max = 30;
         float ds_yaw = 0, ds_turn = 0, ds_fire_at = -1, ds_wait = 0;
         bool ds_no_turn = false;      // disable_rotation
+        // An armed car (CVehicleCarAI, gol 0x97; its gun CVehicleCar [0], a weapon whose
+        // first fire mode gives the bullet [1], the muzzle object [9] at node [11], the
+        // firing loop [17] and its end [18]): what it sees, its gun turns to and fires at,
+        // a shot per loop of the gun's Attack_AI clip; destroyed, it plays Death.
+        bool car = false;
+        int car_gun_type = -1, car_loop = -1;
+        bool car_firing = false, car_muzzle_shown = false;
+        float car_interval = 0, car_shot = 0, car_yaw = 0, car_pitch = 0;
+        float car_spread = 0, car_spread_min = 0.2f, car_spread_max = 1, car_spread_recover = 0.25f, car_spread_fire = 0.1f;
+        std::string car_loop_sound, car_stop_sound;
         int flight = 0, thrower = -1;   // flight: 1 pulled, 2 held, 3 flying, 4 reached for
         bool flung = false;             // flying thrown (it goes off where it lands), not dropped
         glm::vec3 flight_from{0}, flight_vel{0};
@@ -754,6 +764,8 @@ private:
     const GunDef* gun_def(int type);
     void update_gunner(Target& t, float dt, const glm::vec3& chest, bool sees);
     void update_dropship(Target& t, float dt);
+    void update_car(Target& t, float dt);
+    void car_fire(Target& t, bool on);   // start / stop its gun's firing (clip, sound, shooter)
     // Waypoints flagged as jump points ([9], CWayPointObject::IsJumpPoint) and where each
     // lands (its next waypoint).
     struct JumpPoint {

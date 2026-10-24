@@ -162,6 +162,13 @@ public:
     bool vehicle_follow(int id, int target, float metres);
     void vehicle_set(int id, float max_speed_kmh, float steer_max, float steer_speed);   // < 0: keep
     void vehicle_yaw_limits(int id, float min, float max, float ms);
+    // A vehicle's gun and shooter (scene objects); false without a gun.
+    bool vehicle_gun(int id, size_t& gun, size_t& shooter);
+    // Its AI turns the gun (CVehicleCar::UpdateWeaponLimits): `yaw` degrees from the
+    // vehicle's heading (its shooter platform turns with it), `pitch` up.
+    void aim_vehicle_gun(int id, float yaw, float pitch);
+    // CVehicleCar::Destroy: it stops; its riders go with it.
+    void destroy_vehicle(int id);
     bool enter_vehicle(int id);
     bool man_gun(int id);
     bool enter_mech(int id);   // SwitchToMech: the player pilots the mech
@@ -685,6 +692,12 @@ private:
         };
         std::vector<Part> parts;
         float wheel_angle = 0;
+        // The gun turned by its AI (relative yaw, pitch; degrees) and the shooter platform
+        // node turning with it (its rest rotation within the vehicle).
+        bool gun_aimed = false, destroyed = false;
+        float gun_yaw = 0, gun_pitch = 0;
+        int platform = -2;   // node index; -2 not looked up yet, -1 none
+        glm::quat platform_rest{1, 0, 0, 0};
     };
     void spawn_vehicle_parts(Vehicle& v);
     void place_vehicle_parts(Vehicle& v);

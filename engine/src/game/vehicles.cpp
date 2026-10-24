@@ -10,6 +10,7 @@
 #include "game/scene.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace nova {
 
@@ -58,27 +59,67 @@ void LevelLogic::place_vehicle_parts(Vehicle& v) {
     const Object* o = object(v.id);
     const bool shown = o && o->visible;
     const bool ridden = v.id == player_vehicle_;
+    // The gun turned (by the rider's view, or its AI): the shooter platform (the gun's
+    // mount and the shooter) turns with it about the vehicle's up axis.
+    const bool turned = (ridden || v.gun_aimed) && !v.destroyed;
+    const float yaw = ridden ? angle_diff(v.yaw, player.yaw) : v.gun_yaw, pitch = ridden ? player.pitch : v.gun_pitch;
+    if (v.platform == -2) {
+        v.platform = scene.node_index(v.index, "dummy_platform_shooter");
+        if (v.platform >= 0) {
+            const glm::mat4 car = scene.object_matrix(v.index), node = scene.object_matrix(v.index, "dummy_platform_shooter");
+            v.platform_rest = glm::normalize(glm::quat_cast(glm::mat3(glm::inverse(car) * node)));
+        }
+    }
+    if (v.platform >= 0 && turned) {
+        std::vector<glm::quat> layer(scene.node_names(v.index).size(), glm::quat(1, 0, 0, 0));
+        if (size_t(v.platform) < layer.size())
+            layer[size_t(v.platform)] = glm::inverse(v.platform_rest) * glm::angleAxis(glm::radians(yaw), glm::vec3(0, 0, 1)) * v.platform_rest;
+        scene.set_additive(v.index, std::move(layer));
+    } else if (v.platform >= 0) {
+        scene.set_additive(v.index, {});
+    }
     for (const Vehicle::Part& p : v.parts) {
-        // The player's place: the shooter is the player.
-        const bool show = shown && !(ridden && p.node == "dummy_shooter");
+        // The player's place: the shooter is the player. A destroyed one's riders are gone.
+        const bool show = shown && !(ridden && p.node == "dummy_shooter") && !(v.destroyed && p.kind == Vehicle::Part::Kind::Rider);
         scene.set_object_visible(p.object, show);
         if (!show) continue;
         glm::mat4 m = scene.object_matrix(v.index, p.node);
         if (p.kind == Vehicle::Part::Kind::Wheel) {
             m = glm::rotate(m, v.wheel_angle, glm::vec3(1, 0, 0));
-        } else if (p.kind == Vehicle::Part::Kind::Gun && ridden) {
-            // The turret follows the rider's view.
+        } else if (p.kind == Vehicle::Part::Kind::Gun && turned) {
             m = glm::translate(glm::mat4(1), glm::vec3(m[3]));
-            m = glm::rotate(m, glm::radians(player.yaw), glm::vec3(0, 0, 1));
-            m = glm::rotate(m, glm::radians(player.pitch), glm::vec3(1, 0, 0));
+            m = glm::rotate(m, glm::radians(v.yaw + yaw), glm::vec3(0, 0, 1));
+            m = glm::rotate(m, glm::radians(pitch), glm::vec3(1, 0, 0));
         }
         scene.set_object_transform(p.object, m);
     }
 }
 
-bool LevelLogic::vehicle_move_on_path(int id, int waypoint) {
+bool LevelLogic::vehicle_gun(int id, size_t& gun, size_t& shooter) {
     Vehicle* v = vehicle(id);
     if (!v) return false;
+    gun = shooter = size_t(-1);
+    for (const Vehicle::Part& p : v->parts) {
+        if (p.kind == Vehicle::Part::Kind::Gun) gun = p.object;
+        if (p.node == "dummy_shooter") shooter = p.object;
+    }
+    return gun != size_t(-1);
+}
+
+void LevelLogic::aim_vehicle_gun(int id, float yaw, float pitch) {
+    if (Vehicle* v = vehicle(id)) v->gun_aimed = true, v->gun_yaw = yaw, v->gun_pitch = pitch;
+}
+
+void LevelLogic::destroy_vehicle(int id) {
+    Vehicle* v = vehicle(id);
+    if (!v) return;
+    v->destroyed = true, v->moving = false, v->speed = 0, v->follow = -1;
+    place_vehicle_parts(*v);
+}
+
+bool LevelLogic::vehicle_move_on_path(int id, int waypoint) {
+    Vehicle* v = vehicle(id);
+    if (!v || v->destroyed) return false;
     v->route.clear();
     std::unordered_set<int> seen;
     for (int wp = waypoint; wp >= 0 && seen.insert(wp).second;) {

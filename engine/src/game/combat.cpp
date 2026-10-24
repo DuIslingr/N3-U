@@ -1114,6 +1114,31 @@ void Combat::start(bool keep_stats) {
             t.hostile = (t.attacks & kPlayerTeamBit) != 0;
             t.radius = 4, t.height = 3, t.pos.z -= 1.5f;   // a hull to hit
         }
+        if (const Value* car = component(o, 0x96); car && car->size() > 0 && component(o, 0x97) && !t.actor) {
+            t.car = true;
+            if (const Value* aw = component(o, kCompAwareness); aw && aw->size() > 5)
+                t.team = (*aw)[0].i, t.attacks = uint32_t((*aw)[1].i), t.sight = num(*aw, 2, 40), t.fov = num(*aw, 3, 180), t.close = num(*aw, 5, 10);
+            t.hostile = (t.attacks & kPlayerTeamBit) != 0;
+            t.radius = 1.6f, t.height = 2.2f, t.pos.z -= 0.9f;   // the body, from the ground
+            t.car_gun_type = (*car)[0].i;
+            auto g = gol_.find(t.car_gun_type);
+            const Value* w = g == gol_.end() ? nullptr : resolved_template(g->second, gol_, kCompWeapon);
+            if (w && w->size() > 27 && (*w)[4].size() > 0 && (*w)[4][0].size() > 18) {
+                const Value& mode = (*w)[4][0];
+                set_projectile(t, mode[1].i);
+                // Damage: near [2] within [4] m, else far [1].
+                if (auto b = gol_.find(mode[1].i); b != gol_.end())
+                    if (const Value* pr = resolved_template(b->second, gol_, kCompProjectile); pr && pr->size() > 4 && num(*pr, 4, 0) <= 0)
+                        t.bolt_damage = num(*pr, 1, t.bolt_damage);
+                t.muzzle_type = mode[9].i, t.muzzle_node = str(mode, 11), t.muzzle_clips = first_state_clips(t.muzzle_type);
+                t.car_loop_sound = str(mode, 17), t.car_stop_sound = str(mode, 18);
+                t.car_spread_min = num(*w, 23, 0.2f), t.car_spread_max = num(*w, 24, 1);
+                t.car_spread_recover = num(*w, 26, 0.25f), t.car_spread_fire = num(*w, 27, 0.1f);
+                t.car_spread = t.car_spread_min;
+            } else {
+                t.ranged = false;
+            }
+        }
         targets_.push_back(std::move(t));
         ++stats_.targets;
         if (targets_.back().actor) ++stats_.actors;
@@ -2491,6 +2516,96 @@ void Combat::update_dropship(Target& t, float dt) {
     }
 }
 
+// CVehicleCarAI::Update: while it detects a target it selects one and fires its gun's weapon
+// at it (the aim point half its height up), again after [0] ms (0 in the data, so it keeps
+// firing; the weapon's Attack_AI clip paces the shots). CVehicleCar::UpdateTarget /
+// UpdateWeaponLimits turn the gun to 0.85 of the target's height (100 m ahead without
+// one), its pitch within 20 degrees of the chassis.
+void Combat::update_car(Target& t, float dt) {
+    if (!alive(t)) return;
+    const LevelLogic::Object* o = logic_.object(t.id);
+    size_t gun, shooter;
+    if (!o || !logic_.vehicle_gun(t.id, gun, shooter)) return;
+    t.pos = o->position - glm::vec3(0, 0, 0.9f), t.yaw = o->yaw;
+    if (t.car_interval <= 0) {
+        const std::string clip = logic_.state_clip(t.car_gun_type, "Attack_AI");
+        const float len = clip.empty() ? -1 : scene_.clip_length(gun, clip);
+        t.car_interval = len > 0.02f ? len / std::max(std::fabs(logic_.state_speed(t.car_gun_type, "Attack_AI")), 0.1f) : 0.134f;
+    }
+    if (!t.ranged) return;
+    // What it fights, looked for a few times a second.
+    if ((t.choose_timer -= dt) <= 0) t.choose_timer = 0.25f, t.enemy = choose_enemy(t);
+    glm::vec3 feet, chest;
+    const bool sees = !player_dead && t.enemy != kNoEnemy && enemy_points(t, t.enemy, feet, chest) && sees_point(t, chest);
+    const glm::vec3 pivot(scene_.object_matrix(gun)[3]);
+    const float y = glm::radians(t.yaw);
+    const float tall = !sees ? 0 : t.enemy == -1 ? 2 * player_.radius.z : targets_[size_t(t.enemy)].height;
+    const glm::vec3 look = sees ? feet + glm::vec3(0, 0, tall * 0.85f) : pivot + glm::vec3(-std::sin(y), std::cos(y), 0) * 100.0f;
+    const glm::vec3 to = look - pivot;
+    const float want_yaw = angle_diff(t.yaw, yaw_towards(pivot, look));
+    const float want_pitch = std::clamp(glm::degrees(std::atan2(to.z, glm::length(glm::vec2(to)))), -20.0f, 20.0f);
+    const float step = 120.0f * dt;
+    t.car_yaw += std::clamp(angle_diff(t.car_yaw, want_yaw), -step, step);
+    t.car_pitch += std::clamp(want_pitch - t.car_pitch, -step, step);
+    logic_.aim_vehicle_gun(t.id, t.car_yaw, t.car_pitch);
+    // Firing while it sees it (stopping half a second after it lost it), a shot per loop.
+    t.car_spread = std::max(t.car_spread - t.car_spread_recover * dt, t.car_spread_min);
+    if (sees) t.lost_sight = 0;
+    else t.lost_sight += dt;
+    if (sees && !t.car_firing) car_fire(t, true), t.car_shot = 0.016f;
+    else if (!sees && t.car_firing && t.lost_sight > 0.5f) car_fire(t, false);
+    if (t.car_muzzle_shown && scene_.clip_finished(t.muzzle_object)) scene_.set_object_visible(t.muzzle_object, false), t.car_muzzle_shown = false;
+    if (!t.car_firing || (t.car_shot -= dt) > 0) return;
+    t.car_shot += t.car_interval;
+    glm::vec3 muzzle = pivot;
+    const std::string node = t.muzzle_node.empty() ? std::string("muzzle") : t.muzzle_node;
+    scene_.node_position(gun, node, muzzle);
+    if (t.muzzle_type >= 0 && !t.muzzle_clips.empty()) {
+        if (t.muzzle_object == size_t(-1)) t.muzzle_object = scene_.spawn_object(t.muzzle_type, -5000 - attachment_id_++, muzzle, 0);
+        if (t.muzzle_object != size_t(-1)) {
+            scene_.play_clip(t.muzzle_object, t.muzzle_clips[size_t(rng_()) % t.muzzle_clips.size()], false);
+            scene_.set_object_transform(t.muzzle_object, scene_.object_matrix(gun, node));
+            scene_.set_object_visible(t.muzzle_object, true);
+            t.car_muzzle_shown = true;
+        }
+    }
+    // At half its height (where it was last seen), turned by the weapon's spread.
+    const glm::vec3 at = sees ? feet + glm::vec3(0, 0, tall * 0.5f) : look;
+    glm::vec3 dir = glm::normalize(at - muzzle);
+    std::uniform_real_distribution<float> u(-t.car_spread, t.car_spread);
+    const glm::vec3 side = glm::normalize(glm::cross(dir, glm::vec3(0, 0, 1)) + glm::vec3(1e-6f, 0, 0)), up = glm::cross(side, dir);
+    dir = glm::normalize(dir + side * std::tan(glm::radians(u(rng_))) + up * std::tan(glm::radians(u(rng_))));
+    t.car_spread = std::min(t.car_spread + t.car_spread_fire, t.car_spread_max);
+    Bolt b{muzzle, dir * t.bolt_speed, t.bolt_damage, 3.0f, glm::vec4(1, 0.8f, 0.4f, 1), int(&t - targets_.data())};
+    b.splash = t.bolt_splash, b.radius = t.bolt_radius;
+    launch_bolt(b, t.bolt_looks);
+    ++stats_.enemy_shots;
+}
+
+void Combat::car_fire(Target& t, bool on) {
+    t.car_firing = on;
+    size_t gun, shooter;
+    if (!logic_.vehicle_gun(t.id, gun, shooter)) return;
+    const LevelLogic::Object* o = logic_.object(t.id);
+    // CWeaponComponent::FireWeapon / FireStop: the gun's Attack_AI (or Idle) clip, the
+    // firing loop and its end; CVehicleCar::StartShooterFire / StopShooterFire.
+    const std::string clip = logic_.state_clip(t.car_gun_type, on ? "Attack_AI" : "Idle");
+    if (!clip.empty()) scene_.play_clip(gun, clip, true);
+    if (shooter != size_t(-1) && shooter < scene_.level().objects.size()) {
+        const std::string pose = logic_.state_clip(scene_.level().objects[shooter].type, on ? "ShootAttack" : "ShootIdle");
+        if (!pose.empty()) scene_.play_clip(shooter, pose, true);
+    }
+    if (t.car_loop >= 0 && logic_.audio) logic_.audio->stop(t.car_loop, 50);
+    t.car_loop = -1;
+    if (on && logic_.audio && !t.car_loop_sound.empty() && o) {
+        Audio::Params p;
+        p.position = &o->position, p.loop = 1;
+        t.car_loop = logic_.audio->play(t.car_loop_sound, p);
+    } else if (!on && !t.car_stop_sound.empty() && o) {
+        sound(t.car_stop_sound, &o->position);
+    }
+}
+
 void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
@@ -2730,6 +2845,14 @@ void Combat::die(Target& t) {
     } else if (t.actor && !death.empty()) {
         t.state = Target::State::Dying;
         play(t, death, false);
+    } else if (t.car) {
+        // CVehicleCar::Destroy: it stops and plays Death (the wreck, its explosion); the
+        // wreck stays.
+        if (t.car_firing) car_fire(t, false);
+        if (t.car_muzzle_shown) scene_.set_object_visible(t.muzzle_object, false), t.car_muzzle_shown = false;
+        logic_.destroy_vehicle(t.id);
+        t.state = Target::State::Dead;
+        play_state(t, "Death", false);
     } else {
         t.state = Target::State::Dead;
         if (!t.actor) logic_.show(*o, false);
@@ -2903,6 +3026,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         }
         if (t.actor) update_actor(t, dt), update_cloak(t, dt);
         else if (t.dropship) update_dropship(t, dt);
+        else if (t.car) update_car(t, dt);
         else if (t.flight) update_flight(t, dt);
         else if (t.paralyzed > 0) update_paralysis(t, dt);
     }
