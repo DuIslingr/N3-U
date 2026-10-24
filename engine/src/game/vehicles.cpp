@@ -97,6 +97,22 @@ void LevelLogic::place_vehicle_parts(Vehicle& v) {
                 if (clip != p.pose) scene.play_clip(p.object, clip, std::abs(r) < 1e-3f), p.pose = clip;
                 if (std::abs(r) >= 1e-3f) scene.set_clip_time(p.object, scene.clip_length(p.object, clip) * std::abs(r));
             }
+        } else if (p.node == "dummy_shooter" && p.object < scene.level().objects.size() &&
+                   std::abs((turned ? pitch : 0.0f) - p.posed_pitch) > 0.25f) {
+            // CVehicleCar::UpdateShooterStates: ShootUp / ShootDown held |pitch| / 30 degrees
+            // into its clip on a second slot; here the turn from its first frame, layered.
+            p.posed_pitch = turned ? pitch : 0.0f;
+            const float f = std::min(std::abs(p.posed_pitch) / 30.0f, 1.0f);
+            const std::string clip = state_clip(scene.level().objects[p.object].type, p.posed_pitch > 0 ? "ShootUp" : "ShootDown");
+            std::vector<glm::quat> from, to;
+            float length = 0;
+            if (f > 0.01f && !clip.empty() && scene.sample_rotations(p.object, clip, 0, from, &length) &&
+                scene.sample_rotations(p.object, clip, std::max(length - 1, 0.0f) * f, to)) {
+                for (size_t n = 0; n < from.size(); ++n) to[n] = glm::normalize(glm::inverse(from[n]) * to[n]);
+                scene.set_additive(p.object, std::move(to));
+            } else {
+                scene.set_additive(p.object, {});
+            }
         } else if (p.kind == Vehicle::Part::Kind::Gun && turned) {
             m = glm::translate(glm::mat4(1), glm::vec3(m[3]));
             m = glm::rotate(m, glm::radians(v.yaw + yaw), glm::vec3(0, 0, 1));

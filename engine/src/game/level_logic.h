@@ -713,6 +713,7 @@ private:
             enum class Kind { Wheel, Gun, Rider } kind = Kind::Rider;
             bool front = false;   // a wheel that steers
             std::string pose;     // the driver's clip
+            float posed_pitch = 0;   // the shooter's: the gun pitch its posture shows
         };
         std::vector<Part> parts;
         float wheel_angle = 0;
