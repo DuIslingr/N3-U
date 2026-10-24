@@ -416,6 +416,7 @@ private:
         // Weights of what it does from cover (UpdateLowCover's fuzzy actions): fire, lean,
         // blind fire, peek, roll out, throw a grenade.
         float fire = 100, lean = 0, blind = 0, peek = 0, roll = 0, grenade = 0;
+        float crouch_min = 0, crouch_max = 0;   // seconds crouched in the open (after a roll out)
         };
         std::vector<Band> bands;
         // Its factors per second (CComponentAI [51]-[65], CAIComponent::GetAF_*); hurt: x the
@@ -440,6 +441,7 @@ private:
         glm::vec3 root_prev{0};
         bool root_moves = true;        // false: a clip it only waits out (getting up after the roll)
         int root_cover = -1;           // rolling into this cover: hidden there when the clip ends
+        float crouch_left = 0;         // crouched in the open, firing (UpdateCrouch), this much longer
         bool cover_next_loop = false;
         float cover_timer = 0, cover_eval = 0;
         float idle_in_cover_min = 1, idle_in_cover_max = 2, attack_min = 1, attack_max = 3;   // seconds

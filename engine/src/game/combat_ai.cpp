@@ -67,6 +67,7 @@ void Combat::read_ai(Target& t, const Value& ai) {
             band.pause_min = field(b, 22, 1000) / 1000.0f, band.pause_max = field(b, 23, 1000) / 1000.0f;
             band.fire = field(b, 13, 100), band.lean = field(b, 14, 0), band.blind = field(b, 15, 0);
             band.peek = field(b, 16, 0), band.roll = field(b, 17, 0), band.grenade = field(b, 18, 0);
+            band.crouch_min = field(b, 6, 0) / 1000.0f, band.crouch_max = field(b, 7, 0) / 1000.0f;
             t.bands.push_back(band);
         }
 }
@@ -198,8 +199,14 @@ bool Combat::update_root_motion(Target& t) {
             std::snprintf(line, sizeof line, "%d rolled to (%.1f %.1f %.1f)", t.id, t.pos.x, t.pos.y, t.pos.z);
             log(line);
         }
-        // Up from the crouch it ends in (CrouchExit: CrouchEnter's clip backwards), when its
-        // band gives it no time crouched (UpdateCrouch).
+        // It ends crouched: there for its band's crouch time, firing (UpdateCrouch), or up at
+        // once without one (CrouchExit: CrouchEnter's clip backwards).
+        if (const Target::Band* b = band(t); b && b->crouch_max > 0) {
+            t.crouch_left = std::uniform_real_distribution<float>(b->crouch_min, std::max(b->crouch_max, b->crouch_min))(rng_);
+            if (logic_.trace) log(std::to_string(t.id) + " stays crouched for " + std::to_string(t.crouch_left) + " s");
+            set_crouched(t, true);
+            return false;
+        }
         if (const std::string c = logic_.state_clip(scene_.level().objects[t.object].type, "CrouchExit"); !c.empty()) {
             start_root_motion(t, c, false, true);
             return true;
@@ -252,6 +259,17 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
     const bool in_cover = t.cover >= 0 && t.cover_phase != Target::CoverPhase::Moving;
     update_aggressiveness(t, dt, dist, sees, in_cover);
     if (update_root_motion(t)) return true;   // rolling out of cover
+    if (t.crouch_left > 0) {   // crouched in the open: firing from there, then up
+        face(t, target, dt);
+        if (t.reload_left <= 0) play(t, logic_.state_clip(scene_.level().objects[t.object].type, "CrouchAttack"), true);
+        attack_fire(t, chest, on_player, sees, dt);
+        if ((t.crouch_left -= dt) <= 0 && t.reload_left <= 0) {
+            set_crouched(t, false);
+            if (const std::string c = logic_.state_clip(scene_.level().objects[t.object].type, "CrouchExit"); !c.empty())
+                start_root_motion(t, c, false, true);
+        }
+        return true;
+    }
     if (!t.use_covers || !t.ranged || !t.mobile || t.hold || t.has_region || nav_.empty() || t.tri < 0 || covers_.empty()) return false;
     const glm::vec3 enemy_eye = chest + glm::vec3(0, 0, 0.3f);
     // The cover still hides it? Flanked, or the enemy upon it: out (CheckPositionIsSafe).
