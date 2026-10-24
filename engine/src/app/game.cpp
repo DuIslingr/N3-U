@@ -629,6 +629,21 @@ void Game::draw_crosshair(int w, int h) {
         std::snprintf(line, sizeof line, "%0.2fm", x.distance);
         objective_text.draw(hud_sprites, line, c + glm::vec2(0, 64 * px), w, glm::vec4(1, 0, 0, 1), {0.5f, 0.0f});
     }
+    // The zoom slider (CLevelInterfaceNormal::EnableZoomSlider; a CSlider of controls.bsprite
+    // at 30 left of the right edge and 20 below the middle in 480x320 units): its track
+    // (frame 39) and its knob (41) up it from the widest view to the narrowest.
+    float widest = 0, narrowest = 0;
+    const Sprite* cs = hud.sprite("controls.bsprite");
+    if (x.scope && cs && viewmodel.zoom_range(widest, narrowest) && widest != narrowest) {
+        const float kc = hud.sprite_scale("controls.bsprite");
+        const glm::vec4 track = Hud::frame_bounds(*cs, 39);
+        const glm::vec2 at(float(w) - 30.0f * float(w) / 480.0f, float(h) * 0.5f - (track.w - track.y) * kc * 0.5f + 20.0f * float(h) / 320.0f);
+        hud.draw_frame(hud_sprites, *cs, 39, at, kc, glm::vec4(1));
+        const float fov = zoom_fov_ > 0 ? std::clamp(zoom_fov_, std::min(widest, narrowest), std::max(widest, narrowest)) : widest;
+        const float along = (fov - widest) / (narrowest - widest);
+        const glm::vec2 knob(at.x + (track.x + track.z) * 0.5f * kc, at.y + glm::mix(track.w, track.y, along) * kc);
+        hud.draw_frame(hud_sprites, *cs, 41, knob, kc, glm::vec4(1));
+    }
 }
 
 void Game::fire_step(float dt, const CombatInput& in, const glm::vec3& eye, const glm::vec3& aim, bool aiming) {
