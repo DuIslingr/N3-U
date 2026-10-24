@@ -269,9 +269,13 @@ public:
     // The object's running effects moved to where its nodes now are (it was moved).
     void move_effects(Object& o);
     void message(const std::string& text, float seconds);
-    // ShowDialogMessage: voice-over lines in order (each shown while its voice plays);
-    // "MessageEnd" is sent after the last.
+    // ShowDialogMessage: voice-over lines in order (each shown while its voice plays), as
+    // show_message; "MessageEnd" is sent after the last.
     void dialog(const std::vector<std::string>& lines);
+    // ShowMessage (CLevel::ShowMessage, CDialogTextBox::Init): its lines in order, replacing
+    // what the box showed; each plays its voice (by the line's name) and stays while it
+    // lasts, else for `seconds`. "MessageEnd" is sent after the last.
+    void show_message(const std::vector<std::string>& lines, float seconds);
     void teleport_player(const Object& spawn);
     void start_script(const std::string& function, int owner);
     void send_event_later(const std::string& event, float seconds, int id = -1);
@@ -511,7 +515,11 @@ private:
     float breath_timer_ = 0, breath_recovery_ = 0, breath_damage_ = 0;
     bool breath_rushing_ = false;
     void update_breathing(float dt);
-    std::deque<std::string> dialog_;
+    struct DialogLine {
+        std::string id;
+        float seconds = -1;   // shown this long without a voice; < 0: 3 s
+    };
+    std::deque<DialogLine> dialog_;
     bool dialog_active_ = false;
     int dialog_voice_ = -1;
     float dialog_wait_ = 0;

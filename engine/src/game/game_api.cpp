@@ -934,16 +934,18 @@ int api_get_random(lua_State* L) {   // GetRandom(n) -> 0..n-1, GetRandom(a, b) 
     return 1;
 }
 
-// --- messages (text ids into the string tables; shown raw for now) ------------------
+// --- messages (text ids into the string tables) --------------------------------------
 
-// ShowMessage(text, ?, ?, ms, ?): "MessageEnd" is sent when it has been shown.
+// ShowMessage(text, face, [text, face, ...], ?, ms, flag): (n - 3) / 2 lines (empty ones
+// skipped), each shown for ms or while its voice lasts; "MessageEnd" after the last.
 int api_show_message(lua_State* L) {
-    LevelLogic& c = ctx(L);
-    float seconds = 3;
-    for (int i = 2; i <= lua_gettop(L); ++i)
-        if (lua_type(L, i) == LUA_TNUMBER && lua_tonumber(L, i) >= 500) seconds = float(lua_tonumber(L, i)) / 1000.0f;
-    c.message(str_arg(L, 1), seconds);
-    c.send_event_later("MessageEnd", seconds);
+    const int n = lua_gettop(L);
+    std::vector<std::string> lines;
+    for (int k = 0; k < (n - 3) / 2; ++k)
+        if (lua_type(L, 1 + 2 * k) == LUA_TSTRING && lua_tostring(L, 1 + 2 * k)[0]) lines.push_back(lua_tostring(L, 1 + 2 * k));
+    if (lines.empty() && n >= 1 && lua_type(L, 1) == LUA_TSTRING && lua_tostring(L, 1)[0]) lines.push_back(lua_tostring(L, 1));
+    const float ms = n >= 2 && lua_isnumber(L, n - 1) ? float(lua_tonumber(L, n - 1)) : 0.0f;
+    ctx(L).show_message(lines, ms / 1000.0f);
     return 0;
 }
 // ShowDialogMessage(line, line, ..., flag): voice-over lines played in order.

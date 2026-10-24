@@ -1478,8 +1478,14 @@ void LevelLogic::update_movers(float dt) {
     }
 }
 
-void LevelLogic::dialog(const std::vector<std::string>& lines) {
-    for (const std::string& l : lines) dialog_.push_back(l);
+void LevelLogic::dialog(const std::vector<std::string>& lines) { show_message(lines, -1); }
+
+void LevelLogic::show_message(const std::vector<std::string>& lines, float seconds) {
+    if (lines.empty()) return;
+    if (dialog_voice_ >= 0 && audio) audio->stop(dialog_voice_, 100);
+    dialog_voice_ = -1, dialog_wait_ = 0;
+    dialog_.clear();
+    for (const std::string& l : lines) dialog_.push_back({l, seconds});
     dialog_active_ = true;
 }
 
@@ -1497,14 +1503,17 @@ void LevelLogic::update_dialog(float dt) {
         runtime_.send_event("MessageEnd");
         return;
     }
-    const std::string line = dialog_.front();
+    const DialogLine next = dialog_.front();
     dialog_.pop_front();
+    const std::string& line = next.id;
     dialog_line_ = line;
     dialog_voice_ = audio ? audio->play(line) : -1;
-    // Without a voice the line stays up for a few seconds; after one, a short pause.
-    dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : 3.0f;
+    // Without a voice the line stays up for its time (a few seconds); after one, a short pause.
+    const float alone = next.seconds > 0 ? next.seconds : 3.0f;
+    dialog_wait_ = dialog_voice_ >= 0 ? 0.3f : alone;
     // Lines with text show it while the voice plays; voice-only barks (VFX_...) show nothing.
-    if (!strings.find(line).empty()) message(line, dialog_voice_ >= 0 ? 4.0f : 3.0f);
+    if (next.seconds >= 0 && dialog_voice_ < 0) message(line, alone);   // ShowMessage: its text, voiced or not
+    else if (!strings.find(line).empty()) message(line, dialog_voice_ >= 0 ? 4.0f : alone);
 }
 
 void LevelLogic::update_jetpack_sound() {
