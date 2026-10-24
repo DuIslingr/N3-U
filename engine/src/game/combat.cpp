@@ -976,6 +976,25 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if ((*h)[20].type == Value::String) t.vanish_sound = (*h)[20].s;
     }
     t.dissolve = -1;
+    t.attack_choices.clear(), t.attack_state.clear(), t.attack_ms = -1;
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 54)
+        for (const Value& a : (*npc)[54].list)
+            if (a.size() > 1 && a[0].type == Value::String && a[1].as_float() > 0) t.attack_choices.emplace_back(a[0].s, a[1].as_float());
+    // Only when its states fire by events (the marines fire by their behaviour scripts).
+    {
+        bool fires = false;
+        const auto& st = states_of(o.type);
+        for (const auto& [name, w] : t.attack_choices)
+            for (std::string n = name; !n.empty() && !fires;) {
+                auto it = st.find(n);
+                if (it == st.end()) break;
+                for (const auto& c : it->second.clips)
+                    for (const auto& e : c.second) fires |= e.second == 1 || e.second == 2 || e.second == 3 || e.second == 18 || e.second == 23;
+                if (it->second.loop || it->second.next == n) break;
+                n = it->second.next;
+            }
+        if (!fires) t.attack_choices.clear();
+    }
     t.cloak = Target::Cloak::Visible, t.script_cloak = false, t.recent_damage.clear();
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 69 && (*npc)[62].type == Value::String && !(*npc)[62].s.empty()) {
         t.cloak_model = (*npc)[62].s, t.cloak_material = (*npc)[63].s;
@@ -1575,7 +1594,10 @@ void Combat::update_actor(Target& t, float dt) {
         break;
     case S::Attack:
         face(t, target, dt);
-        if (t.reload_left <= 0) play(t, t.clip_fire, true);
+        if (t.reload_left <= 0 && t.attack_state.empty()) {   // between attacks by states: their attack idle
+            const std::vector<std::string> idle = t.attack_choices.empty() ? std::vector<std::string>{} : logic_.state_clips(scene_.level().objects[t.object].type, "AttackIdle");
+            play(t, idle.empty() ? t.clip_fire : idle[0], true);
+        }
         attack_fire(t, chest, on_player, sees, dt);
         // Lost the line of fire, or too far: close in again.
         if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
@@ -1628,6 +1650,95 @@ void Combat::refill(Target& t) {
     sound(t.reload_sounds, &at);
 }
 
+const std::unordered_map<std::string, Combat::StateDef>& Combat::states_of(int type) {
+    if (auto it = states_cache_.find(type); it != states_cache_.end()) return it->second;
+    auto& out = states_cache_[type];
+    std::function<void(int)> gather = [&](int id) {
+        auto g = gol_.find(id);
+        if (g == gol_.end()) return;
+        if (auto t = g->second.templates.find(0x0e); t != g->second.templates.end() && t->second.size() > 1 && out.empty()) {
+            const auto& list = t->second[1].list;
+            for (const Value& st : list) {
+                if (st.size() < 12 || st[0].type != Value::String) continue;
+                StateDef d;
+                d.loop = st[2].i != 0;
+                if (const int n = st[6].i; n > 0 && size_t(n) < list.size() && list[size_t(n)].size() > 0) d.next = list[size_t(n)][0].s;
+                for (const Value& clip : st[11].list) {
+                    if (clip.size() < 3 || clip[0].type != Value::String) continue;
+                    std::vector<std::pair<float, int>> ev;
+                    for (const Value& group : clip[2].list)
+                        if (group.size() >= 3 && group[0].type == Value::String && group[0].s == "GameEvent")
+                            for (const Value& e : group[2].list)
+                                if (e.size() >= 4) ev.emplace_back(e[1].as_float(), e[3].i);
+                    d.clips.emplace_back(clip[0].s, std::move(ev));
+                }
+                out.emplace(st[0].s, std::move(d));
+            }
+        }
+        for (int p : g->second.parents) gather(p);
+    };
+    gather(type);
+    return out;
+}
+
+bool Combat::play_attack_state(Target& t, const std::string& state) {
+    const auto& st = states_of(scene_.level().objects[t.object].type);
+    auto it = st.find(state);
+    if (it == st.end() || it->second.clips.empty()) return false;
+    const auto& c = it->second.clips[size_t(rng_()) % it->second.clips.size()];
+    if (!scene_.play_clip(t.object, c.first, it->second.loop)) return false;
+    t.playing = c.first, t.attack_state = state, t.attack_clip = c.first, t.attack_ms = -1;
+    if (logic_.trace) log(std::to_string(t.id) + " attack state " + state + " (" + c.first + ")");
+    return true;
+}
+
+// An attack by states (CNPCComponent::Attack: the chosen state, then the ones after it while
+// they are attacks): each GameEvent 1/2/23 fires its first weapon, 3/18 its second
+// (CNPCComponent::OnEvent: FireWithWeapons), all as its one projectile here.
+void Combat::event_attack(Target& t, const glm::vec3& chest, bool on_player) {
+    if (t.attack_state.empty()) {
+        if (t.fire_timer > 0) return;
+        int shooters = 0;
+        for (const Target& o : targets_) shooters += o.token && &o != &t && alive(o);
+        if (on_player && (shooters >= max_shooters_ || burst_cooldown_ > 0)) {
+            t.fire_timer = 0.3f;
+            return;
+        }
+        float total = 0;
+        for (const auto& [n, w] : t.attack_choices) total += w;
+        float roll = std::uniform_real_distribution<float>(0.0f, total)(rng_);
+        std::string pick = t.attack_choices.back().first;
+        for (const auto& [n, w] : t.attack_choices)
+            if ((roll -= w) < 0) {
+                pick = n;
+                break;
+            }
+        if (!play_attack_state(t, pick)) return;
+        if (on_player) t.token = true, burst_cooldown_ = kBurstInterval;
+        t.shots_left = t.burst;   // the aim sweep's bookkeeping
+    }
+    const auto& st = states_of(scene_.level().objects[t.object].type);
+    auto it = st.find(t.attack_state);
+    Scene::ClipState cs;
+    if (it == st.end() || t.playing != t.attack_clip || !scene_.clip_state(t.object, cs)) {
+        t.attack_state.clear(), t.token = false;
+        return;
+    }
+    for (const auto& c : it->second.clips) {
+        if (c.first != t.attack_clip) continue;
+        for (const auto& [ms, id] : c.second)
+            if (ms > t.attack_ms && ms <= cs.ms && (id == 1 || id == 2 || id == 3 || id == 18 || id == 23)) fire_bolt(t, chest);
+    }
+    t.attack_ms = cs.ms;
+    if (!scene_.clip_finished(t.object)) return;
+    // On to the next attack state with a clip, or done.
+    const std::string next = it->second.next;
+    auto n = st.find(next);
+    if (!next.empty() && next != t.attack_state && n != st.end() && !n->second.loop && !n->second.clips.empty() && play_attack_state(t, next)) return;
+    t.attack_state.clear(), t.token = false;
+    t.fire_timer = t.burst_pause * std::uniform_real_distribution<float>(0.8f, 1.6f)(rng_);
+}
+
 void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool sees, float dt) {
     // Reloading (DoReload: the Reload state's clip), and out of rounds: a reload first.
     if (t.reload_left > 0) {
@@ -1658,6 +1769,10 @@ void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool
         t.sweep_sign = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
     }
     t.fire_timer -= dt;
+    if (!t.attack_choices.empty()) {
+        event_attack(t, chest, on_player);
+        return;
+    }
     if (t.fire_timer <= 0) {
         if (t.shots_left <= 0) {
             // A new burst at the player needs one of the few attack tokens; otherwise aim and wait.

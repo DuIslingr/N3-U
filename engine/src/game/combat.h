@@ -345,6 +345,12 @@ private:
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
         ProjectileLooks bolt_looks;
+        // Attacks played as states whose clips' GameEvents fire the shots (CComponentNPC [54]
+        // {state, weight}: the Alien Commander's single shot and multi-shot sweep); the
+        // state playing in such an attack, and how far its events have run.
+        std::vector<std::pair<std::string, float>> attack_choices;
+        std::string attack_state, attack_clip;
+        float attack_ms = -1;
         // The hurt look (CEffectsLocalComponent, 0x93): a technique worn while its time
         // parameter runs from start to end (per ms x 0.001), a hit restarting it once it
         // passed `again`; the hit's point in a parameter. hurt_time < 0: not on.
@@ -555,6 +561,17 @@ private:
     static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
     void hurt_look(Target& t, const glm::vec3* at);   // a hit: the hurt technique on (or again)
     void paralyze_target(Target& t);                    // frozen, wearing its paralyze material
+    // The states set of a type (its own and its parents'): per state, its clips with their
+    // GameEvents {ms, id}, whether it loops and the state after it.
+    struct StateDef {
+        std::vector<std::pair<std::string, std::vector<std::pair<float, int>>>> clips;
+        bool loop = false;
+        std::string next;
+    };
+    const std::unordered_map<std::string, StateDef>& states_of(int type);
+    std::unordered_map<int, std::unordered_map<std::string, StateDef>> states_cache_;
+    bool play_attack_state(Target& t, const std::string& state);
+    void event_attack(Target& t, const glm::vec3& chest, bool on_player);
     void cloak(Target& t, bool instant);
     void uncloak(Target& t);
     void update_cloak(Target& t, float dt);
