@@ -343,6 +343,11 @@ private:
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
         ProjectileLooks bolt_looks;
+        // Its magazine (CComponentNPCWeapon [1] rounds, [2] a shot's; -1: endless), the
+        // rounds left, a reload under way (its clip's seconds left) and its sounds ([23]).
+        int mag_size = -1, per_shot = 1, mag = 0;
+        float reload_left = 0;
+        std::vector<std::string> reload_sounds;
         // What it carries on its nodes: its weapon (CNPCComponent's first, its object
         // first here) and CAttachedObjects (0x91: the marines' head lamp).
         struct Attachment {
@@ -671,6 +676,10 @@ private:
     void use_selected_power(const glm::vec3& eye, const glm::vec3& aim);
     bool throw_started_ = false;
     void fire_bolt(Target& t, const glm::vec3& at);
+    // CNPCWeaponComponent::NeedReload: fewer rounds than `shots` shots (as many as a
+    // magazine holds at most).
+    bool need_reload(const Target& t, int shots) const;
+    void refill(Target& t);   // the magazine full again, with the reload sound
     // Ray against targets: index and distance, -1 if none within `max_t`.
     int ray_target(const glm::vec3& from, const glm::vec3& dir, float max_t, float& t_hit, glm::vec3& point) const;
     WeaponDef load_weapon(const std::string& type_name) const;

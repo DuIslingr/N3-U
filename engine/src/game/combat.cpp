@@ -878,6 +878,8 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
             if (slot.size() > 1 && slot[1].type == Value::String) t.armed = attach(weapon, slot[1].s);
             if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
                 if (nw->size() > 22) t.fire_sounds = sound_list((*nw)[22]);
+                if (nw->size() > 23) t.reload_sounds = sound_list((*nw)[23]);
+                t.mag_size = (*nw)[1].i > 0 ? (*nw)[1].i : -1, t.per_shot = std::max((*nw)[2].i, 1), t.mag = t.mag_size;
                 set_projectile(t, (*nw)[0].i);
                 if (nw->size() > 10 && (*nw)[10].type == Value::String)
                     t.muzzle_type = (*nw)[9].i, t.muzzle_node = (*nw)[10].s, t.muzzle_clips = first_state_clips(t.muzzle_type);
@@ -1443,7 +1445,7 @@ void Combat::update_actor(Target& t, float dt) {
         break;
     case S::Attack:
         face(t, target, dt);
-        play(t, t.clip_fire, true);
+        if (t.reload_left <= 0) play(t, t.clip_fire, true);
         attack_fire(t, chest, on_player, sees, dt);
         // Lost the line of fire, or too far: close in again.
         if ((!sees && t.lost_sight > 0.8f) || dist > t.fire_range * 1.2f) t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
@@ -1484,7 +1486,36 @@ void Combat::update_actor(Target& t, float dt) {
 
 // Firing at the enemy: the aim sweep and the bursts (one token-holder's burst at a time at the
 // player; the attack choice script picks each burst's shots).
+bool Combat::need_reload(const Target& t, int shots) const {
+    if (t.mag_size <= 0) return false;
+    shots = std::min(shots, t.mag_size / t.per_shot);
+    return t.mag < t.per_shot * shots;
+}
+
+void Combat::refill(Target& t) {
+    t.mag = t.mag_size;
+    const glm::vec3 at = t.pos + glm::vec3(0, 0, 1);
+    sound(t.reload_sounds, &at);
+}
+
 void Combat::attack_fire(Target& t, const glm::vec3& chest, bool on_player, bool sees, float dt) {
+    // Reloading (DoReload: the Reload state's clip), and out of rounds: a reload first.
+    if (t.reload_left > 0) {
+        if ((t.reload_left -= dt) <= 0) refill(t), t.fire_timer = std::min(t.fire_timer, 0.2f);
+        return;
+    }
+    if (need_reload(t, 1)) {
+        t.token = false, t.shots_left = 0;
+        const std::vector<std::string> clips = logic_.state_clips(scene_.level().objects[t.object].type, t.crouched ? "CrouchReload" : "Reload");
+        Scene::ClipState cs;
+        if (!clips.empty() && scene_.play_clip(t.object, clips[size_t(rng_()) % clips.size()], false) && scene_.clip_state(t.object, cs)) {
+            t.playing = cs.name, t.reload_left = std::max(cs.length / 1000.0f, 0.3f);
+            if (logic_.trace) log(std::to_string(t.id) + " reloads (" + cs.name + ")");
+        } else {
+            refill(t);
+        }
+        return;
+    }
     if (sees) {   // tracking it: the sweep closes in, the aim time grows
         t.aim_time += dt;
         if (!t.locked_on) {
@@ -1692,6 +1723,7 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     b.splash = t.bolt_splash, b.radius = t.bolt_radius;
     launch_bolt(b, t.bolt_looks);
     if (t.shots_left == t.burst) sound(t.fire_sounds, &muzzle);   // the sounds are whole bursts
+    if (t.mag_size > 0) t.mag = std::max(t.mag - t.per_shot, 0);
     ++stats_.enemy_shots;
 }
 

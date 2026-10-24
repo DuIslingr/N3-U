@@ -335,6 +335,11 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
                 return true;
             }
             if (settling || (t.cover_timer -= dt) > 0) return true;
+            // ReloadInLowCover: under five shots left, reloaded hidden (its state has no clip).
+            if (c.low && need_reload(t, 5)) {
+                refill(t);
+                if (logic_.trace) log(std::to_string(t.id) + " reloads in cover");
+            }
             // UpdateLowCover state 0 (CFuzzyActions): fire (rising), lean out, blind fire
             // (the enemy in front of the cover), peek, or throw a grenade (one enemy grenade
             // about at a time, within its throw range, if it has any), by the band's weights.
@@ -409,6 +414,7 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
             } else {
                 attack_fire(t, chest, on_player, sees, dt);
             }
+            if (need_reload(t, 1) && t.reload_left <= 0) t.cover_timer = 0, t.shots_left = 0;   // out of rounds: down to reload
             if ((t.cover_timer -= dt) <= 0 && t.shots_left <= 0) {   // back down
                 t.token = false;
                 t.cover_phase = Target::CoverPhase::Hidden;
