@@ -52,6 +52,8 @@ void Combat::read_ai(Target& t, const Value& ai) {
     // CComponentAI: [6] uses covers; [21]/[22] attack time (ms) min/max; [25]/[26] time
     // hidden in low cover; [51]-[65] the aggressiveness factors; [66] the bands.
     t.use_covers = ai.size() > 6 && ai[6].i != 0;
+    t.can_dash = ai.size() > 9 && ai[9].i != 0;
+    t.dash_wait_min = field(ai, 31, 5000) / 1000.0f, t.dash_wait_max = field(ai, 32, 10000) / 1000.0f;
     t.attack_min = field(ai, 21, 1000) / 1000.0f, t.attack_max = field(ai, 22, 3000) / 1000.0f;
     t.idle_in_cover_min = field(ai, 25, 1000) / 1000.0f, t.idle_in_cover_max = field(ai, 26, 2000) / 1000.0f;
     t.af_hurt = field(ai, 51, 100), t.af_unhurt = field(ai, 52, 0.8f), t.af_near = field(ai, 53, 15), t.af_near_dist = field(ai, 54, 10);
@@ -245,6 +247,66 @@ bool Combat::roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye) {
     return true;
 }
 
+bool Combat::try_dash(Target& t, const glm::vec3& to, bool forced, const glm::vec3* enemy_chest) {
+    if (!t.can_dash || t.dashing || !t.mobile || nav_.empty() || (!forced && t.dash_wait > 0)) return false;
+    glm::vec3 on;
+    if (nav_.nearest(to + glm::vec3(0, 0, 0.3f), 2.0f, on) < 0) return false;
+    if (!forced && glm::distance(t.pos, on) < t.dash_min) return false;
+    if (!line_clear(t.pos + glm::vec3(0, 0, 0.6f), on + glm::vec3(0, 0, 0.6f))) return false;
+    for (const Grenade& g : live_grenades_)   // CAIController::IsPositionSafe
+        if (g.live && glm::distance(g.pos, on) < 5.0f) return false;
+    if (enemy_chest && !line_clear(on + glm::vec3(0, 0, t.height * 0.85f), *enemy_chest)) return false;
+    // StartSuperSpeed: the shift clip, the distortion material, out of harm's way.
+    t.dashing = true, t.dash_from = t.pos, t.dash_to = on;
+    t.dash_was_invulnerable = t.invulnerable, t.invulnerable = true;
+    const glm::vec2 way(on - t.pos);
+    t.yaw = glm::degrees(std::atan2(-way.x, way.y));
+    const std::string clip = logic_.state_clip(scene_.level().objects[t.object].type, "SuperSpeedStart");
+    if (!clip.empty()) play(t, clip, true);
+    const bool blurred = scene_.set_object_material(t.object, "Executor_grunt_mat_distort.bdae", "Marine_distort");
+    t.dash_blend = -0.3f, t.dash_blend_ms = 200;   // MatsPush, then MatsChangeParam(0, 0.1, 200)
+    scene_.set_object_param(t.object, "BlendFactor", glm::vec4(t.dash_blend), 1);
+    t.state = Target::State::Chase;
+    if (logic_.trace) {
+        char line[128];
+        std::snprintf(line, sizeof line, "%d dashes to (%.1f %.1f %.1f)%s", t.id, on.x, on.y, on.z, blurred ? "" : " (no blur material)");
+        log(line);
+    }
+    return true;
+}
+
+bool Combat::try_dash_aside(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest) {
+    // TrySSRandom: dash_side to the left or the right of the way to the enemy.
+    if (!t.can_dash || t.dash_wait > 0) return false;
+    const glm::vec2 d = glm::normalize(glm::vec2(enemy_feet - t.pos) + glm::vec2(1e-4f, 0));
+    const float side = std::uniform_int_distribution<int>(0, 1)(rng_) ? 1.0f : -1.0f;
+    const glm::vec3 to = t.pos + glm::vec3(d.y, -d.x, 0) * t.dash_side * side;
+    return try_dash(t, to, false, &enemy_chest);
+}
+
+void Combat::update_dash(Target& t, float dt) {
+    // UpdateSuperSpeed_: straight there at dash_speed, then the cooldown.
+    if (t.dash_blend_ms > 0) {   // towards 0.1 by a thousandth of the gap per ms, for 200 ms
+        t.dash_blend += (0.1f - t.dash_blend) * std::min(dt, 1.0f);
+        t.dash_blend_ms -= dt * 1000.0f;
+        scene_.set_object_param(t.object, "BlendFactor", glm::vec4(t.dash_blend), 1);
+    }
+    const glm::vec3 d = t.dash_to - t.pos;
+    const float step = t.dash_speed * dt, len = glm::length(d);
+    if (len > step) {
+        t.pos += d / len * step;
+        scene_.set_object_pose(t.object, t.pos, t.yaw);
+        return;
+    }
+    t.pos = t.dash_to, t.tri = -1;
+    t.dashing = false, t.invulnerable = t.dash_was_invulnerable;
+    t.dash_wait = std::uniform_real_distribution<float>(t.dash_wait_min, std::max(t.dash_wait_max, t.dash_wait_min))(rng_);
+    scene_.set_object_material(t.object, "", "");
+    const std::string clip = logic_.state_clip(scene_.level().objects[t.object].type, "SuperSpeedStop");
+    play(t, clip.empty() ? t.clip_alert : clip, false);
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+}
+
 void Combat::leave_cover(Target& t) {
     if (t.cover >= 0 && size_t(t.cover) < covers_.size()) covers_[size_t(t.cover)].holder = -1;
     t.cover = -1;
@@ -294,6 +356,7 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
         t.cover_phase = Target::CoverPhase::Moving;
         t.state = Target::State::Chase;
         if (roll_into_cover(t, c, enemy_eye)) return true;
+        if (try_dash(t, covers_[size_t(c)].pos, false)) return true;   // CNPCComponent::TakeCover
     }
     const CoverPoint& c = covers_[size_t(t.cover)];
     const Target::Band* b = band(t);

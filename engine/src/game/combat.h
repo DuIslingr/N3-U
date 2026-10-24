@@ -88,6 +88,7 @@ struct NpcGoal {
     int id = 0;
     glm::vec3 pos{0};
     bool run = true;              // Move: the "run" state (else walking pace)
+    bool dash = false;            // Teleport: by super speed (NPCSuperSpeedToWaypoint)
     std::string state;            // Action: the state to play
     float timer = 0, length = 0;
     bool started = false;
@@ -462,6 +463,13 @@ private:
         // Cover (UseCoversForAttack): the cover point it holds, what it does there (moving to
         // it, hidden behind it, up and firing), for how long; when it looks for one again.
         bool use_covers = false;
+        // Super speed (CNPCComponent::TrySSToPosition / UpdateSuperSpeed_), the Executors'
+        // blur-fast dash: AI [9] can; NPC [30] how far aside, [31] the shortest, [32] m/s;
+        // AI [31]/[32] ms before the next (timer 2, as between rolls).
+        bool can_dash = false, dashing = false, dash_was_invulnerable = false;
+        float dash_side = 7, dash_min = 5, dash_speed = 12, dash_wait = 0, dash_wait_min = 5, dash_wait_max = 10;
+        float dash_blend = 0, dash_blend_ms = 0;   // the blur material's BlendFactor (CGameObject::MatsUpdate)
+        glm::vec3 dash_from{0}, dash_to{0};
         int cover = -1;
         enum class CoverPhase { Moving, Hidden, Acting } cover_phase = CoverPhase::Moving;
         // What it does out of hiding (UpdateLowCover's fuzzy actions), on which side of the
@@ -620,6 +628,11 @@ private:
     void leave_cover(Target& t);
     void start_root_motion(Target& t, const std::string& clip, bool moves = true, bool reverse = false);
     bool update_root_motion(Target& t);   // false once the clip is over
+    // Dash to (near) `to` if it can (`forced`: a script's order, whatever the wait); the
+    // way there must be clear and, when it has an enemy, show it from there.
+    bool try_dash(Target& t, const glm::vec3& to, bool forced, const glm::vec3* enemy_chest = nullptr);
+    bool try_dash_aside(Target& t, const glm::vec3& enemy_feet, const glm::vec3& enemy_chest);   // TrySSRandom
+    void update_dash(Target& t, float dt);
     // EnterLowCoverRoll: into a low cover about a roll away; false when it can't.
     bool roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye);
     void set_crouched(Target& t, bool on);

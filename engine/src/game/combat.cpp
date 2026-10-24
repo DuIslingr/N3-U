@@ -1002,6 +1002,8 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
         if (!fires) t.attack_choices.clear();
     }
     t.cloak = Target::Cloak::Visible, t.script_cloak = false, t.recent_damage.clear();
+    if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 32)   // super speed
+        t.dash_side = num(*npc, 30, 7), t.dash_min = num(*npc, 31, 5), t.dash_speed = std::max(num(*npc, 32, 12), 1.0f);
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 69 && (*npc)[62].type == Value::String && !(*npc)[62].s.empty()) {
         t.cloak_model = (*npc)[62].s, t.cloak_material = (*npc)[63].s;
         t.cloak_fade = std::max(num(*npc, 64, 800) / 1000.0f, 0.05f);
@@ -1171,7 +1173,7 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag) {
         const LevelLogic::Object* wp = logic_.object(arg);
         if (!wp) return false;
         NpcGoal g;
-        g.kind = NpcGoal::Kind::Teleport, g.pos = wp->position, g.id = -1;
+        g.kind = NpcGoal::Kind::Teleport, g.pos = wp->position, g.id = -1, g.dash = true;
         t->goals.clear();
         t->goals.push_back(g);
     } else if (order == "set_target") {   // 0: the player
@@ -1408,8 +1410,9 @@ void Combat::run_goal(Target& t, float dt) {
             done = g.timer > 0.6f;
             break;
         case NpcGoal::Kind::Teleport:
-            t.pos = g.pos;
-            t.tri = -1;
+            if (g.dash && first && try_dash(t, g.pos, true)) break;   // NPCSuperSpeedToWaypoint
+            if (g.dash && t.dashing) break;
+            if (!g.dash || first) t.pos = g.pos, t.tri = -1;
             done = true;
             break;
         case NpcGoal::Kind::Action:
@@ -1536,6 +1539,11 @@ void Combat::update_actor(Target& t, float dt) {
         }
         return;
     }
+    t.dash_wait = std::max(t.dash_wait - dt, 0.0f);
+    if (t.dashing) {
+        update_dash(t, dt);
+        if (t.dashing || t.goals.empty()) return;
+    }
     if (!t.goals.empty()) {
         run_goal(t, dt);
         return;
@@ -1604,6 +1612,12 @@ void Combat::update_actor(Target& t, float dt) {
         return;
     }
 
+    // CAIComponent::CanAttack: the enemy out of sight, a dasher dashes aside to where it is in
+    // sight (TrySSRandom), out of any cover.
+    if (t.state != S::Hurt && t.state != S::Melee && !sees && t.lost_sight > 0.5f && try_dash_aside(t, target, chest)) {
+        leave_cover(t);
+        return;
+    }
     // Tactical fighters take cover and fire from it (combat_ai.cpp).
     if (t.state != S::Hurt && t.state != S::Melee && fight_from_cover(t, dt, target, chest, sees, on_player)) {
         scene_.set_object_pose(t.object, t.pos, t.yaw);
