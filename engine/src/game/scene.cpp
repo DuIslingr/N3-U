@@ -917,6 +917,13 @@ void Scene::set_object_visible(size_t object, bool visible) {
     for (size_t i = 0; i < inst.draw_count; ++i) draws_[inst.first_draw + i].hidden = !visible;
 }
 
+bool Scene::object_hidden(size_t object) const {
+    auto it = object_instances_.find(object);
+    if (it == object_instances_.end()) return true;
+    const Instance& inst = instances_[it->second];
+    return inst.draw_count == 0 || draws_[inst.first_draw].hidden;
+}
+
 bool Scene::play_clip(size_t object, const std::string& clip, bool loop, bool reverse) {
     auto it = object_instances_.find(object);
     if (it == object_instances_.end()) return false;
@@ -966,6 +973,7 @@ size_t Scene::spawn_object(int type, int id, const glm::vec3& position, float ya
     one.objects.push_back(o);
     for (Placement p : model_placements(one, gol_)) {
         p.object_index = index;
+        p.animated = true;   // runtime objects get moved (carried weapons, projectiles): posable
         if (const LoadedModel* lm = model(p.model)) {
             const size_t inst = add_instance(*lm, placement_matrix(p.transform), &p);
             object_instances_[index] = inst;

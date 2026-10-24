@@ -215,6 +215,8 @@ public:
     // Where the view model's muzzle is now: the player's bullets leave from it (null: a
     // point below and right of the eye).
     void set_muzzle(const glm::vec3* at) { has_muzzle_ = at != nullptr; if (at) muzzle_ = *at; }
+    // The actors' weapons and other attachments onto their nodes, after the scene animated.
+    void place_attachments();
     const std::string& weapon_sprite() const { return weapon().sprite; }
     int clip_size() const { return weapon().clip; }
     int current_weapon() const { return current_; }
@@ -333,6 +335,21 @@ private:
         int burst = 6;
         glm::vec4 bolt_color{1.0f, 0.45f, 0.15f, 1};
         ProjectileLooks bolt_looks;
+        // What it carries on its nodes: its weapon (CNPCComponent's first, its object
+        // first here) and CAttachedObjects (0x91: the marines' head lamp).
+        struct Attachment {
+            size_t object;
+            std::string node;
+            bool shown = false;
+        };
+        std::vector<Attachment> attached;
+        bool armed = false;                // attached[0] is its weapon
+        // The weapon's muzzle object (CComponentNPCWeapon [9] at [10]), shown per shot.
+        int muzzle_type = -1;
+        std::string muzzle_node;
+        size_t muzzle_object = size_t(-1);
+        std::vector<std::string> muzzle_clips;
+        bool muzzle_shown = false;
         float bolt_splash = 0, bolt_radius = 0;   // its explosion (rockets)
         // Melee.
         float melee_damage = 10, melee_range = 2.2f;
@@ -486,6 +503,8 @@ private:
     size_t take_trail(int type, const glm::vec3& at);
     static glm::mat4 bolt_matrix(const glm::vec3& pos, const glm::vec3& dir);
     ProjectileLooks read_looks(int type) const;
+    std::vector<std::string> first_state_clips(int type) const;
+    int attachment_id_ = 0;
     void launch_bolt(Bolt b, const ProjectileLooks& looks);   // a hidden one of that type, or a new one
     void pose_trail(size_t object, const glm::vec3& from, const glm::vec3& head, const glm::vec3& dir, float length = -1);
     struct Spark {

@@ -850,16 +850,32 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     } else {
         t.radius = 0.9f, t.height = 1.1f, t.headshots = false;   // spiders and other low creatures
     }
-    // Ranged weapon: CNPCComponent weapon list -> CNPCWeaponComponent -> its projectile.
+    // Ranged weapon: CNPCComponent weapon list {type, right hand node, left} ->
+    // CNPCWeaponComponent -> its projectile. The weapon is held at the hand node.
+    auto attach = [&](int type, const std::string& node) {
+        const size_t object = scene_.spawn_object(type, -5000 - attachment_id_++, t.pos, t.yaw);
+        if (object == size_t(-1)) return false;
+        scene_.set_object_visible(object, false);
+        t.attached.push_back({object, node});
+        return true;
+    };
+    t.attached.clear(), t.armed = false, t.muzzle_object = size_t(-1), t.muzzle_type = -1;
     if (const Value* npc = component(o, kCompNpc); npc && npc->size() > 1 && (*npc)[1].size() > 0) {
-        const int weapon = (*npc)[1][0][0].i;
+        const Value& slot = (*npc)[1][0];
+        const int weapon = slot[0].i;
         if (auto w = gol_.find(weapon); w != gol_.end()) {
+            if (slot.size() > 1 && slot[1].type == Value::String) t.armed = attach(weapon, slot[1].s);
             if (const Value* nw = resolved_template(w->second, gol_, kCompNpcWeapon); nw && nw->size() > 0) {
                 if (nw->size() > 22) t.fire_sounds = sound_list((*nw)[22]);
                 set_projectile(t, (*nw)[0].i);
+                if (nw->size() > 10 && (*nw)[10].type == Value::String)
+                    t.muzzle_type = (*nw)[9].i, t.muzzle_node = (*nw)[10].s, t.muzzle_clips = first_state_clips(t.muzzle_type);
             }
         }
     }
+    if (const Value* att = component(o, 0x91); att && att->size() > 0)
+        for (const Value& a : (*att)[0].list)
+            if (a.size() > 1 && a[1].type == Value::String) attach(a[0].i, a[1].s);
     // CComponentNPCWeapon: [6] range, [7] spread max (deg), [8] spread step, [18] sweep
     // radius max, [19] min, [20] shrink rate, [21] turn speed. CComponentAI (78): [14]/[15]
     // accuracy distances, [16] accuracy time (ms), [18] attack behaviours, [19] their choice.
@@ -1555,6 +1571,36 @@ ProjectileLooks Combat::read_looks(int type) const {
     return l;
 }
 
+std::vector<std::string> Combat::first_state_clips(int type) const {
+    std::vector<std::string> out;
+    auto p = gol_.find(type);
+    if (p == gol_.end()) return out;
+    if (const Value* v = resolved_template(p->second, gol_, 0x0e); v && v->size() > 1 && (*v)[1].size() > 0)
+        if (const Value& st = (*v)[1][0]; st.size() > 11)
+            for (const Value& clip : st[11].list)
+                if (clip.size() > 0 && clip[0].type == Value::String) out.push_back(clip[0].s);
+    return out;
+}
+
+void Combat::place_attachments() {
+    for (Target& t : targets_) {
+        if (t.attached.empty()) continue;
+        const LevelLogic::Object* o = logic_.object(t.id);
+        const bool shown = o && o->visible && o->enabled;
+        for (Target::Attachment& a : t.attached) {
+            if (shown) scene_.set_object_transform(a.object, scene_.object_matrix(t.object, a.node));
+            if (shown != a.shown) scene_.set_object_visible(a.object, shown), a.shown = shown;
+        }
+        if (t.muzzle_shown) {
+            if (!shown || scene_.clip_finished(t.muzzle_object)) {
+                scene_.set_object_visible(t.muzzle_object, false), t.muzzle_shown = false;
+            } else {
+                scene_.set_object_transform(t.muzzle_object, scene_.object_matrix(t.attached[0].object, t.muzzle_node));
+            }
+        }
+    }
+}
+
 void Combat::launch_bolt(Bolt b, const ProjectileLooks& looks) {
     const glm::vec3 dir = glm::normalize(b.vel);
     if (looks.trail >= 0 && (b.trail = take_trail(looks.trail, b.pos)) != size_t(-1)) {
@@ -1586,6 +1632,17 @@ void Combat::fire_bolt(Target& t, const glm::vec3& at) {
     glm::vec3 muzzle = t.pos + glm::vec3(0, 0, t.height * 0.7f);
     const float y = glm::radians(t.yaw);
     muzzle += glm::vec3(-std::sin(y), std::cos(y), 0) * (t.radius + 0.3f);
+    // From its weapon's muzzle, which flashes (CNPCWeaponComponent::Fire).
+    if (t.armed && !t.muzzle_node.empty() && scene_.node_position(t.attached[0].object, t.muzzle_node, muzzle) && t.muzzle_type >= 0 &&
+        !t.muzzle_clips.empty()) {
+        if (t.muzzle_object == size_t(-1)) t.muzzle_object = scene_.spawn_object(t.muzzle_type, -5000 - attachment_id_++, muzzle, 0);
+        if (t.muzzle_object != size_t(-1)) {
+            scene_.play_clip(t.muzzle_object, t.muzzle_clips[size_t(rng_()) % t.muzzle_clips.size()], false);
+            scene_.set_object_transform(t.muzzle_object, scene_.object_matrix(t.attached[0].object, t.muzzle_node));
+            scene_.set_object_visible(t.muzzle_object, true);
+            t.muzzle_shown = true;
+        }
+    }
     // CNPCWeaponComponent::UpdateTargetPos / Fire: at the sweeping aim point, turned by the
     // spread (random yaw and pitch within it).
     const float a = glm::radians(t.sweep_a);

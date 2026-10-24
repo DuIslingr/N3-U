@@ -59,6 +59,7 @@ public:
 
     // Level objects (by index into level().objects), for game logic.
     void set_object_visible(size_t object, bool visible);
+    bool object_hidden(size_t object) const;   // hidden with set_object_visible (or no such object)
     void set_object_collision(size_t object, bool enabled) { collision_.set_owner_enabled(uint32_t(object), enabled); }
     // Debugging: hide every placement whose model name contains `substring`; returns how many.
     size_t hide_models(const std::string& substring);

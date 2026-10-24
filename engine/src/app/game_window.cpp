@@ -517,6 +517,7 @@ void Game::run_window() {
             }
         }
         scene.update(dt, cam.position);
+        if (opt.scripts) combat.place_attachments();
         if (opt.scripts) {
             ViewModel::Input vm;
             vm.weapon = combat.weapon_type();
