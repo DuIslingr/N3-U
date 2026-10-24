@@ -6,7 +6,12 @@
 #include <cstdio>
 #include <utility>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
+
 #include "game/combat.h"
+#include "audio/audio.h"
 #include "game/level_logic.h"
 #include "game/player.h"
 #include "game/scene.h"
@@ -394,42 +399,105 @@ bool Combat::try_throw(Target& t, const glm::vec3& enemy_feet) {
     const int pick = choices[size_t(std::uniform_int_distribution<int>(0, int(choices.size()) - 1)(rng_))];
     Target& o = targets_[size_t(pick)];
     t.held = pick, t.throw_stage = 0, t.throw_timer = 0;
-    o.flight = 1, o.thrower = int(&t - targets_.data()), o.flight_from = o.pos, o.flight_t = 0;
-    const glm::vec3 grab(scene_.object_matrix(t.object, t.grab_node)[3]);
-    o.flight_len = 0.3f + glm::distance(o.pos, grab) * 0.05f;   // pulled at about 20 m/s
-    const std::string start = logic_.state_clip(scene_.level().objects[t.object].type, "ThrowAttackStart");
-    if (!start.empty()) play(t, start, false);
-    sound(t.telekinesis_sound, &t.pos);
+    o.flight = 4, o.flung = false, o.thrower = int(&t - targets_.data());
+    // ThrowAttackStart; its GameEvent 35 (at once) puts out the tentacle with the telekinesis loop.
+    play_state(t, "ThrowAttackStart", false);
+    t.tentacle = true, t.tentacle_len = 0;
+    if (logic_.audio && !t.telekinesis_sound.empty()) {
+        Audio::Params p;
+        p.position = &t.pos;
+        t.tk_voice = logic_.audio->play(t.telekinesis_sound, p);
+    }
     if (logic_.trace) log(std::to_string(t.id) + " lifts " + std::to_string(o.id));
     return true;
 }
 
-void Combat::drop_held(Target& t) {   // DropTrownObject
+void Combat::drop_held(Target& t) {   // DropTrownObject: it falls where it was
     if (t.held >= 0 && size_t(t.held) < targets_.size()) {
         Target& o = targets_[size_t(t.held)];
-        if (o.flight == 1 || o.flight == 2) o.flight = 3, o.flight_vel = glm::vec3(0);
+        if (o.flight == 4) o.flight = 0;
+        else if (o.flight == 1 || o.flight == 2) o.flight = 3, o.flung = false, o.flight_vel = glm::vec3(0);
     }
+    remove_tentacle(t);
     t.held = -1;
 }
 
+void Combat::remove_tentacle(Target& t) {   // RemoveTentacle
+    for (size_t part : t.tentacle_parts) scene_.set_object_visible(part, false);
+    t.tentacle = false;
+    if (t.tk_voice >= 0 && logic_.audio) logic_.audio->stop(t.tk_voice, 200);
+    t.tk_voice = -1;
+}
+
+// CTentacleAIComponent::Update: links laid end to end from the grab node towards `to`, the
+// reach growing at the tentacle's speed up to the distance; the last link cut short.
+void Combat::update_tentacle(Target& t, float dt, const glm::vec3& to) {
+    if (tentacle_part_type_ == -2) {
+        tentacle_part_type_ = -1;
+        for (const auto& [id, type] : gol_)
+            if (type.name == "TentaclePart") tentacle_part_type_ = id;
+    }
+    if (tentacle_part_type_ < 0) return;
+    const glm::vec3 from(scene_.object_matrix(t.object, t.grab_node)[3]);
+    const float dist = glm::distance(from, to);
+    float speed = 60;
+    for (const auto& [id, type] : gol_)
+        if (type.name == "Tentacle")
+            if (const Value* v = resolved_template(type, gol_, 0x42); v && v->size() > 0) speed = (*v)[0].as_float();
+    t.tentacle_len = std::min(t.tentacle_len + speed * dt, dist);
+    auto part = [&](size_t n) {
+        while (t.tentacle_parts.size() <= n) {
+            const size_t obj = scene_.spawn_object(tentacle_part_type_, -7000 - tentacle_ids_++, from, 0);
+            scene_.play_clip(obj, "AUTO_SceneAnims_Range", true);
+            if (tentacle_link_ <= 0)
+                tentacle_link_ = std::max(glm::distance(glm::vec3(scene_.object_matrix(obj, "start")[3]), glm::vec3(scene_.object_matrix(obj, "end")[3])), 0.1f);
+            t.tentacle_parts.push_back(obj);
+        }
+        return t.tentacle_parts[n];
+    };
+    part(0);
+    const float link = tentacle_link_;
+    const size_t n = size_t(std::max(1.0f, std::ceil(t.tentacle_len / link)));
+    // The links point down -Y from their start: turned onto the way to the object.
+    const glm::vec3 dir = dist > 1e-3f ? (to - from) / dist : glm::vec3(0, 1, 0);
+    const glm::mat4 turn = glm::mat4_cast(glm::rotation(glm::vec3(0, -1, 0), dir));
+    for (size_t i = 0; i < std::max(n, t.tentacle_parts.size()); ++i) {
+        const size_t obj = part(i);
+        if (i >= n) {
+            scene_.set_object_visible(obj, false);
+            continue;
+        }
+        const float length = std::min(link, t.tentacle_len - float(i) * link);
+        scene_.set_object_visible(obj, length > 0.01f);
+        scene_.set_object_transform(obj, glm::translate(glm::mat4(1), from + dir * (float(i) * link)) * turn *
+                                             glm::scale(glm::mat4(1), glm::vec3(1, std::max(length / link, 0.01f), 1)));
+    }
+    if (t.tk_voice >= 0 && logic_.audio) logic_.audio->set_position(t.tk_voice, t.pos);
+}
+
 void Combat::update_throw(Target& t, float dt, const glm::vec3& enemy_chest) {
-    // Pulled in (ThrowAttackStart, then ThrowAttackIdle), then ThrowAttack lets go at its
-    // GameEvent 10 (309 ms), then ThrowAttackEnd.
-    const int type = scene_.level().objects[t.object].type;
-    auto clip = [&](const char* s) { return logic_.state_clip(type, s); };
+    // Reached for and pulled in (ThrowAttackStart, then ThrowAttackIdle), then ThrowAttack
+    // lets go at its GameEvent 10 (309 ms), then ThrowAttackEnd.
     Target& o = targets_[size_t(t.held)];
     if (!alive(o) || o.flight == 0) {
+        remove_tentacle(t);
         t.held = -1;
         return;
     }
     face(t, enemy_chest, dt);
     t.throw_timer += dt;
+    const glm::vec3 grab(scene_.object_matrix(t.object, t.grab_node)[3]);
+    if (t.tentacle) update_tentacle(t, dt, o.pos + glm::vec3(0, 0, 0.5f));
     switch (t.throw_stage) {
-        case 0:   // pulling
-            if (scene_.clip_finished(t.object)) play(t, clip("ThrowAttackIdle"), true);
+        case 0:   // reaching, then pulling (UpdateUpperBodyThrow)
+            if (scene_.clip_finished(t.object)) play_state(t, "ThrowAttackIdle", true);
+            if (o.flight == 4 && t.tentacle_len >= glm::distance(grab, o.pos + glm::vec3(0, 0, 0.5f)) - 1e-3f) {
+                // The tentacle is there: CPhysicsObjectComponent::Grab pulls it in.
+                o.flight = 1, o.flight_from = o.pos, o.flight_t = 0;
+                o.flight_len = 0.3f + glm::distance(o.pos, grab) * 0.05f;   // pulled at about 20 m/s
+            }
             if (o.flight == 2) {
-                const std::string throwing = clip("ThrowAttack");
-                play(t, throwing, false);
+                play_state(t, "ThrowAttack", false);
                 t.throw_stage = 1, t.throw_timer = 0;
             }
             break;
@@ -439,7 +507,8 @@ void Combat::update_throw(Target& t, float dt, const glm::vec3& enemy_chest) {
                 const glm::vec3 d = enemy_chest - o.pos;
                 const float across = std::max(glm::length(glm::vec2(d)), 0.1f), time = across / o.throw_speed;
                 o.flight_vel = glm::vec3(glm::vec2(d) / across * o.throw_speed, d.z / time + 0.5f * 9.8f * time);
-                o.flight = 3, o.flight_t = 0;
+                o.flight = 3, o.flung = true, o.flight_t = 0;
+                remove_tentacle(t);
                 sound(t.telekinesis_end_sound, &t.pos);
                 t.throw_stage = 2;
                 if (logic_.trace) log(std::to_string(t.id) + " throws " + std::to_string(o.id));
@@ -447,7 +516,7 @@ void Combat::update_throw(Target& t, float dt, const glm::vec3& enemy_chest) {
             break;
         default:
             if (scene_.clip_finished(t.object)) {
-                play(t, clip("ThrowAttackEnd"), false);
+                play_state(t, "ThrowAttackEnd", false);
                 t.held = -1;
             }
             break;
@@ -456,10 +525,15 @@ void Combat::update_throw(Target& t, float dt, const glm::vec3& enemy_chest) {
 
 void Combat::update_flight(Target& o, float dt) {
     o.flight_t += dt;
+    const Target* t = o.thrower >= 0 && size_t(o.thrower) < targets_.size() ? &targets_[size_t(o.thrower)] : nullptr;
+    const bool still_held = t && alive(*t) && t->held == int(&o - targets_.data());
+    if (o.flight == 4) {   // the tentacle reaching for it: where it is
+        if (!still_held) o.flight = 0;
+        return;
+    }
     if (o.flight == 1 || o.flight == 2) {   // pulled to the thrower's grab node, held there
-        const Target* t = o.thrower >= 0 && size_t(o.thrower) < targets_.size() ? &targets_[size_t(o.thrower)] : nullptr;
-        if (!t || !alive(*t) || t->held != int(&o - targets_.data())) {
-            o.flight = 3, o.flight_vel = glm::vec3(0);
+        if (!still_held) {
+            o.flight = 3, o.flung = false, o.flight_vel = glm::vec3(0);
             return;
         }
         const glm::vec3 grab(scene_.object_matrix(t->object, t->grab_node)[3]);
@@ -473,10 +547,12 @@ void Combat::update_flight(Target& o, float dt) {
         const glm::vec3 c = o.pos + glm::vec3(0, 0, 0.5f);
         const bool landed = !line_clear(from + glm::vec3(0, 0, 0.5f), c) ||
                             glm::distance(c, player_center()) < player_.radius.z + 0.5f || o.flight_t > 30;
-        if (landed) {
+        if (landed && o.flung) {
             o.flight = 0;
             if (LevelLogic::Object* lo = logic_.object(o.id)) lo->health = 0;
             apply_damage(o, 1e6f, false);
+        } else if (landed) {   // dropped: it comes to rest where it met the ground
+            o.flight = 0, o.pos = from;
         }
     }
     scene_.set_object_pose(o.object, o.pos, scene_.level().objects[o.object].base ? scene_.level().objects[o.object].base->rotation.z : 0.0f);

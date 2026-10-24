@@ -126,6 +126,44 @@ int cmd_models(const std::string& dir, const std::string& out_path) {
     return bad ? 1 : 0;
 }
 
+// The gol types holding component `comp` (hex), with its template values ("-" for any:
+// every type's component list).
+int cmd_gol(const std::string& dir, const std::string& comp) {
+    Vfs vfs;
+    vfs.mount_directory(dir);
+    const Gol gol = load_gol(vfs.read("gol.bin"));
+    std::function<std::string(const Value&)> show = [&](const Value& v) -> std::string {
+        switch (v.type) {
+            case Value::Int: return std::to_string(v.i);
+            case Value::Float: return std::to_string(v.f);
+            case Value::String: return "'" + v.s + "'";
+            default: {
+                std::string out = "{";
+                for (size_t k = 0; k < v.list.size(); ++k) out += (k ? ", " : "") + show(v.list[k]);
+                return out + "}";
+            }
+        }
+    };
+    std::vector<int> ids;
+    for (const auto& [id, t] : gol) ids.push_back(id);
+    std::sort(ids.begin(), ids.end());
+    const int c = comp == "-" ? -1 : int(std::stoul(comp, nullptr, 16));
+    for (int id : ids) {
+        const GolType& t = gol.at(id);
+        if (c < 0) {
+            std::printf("%d %s:", id, t.name.c_str());
+            for (const auto& [cc, flag] : t.components) std::printf(" %02x", cc);
+            std::printf("\n");
+            continue;
+        }
+        const bool has = std::any_of(t.components.begin(), t.components.end(), [&](const auto& p) { return p.first == c; });
+        if (!has) continue;
+        const Value* v = resolved_template(t, gol, c);
+        std::printf("%d %s: %s\n", id, t.name.c_str(), v ? show(*v).c_str() : "(per instance)");
+    }
+    return 0;
+}
+
 // The node tree of one model: name, translation, meshes, camera field of view.
 int cmd_nodes(const std::string& dir, const std::string& model) {
     Vfs vfs;
@@ -355,6 +393,7 @@ int main(int argc, char** argv) {
         if (cmd == "cross") return cmd_cross(argv[2]);
         if (cmd == "models" && argc >= 4) return cmd_models(argv[2], argv[3]);
         if (cmd == "nodes" && argc >= 4) return cmd_nodes(argv[2], argv[3]);
+        if (cmd == "gol" && argc >= 4) return cmd_gol(argv[2], argv[3]);
         if (cmd == "levels" && argc >= 4) return cmd_levels(argv[2], argv[3]);
         if (cmd == "anim" && argc >= 5) {
             std::vector<float> times;

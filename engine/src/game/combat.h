@@ -488,12 +488,20 @@ private:
         float throw_drag = 2.5f;   // AI [50]: how far in front it holds the object
         std::string grab_node, telekinesis_sound, telekinesis_end_sound;
         int held = -1, throw_stage = 0;   // held: the object (index); stages: pulling, throwing, after
+        // The tentacle (CTentacleAIComponent, NPC [58]'s type): TentaclePart links from the grab
+        // node to the object, growing at the type's speed; the telekinesis loop's voice.
+        bool tentacle = false;
+        float tentacle_len = 0;
+        std::vector<size_t> tentacle_parts;
+        int tk_voice = -1;
+        bool clip_speed_set = false;   // a state played at its own speed (play() puts it back)
         float throw_timer = 0;
         // A throwable object (CPhysicsObjectComponent [1]; [6] m/s across when thrown): pulled,
         // held, then flying on a ballistic arc (CPhysicsObjectComponent::Throw) until it lands.
         bool throwable = false;
         float throw_speed = 22, throw_lift = 1;   // [6]; CThrowMotionComponent [6]: raised this far when grabbed
-        int flight = 0, thrower = -1;   // flight: 1 pulled, 2 held, 3 flying
+        int flight = 0, thrower = -1;   // flight: 1 pulled, 2 held, 3 flying, 4 reached for
+        bool flung = false;             // flying thrown (it goes off where it lands), not dropped
         glm::vec3 flight_from{0}, flight_vel{0};
         float flight_t = 0, flight_len = 0.5f;
         float jump_wait = 0, jump_wait_min = 5, jump_wait_max = 7, jump_reach = 8, jump_walk = 2;
@@ -673,6 +681,12 @@ private:
     void update_throw(Target& t, float dt, const glm::vec3& enemy_chest);
     void update_flight(Target& o, float dt);
     void drop_held(Target& t);
+    void play_state(Target& t, const std::string& state, bool loop);
+    void update_tentacle(Target& t, float dt, const glm::vec3& to);
+    void remove_tentacle(Target& t);
+    int tentacle_part_type_ = -2;   // gol TentaclePart (-1: none); -2 not looked up
+    float tentacle_link_ = 0;       // a link's length (its start to end nodes)
+    int tentacle_ids_ = 0;
     // EnterLowCoverRoll: into a low cover about a roll away; false when it can't.
     bool roll_into_cover(Target& t, int cover, const glm::vec3& enemy_eye);
     void set_crouched(Target& t, bool on);

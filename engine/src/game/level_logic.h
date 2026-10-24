@@ -333,6 +333,7 @@ public:
     // The first clip of a state in gol type `type`'s state set ("" if it has none).
     std::string state_clip(int type, const std::string& state);
     std::vector<std::string> state_clips(int type, const std::string& state);   // all its variants
+    float state_speed(int type, const std::string& state);   // its clip's speed (negative: backwards); 1 if none
     // Tutorial steps (CLevelTutorial*): Start<Kind>Tutorial(ms) waits for the player to do
     // it (turn, reload, jump, move, shoot, switch weapons, sprint...) or for `ms` to pass,
     // then sends "TutorialStepEnded".

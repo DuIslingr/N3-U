@@ -1116,7 +1116,20 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
 
 void Combat::play(Target& t, const std::string& clip, bool loop) {
     if (clip.empty() || (t.playing == clip && loop)) return;
-    if (scene_.play_clip(t.object, clip, loop)) t.playing = clip;
+    if (!scene_.play_clip(t.object, clip, loop)) return;
+    t.playing = clip;
+    if (t.clip_speed_set) scene_.set_clip_speed(t.object, 1), t.clip_speed_set = false;
+}
+
+void Combat::play_state(Target& t, const std::string& state, bool loop) {
+    const int type = scene_.level().objects[t.object].type;
+    const std::string clip = logic_.state_clip(type, state);
+    const float speed = logic_.state_speed(type, state);
+    if (clip.empty() || (t.playing == clip && loop)) return;
+    if (!scene_.play_clip(t.object, clip, loop, speed < 0)) return;
+    t.playing = clip;
+    scene_.set_clip_speed(t.object, std::fabs(speed));
+    t.clip_speed_set = true;
 }
 
 bool Combat::alive(const Target& t) const {
@@ -2223,6 +2236,7 @@ void Combat::die(Target& t) {
     LevelLogic::Object* o = logic_.object(t.id);
     if (!o || o->dead) return;
     leave_cover(t);
+    if (t.held >= 0) drop_held(t);   // CNPCComponent::OnEvent 0xe: RemoveTentacle, DropTrownObject
     o->dead = true;
     o->health = 0;
     t.timer = 0;

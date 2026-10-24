@@ -1261,6 +1261,13 @@ std::string LevelLogic::state_clip(int type, const std::string& state) {
     return st ? st->clip : "";
 }
 
+float LevelLogic::state_speed(int type, const std::string& state) {
+    std::string name = state;
+    for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+    const AnimSounds::State* st = anim_sounds_->state(type, name);
+    return st && !st->speeds.empty() && st->speeds[0] != 0 ? st->speeds[0] : 1.0f;
+}
+
 std::vector<std::string> LevelLogic::state_clips(int type, const std::string& state) {
     std::string name = state;
     for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
