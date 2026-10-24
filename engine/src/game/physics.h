@@ -75,9 +75,10 @@ public:
     std::vector<uint32_t> owners_near(const glm::vec3& p, float radius) const;
     // First hit along the segment from -> to, as a fraction of its length; false if none.
     // `material` / `normal` (if given) receive the hit triangle's material byte and its
-    // unit normal facing the ray's start.
+    // unit normal facing the ray's start; `owner` its owner. `shot`: through the invisible
+    // walls that only hold the player (materials 18 and 19).
     bool raycast(const glm::vec3& from, const glm::vec3& to, float& t, uint8_t* material = nullptr,
-                 glm::vec3* normal = nullptr) const;
+                 glm::vec3* normal = nullptr, uint32_t* owner = nullptr, bool shot = false) const;
 
 private:
     struct Data;

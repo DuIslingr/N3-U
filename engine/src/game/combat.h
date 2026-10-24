@@ -825,6 +825,35 @@ private:
     std::vector<Pickup> pickups_;
     PickupInfo pickup_info_;
     void load_pickup(int id, const LevelObject& o, const Value& v);
+    // Breakables (CBreakableComponent; gol comp 0x13: health, damage stages {share of health
+    // left in %, state, collision off}, capsules {health, state, length, radius, position,
+    // rotation, node}): glass panes and consoles. With capsules, a shot through one takes
+    // their health (the first's) and at none sets that capsule's state; without, a shot on
+    // its collision or a blast takes its own, each stage it falls to setting its state on.
+    struct Breakable {
+        int id = 0, type = 0;
+        size_t object = 0;
+        float health = 0, max_health = 1, stage = 100;
+        float capsule_health = 0;
+        struct Stage {
+            float below = 0;
+            int state = -1;
+            bool collision_off = false;
+        };
+        std::vector<Stage> stages;
+        struct Capsule {
+            glm::vec3 a{0}, b{0};
+            float radius = 0;
+            int state = -1;
+        };
+        std::vector<Capsule> capsules;
+    };
+    std::vector<Breakable> breakables_;
+    void load_breakable(int id, size_t object, const LevelObject& o, const Value& v);
+    // A shot from `from` to `to` (where it stopped: on `owner`'s collision, if `wall`).
+    void shoot_breakables(const glm::vec3& from, const glm::vec3& to, float damage, bool wall, uint32_t owner);
+    void damage_breakable(Breakable& b, float damage);
+    void set_breakable_state(Breakable& b, int state);
     void update_pickups(float dt);
     bool take_pickup(const Pickup& p);
     void paralyze(const glm::vec3& eye, const glm::vec3& aim);

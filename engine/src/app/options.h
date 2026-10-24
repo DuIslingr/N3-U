@@ -55,6 +55,7 @@ struct Options {
     float grenade_test = -1;    // headless: at this time, throw a grenade at the nearest enemy
     float mine_test = -1;       // headless: at this time, throw a mine at the nearest enemy; detonate 2 s later
     float power_test = -1;      // headless: at this time, use Repel at the nearest enemy
+    std::string shoot_at;       // headless: "x,y,z,t": from time t, fire at that point
     float touch_test = 0;       // headless, touch scheme: for the run's last seconds, hold the pad up and swipe to turn
     std::string sprite_sheet;   // debugging: draw frames of this .bsprite (numbered) over the view
     std::string menu_keys;      // headless: open the in-game menu and press these (u d l r e=enter b=back .=none)

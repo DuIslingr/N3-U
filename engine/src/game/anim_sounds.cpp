@@ -53,6 +53,7 @@ const AnimSounds::TypeInfo& AnimSounds::info(int type) {
     };
     gather(type);
     if (states.empty()) return out;
+    for (const Value* st : states) out.order.push_back((*st)[0].s);
     // States: [name, ..., [clips]] (clips at [11]); a clip: [name, speed, track groups...];
     // a group: [name, kind, [events]]; a sound event: [name, start ms, end ms, ..., [[sound]...] at 12].
     std::unordered_map<std::string, bool> ambiguous;     // clips whose states disagree on events
@@ -159,6 +160,11 @@ const AnimSounds::State* AnimSounds::state(int type, const std::string& name) {
     const TypeInfo& t = info(type);
     auto it = t.states.find(lower(name));
     return it == t.states.end() ? nullptr : &it->second;
+}
+
+std::string AnimSounds::state_name(int type, int index) {
+    const TypeInfo& t = info(type);
+    return index >= 0 && size_t(index) < t.order.size() ? t.order[size_t(index)] : std::string();
 }
 
 int AnimSounds::ground_material(const Scene& scene, const glm::vec3& p) {

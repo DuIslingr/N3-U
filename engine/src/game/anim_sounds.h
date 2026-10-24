@@ -43,6 +43,8 @@ public:
         std::vector<std::pair<float, std::string>> scripts;  // Script tracks: (ms, function)
     };
     const State* state(int type, const std::string& name);
+    // The name of the type's state `index` (in its states set's order), "" if none.
+    std::string state_name(int type, int index);
     // Play (or stop) a state's sounds at `at`; returns the handles of those started.
     std::vector<int> play_state(Audio& audio, int type, const std::string& name, const glm::vec3& at);
     // CActorSoundsComponent (0x5a): the type's sound for a footstep and the like on ground of
@@ -74,6 +76,7 @@ private:
         std::vector<StepSet> steps;
         std::unordered_map<std::string, std::vector<EffectEvent>> effects;   // by lowercase clip name
         std::unordered_map<std::string, State> states;   // by lowercase name
+        std::vector<std::string> order;                  // their names by index
     };
     const TypeInfo& info(int type);
     const ClipEvents& events(int type) { return info(type).clips; }

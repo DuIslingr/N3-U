@@ -258,6 +258,13 @@ int Game::run_screenshot() {
                 // Held, or pressed and let go for a semi-automatic weapon.
                 ci.fire = combat.weapon().automatic || int(t / 0.1f) % 2 == 0;
             }
+            if (glm::vec4 at; !opt.shoot_at.empty() && std::sscanf(opt.shoot_at.c_str(), "%f,%f,%f,%f", &at.x, &at.y, &at.z, &at.w) == 4 &&
+                              t >= at.w) {
+                aim = glm::normalize(glm::vec3(at) - player.eye());
+                player.yaw = glm::degrees(std::atan2(-aim.x, aim.y));
+                player.pitch = glm::degrees(std::asin(glm::clamp(aim.z, -1.0f, 1.0f)));
+                ci.fire = combat.weapon().automatic || int(t / 0.1f) % 2 == 0;
+            }
             fire_step(kPhysicsStep, ci, player.eye(), aim, false);
             combat.push_player_out();
             if (opt.combat_test > 0 && (report += kPhysicsStep) >= 1.0f) {

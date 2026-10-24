@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "audio/audio.h"
+#include "game/anim_sounds.h"
 #include "game/level_logic.h"
 #include "game/player.h"
 #include "game/scene.h"
@@ -17,6 +18,7 @@ namespace nova {
 
 namespace {
 
+constexpr int kCompBreakable = 0x13;
 constexpr int kCompHealth = 0x11;
 constexpr int kCompAirNavigation = 0x1b;
 constexpr int kCompGroundNavigation = 0x1d;
@@ -549,6 +551,12 @@ void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_p
         apply_damage(t, damage * (1 - d / r), by_player);
         damage_cause_ = Cause::Shot;
     }
+    for (Breakable& b : breakables_) {   // CBreakableComponent: a blast (event 41) on those without capsules
+        const LevelLogic::Object* o = logic_.object(b.id);
+        if (!b.capsules.empty() || (o && !o->enabled)) continue;
+        const float d = glm::distance(at, glm::vec3(scene_.object_matrix(b.object)[3]));
+        if (d < r) damage_breakable(b, damage * (1 - d / r));
+    }
     const float d = glm::distance(at, player_center());
     if (d < r && line_clear(at + glm::vec3(0, 0, 0.2f), player_.eye())) {
         damage_player(damage * (by_player ? 0.5f : 1.0f) * (1 - d / r), at);   // the player's own: half
@@ -557,6 +565,112 @@ void Combat::splash_damage(const glm::vec3& at, float damage, float r, bool by_p
 }
 
 
+
+void Combat::load_breakable(int id, size_t object, const LevelObject& o, const Value& v) {
+    if (v.size() < 3) return;
+    Breakable b;
+    b.id = id, b.type = o.type, b.object = object;
+    b.max_health = b.health = num(v, 0, 0);   // CBreakableComponent::CommonInit
+    for (const Value& s : v[1].list)
+        if (s.size() >= 3) b.stages.push_back({num(s, 0, 0), s[1].i, s[2].i != 0});
+    for (const Value& c : v[2].list) {
+        if (c.size() < 11) continue;
+        if (b.capsules.empty()) b.capsule_health = num(c, 0, 1);   // the first one's health stands for all
+        // Init: along its z (a sphere for no length), turned by its rotation (degrees) and
+        // placed at its position, in its node's space or the object's.
+        glm::mat4 m = glm::translate(scene_.object_matrix(object, str(c, 10)), {num(c, 4, 0), num(c, 5, 0), num(c, 6, 0)});
+        m = glm::rotate(m, glm::radians(num(c, 9, 0)), {0, 0, 1});
+        m = glm::rotate(m, glm::radians(num(c, 8, 0)), {0, 1, 0});
+        m = glm::rotate(m, glm::radians(num(c, 7, 0)), {1, 0, 0});
+        const float half = num(c, 2, 0) * 0.5f;
+        Breakable::Capsule cap;
+        cap.a = glm::vec3(m * glm::vec4(0, 0, -half, 1)), cap.b = glm::vec3(m * glm::vec4(0, 0, half, 1));
+        cap.radius = num(c, 3, 0) * glm::length(glm::vec3(m[0]));
+        cap.state = c[1].i;
+        b.capsules.push_back(cap);
+    }
+    if (b.stages.empty() && b.capsules.empty()) return;
+    breakables_.push_back(std::move(b));
+}
+
+namespace {
+
+// The squared distance between segments p1q1 and p2q2, and the fraction along the first
+// of its point nearest the second (Ericson, Real-Time Collision Detection 5.1.9).
+float segment_distance2(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3& p2, const glm::vec3& q2, float& s) {
+    const glm::vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    const float a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
+    float t = 0;
+    s = 0;
+    if (a <= 1e-8f && e <= 1e-8f) return glm::dot(r, r);
+    if (a <= 1e-8f) {
+        t = std::clamp(f / e, 0.0f, 1.0f);
+    } else {
+        const float c = glm::dot(d1, r);
+        if (e <= 1e-8f) {
+            s = std::clamp(-c / a, 0.0f, 1.0f);
+        } else {
+            const float b = glm::dot(d1, d2), denom = a * e - b * b;
+            s = denom != 0 ? std::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0) t = 0, s = std::clamp(-c / a, 0.0f, 1.0f);
+            else if (t > 1) t = 1, s = std::clamp((b - c) / a, 0.0f, 1.0f);
+        }
+    }
+    const glm::vec3 d = p1 + d1 * s - (p2 + d2 * t);
+    return glm::dot(d, d);
+}
+
+}  // namespace
+
+void Combat::shoot_breakables(const glm::vec3& from, const glm::vec3& to, float damage, bool wall, uint32_t owner) {
+    // CBreakableComponent::onEvent: a shot (event 36) through its capsules, nearest first;
+    // a hit on its collision (37) for one without.
+    const float len = glm::distance(from, to);
+    if (len < 1e-4f) return;
+    const glm::vec3 past = to + (to - from) / len * 0.3f;   // what the shot stopped on may hold them
+    for (Breakable& b : breakables_) {
+        if (const LevelLogic::Object* o = logic_.object(b.id); o && !o->enabled) continue;
+        if (b.capsules.empty()) {
+            if (wall && owner == uint32_t(b.object)) damage_breakable(b, damage);
+            continue;
+        }
+        if (b.capsule_health <= 0) continue;
+        int best = -1;
+        float best_s = 2;
+        for (size_t k = 0; k < b.capsules.size(); ++k) {
+            const Breakable::Capsule& c = b.capsules[k];
+            float s = 0;
+            if (segment_distance2(from, past, c.a, c.b, s) <= c.radius * c.radius && s < best_s) best_s = s, best = int(k);
+        }
+        if (best < 0) continue;
+        b.capsule_health -= damage;
+        if (b.capsule_health <= 0) set_breakable_state(b, b.capsules[size_t(best)].state);
+    }
+}
+
+void Combat::damage_breakable(Breakable& b, float damage) {
+    // CBreakableComponent::ReceiveDamage: each stage the share of health left falls to (the
+    // lowest wins) sets its state; one may switch the collision off.
+    if (b.health <= 0) return;
+    b.health -= damage;
+    const float left = b.health / std::max(b.max_health, 1e-3f) * 100.0f;
+    int state = -1;
+    for (const Breakable::Stage& s : b.stages) {
+        if (s.below >= b.stage || left > s.below) continue;
+        b.stage = s.below, state = s.state;
+        if (s.collision_off) scene_.set_object_collision(b.object, false);
+    }
+    if (state >= 0) set_breakable_state(b, state);
+}
+
+void Combat::set_breakable_state(Breakable& b, int state) {
+    LevelLogic::Object* o = logic_.object(b.id);
+    const std::string name = logic_.anim_sounds().state_name(b.type, state);
+    if (!o || name.empty() || o->state == name) return;
+    if (logic_.trace) log("breakable " + std::to_string(b.id) + ": " + name);
+    logic_.set_state(*o, name);
+}
 
 int Combat::find_weapon(const std::string& name) const {
     const std::string want = lower(name);
@@ -838,6 +952,7 @@ void Combat::start(bool keep_stats) {
     spawners_.clear();
     bolts_.clear();
     pickups_.clear(), pickup_info_ = {};
+    breakables_.clear();
     if (keep_stats) {   // counted again below
         stats_.targets = stats_.actors = stats_.hostile = 0;
     } else {
@@ -874,6 +989,7 @@ void Combat::start(bool keep_stats) {
             load_pickup(id, o, *pu);
             continue;
         }
+        if (const Value* br = component(o, kCompBreakable)) load_breakable(id, obj.index, o, *br);
         const Value* health = component(o, kCompHealth);
         if (!health || !component(o, kCompTargetable)) continue;
         Target t;
@@ -908,7 +1024,8 @@ void Combat::start(bool keep_stats) {
     load_covers();
     load_jump_points();
     log("combat: " + std::to_string(stats_.targets) + " targets, " + std::to_string(stats_.actors) + " actors (" +
-        std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, nav mesh " +
+        std::to_string(stats_.hostile) + " hostile), " + std::to_string(spawners_.size()) + " spawn managers, " + std::to_string(pickups_.size()) + " pick-ups, " +
+        std::to_string(breakables_.size()) + " breakables, nav mesh " +
         std::to_string(nav_.triangle_count()) + " triangles");
     for (const WeaponDef& w : weapons_) {
         char line[160];
@@ -2448,7 +2565,8 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
     float wall_t = 1;
     uint8_t material = 0;
     glm::vec3 normal(0, 0, 1);
-    const bool wall = scene_.collision().raycast(eye, eye + dir * range, wall_t, &material, &normal);
+    uint32_t wall_owner = 0;
+    const bool wall = scene_.collision().raycast(eye, eye + dir * range, wall_t, &material, &normal, &wall_owner, true);
     float target_t = 0;
     glm::vec3 point;
     const int hit = ray_target(eye, dir, wall ? wall_t * range : range, target_t, point);
@@ -2485,6 +2603,7 @@ void Combat::fire_player(const glm::vec3& eye, const glm::vec3& aim) {
         } else if (wall) {
             impact(w.impacts, material, end, normal);
         }
+        shoot_breakables(eye, end, w.damage_near, hit < 0 && wall, wall_owner);
     }
     // Shot sounds: automatic weapons loop while the trigger is held.
     if (!w.loop_sound.empty()) {
@@ -2559,7 +2678,8 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
         float t = 1;
         uint8_t material = 0;
         glm::vec3 normal(0, 0, 1);
-        const bool wall = scene_.collision().raycast(b.pos, next, t, &material, &normal);
+        uint32_t wall_owner = 0;
+        const bool wall = scene_.collision().raycast(b.pos, next, t, &material, &normal, &wall_owner, true);
         const glm::vec3 end = wall ? b.pos + (next - b.pos) * t : next;
         // Closest approach to the player along this step.
         const glm::vec3 pc = player_center();
@@ -2601,6 +2721,7 @@ void Combat::update(float dt, const CombatInput& in, const glm::vec3& eye, const
             else if (!effect("impact_plasma", end, normal)) sparks_.push_back({end, 0.15f, b.color});
             stopped = true;
         }
+        if (b.damage > 0) shoot_breakables(b.pos, stop, b.damage, wall && !hits_target && stop == end, wall_owner);
         // An explosive one blows up where it stops, or at the end of its flight
         // (CProjectileComponent::Die: [6] damage within [7] metres).
         if ((stopped || b.life <= 0) && b.splash > 0 && b.radius > 0) splash_damage(stop, b.splash, b.radius, players);

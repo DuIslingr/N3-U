@@ -354,7 +354,8 @@ bool CollisionWorld::ray_down(const glm::vec3& from, float max_dist, float& hit_
     return any;
 }
 
-bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& t, uint8_t* material, glm::vec3* normal) const {
+bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& t, uint8_t* material, glm::vec3* normal,
+                             uint32_t* owner, bool shot) const {
     std::vector<uint32_t> cand;
     candidates(glm::min(from, to), glm::max(from, to), cand);
     const glm::vec3 dir = to - from;
@@ -363,6 +364,7 @@ bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& 
     for (uint32_t i : cand) {
         // Moller-Trumbore, two-sided.
         const Triangle& tri = tris_[i];
+        if (shot && (tri.material == 18 || tri.material == 19)) continue;
         const glm::vec3 e1 = tri.b - tri.a, e2 = tri.c - tri.a;
         const glm::vec3 p = glm::cross(dir, e2);
         const float det = glm::dot(e1, p);
@@ -379,6 +381,7 @@ bool CollisionWorld::raycast(const glm::vec3& from, const glm::vec3& to, float& 
             t = h;
             any = true;
             if (material) *material = tri.material;
+            if (owner) *owner = tri.owner;
             if (normal) {
                 const glm::vec3 n = glm::normalize(glm::cross(e1, e2));
                 *normal = glm::dot(n, dir) > 0 ? -n : n;
