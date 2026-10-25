@@ -1819,6 +1819,7 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
             wp_id = logic_.next_waypoint(wp_id);
             if (wp_id == arg) break;
         }
+        if (logic_.trace) log(std::to_string(npc) + " " + order + "s along " + std::to_string(t->goals.size()) + " waypoints");
     } else if (order == "jump" || order == "jump_at" || order == "AI_JumpSpecial") {   // a leap to the waypoint
         const LevelLogic::Object* wp = logic_.object(arg);
         if (!wp) return false;
