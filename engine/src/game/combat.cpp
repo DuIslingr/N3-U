@@ -1,3 +1,4 @@
+#include <set>
 #include "game/combat.h"
 
 #include <algorithm>
@@ -2102,6 +2103,64 @@ void Combat::face(Target& t, const glm::vec3& towards, float dt) {
     t.yaw += std::clamp(d, -step, step);
 }
 
+// The type's turns on the spot (TurnLeft45 ... Turn180; a mech's AI_LeftTurn ... _135): each
+// clip turns the actor by its root (Bip01) between its first and last frame.
+const std::vector<Combat::TurnClip>& Combat::turn_clips(const Target& t) {
+    const int type = scene_.level().objects[t.object].type;
+    if (auto it = turn_clips_.find(type); it != turn_clips_.end()) return it->second;
+    auto& out = turn_clips_[type];
+    static const char* const kStates[] = {"TurnLeft45", "TurnRight45", "TurnLeft90", "TurnRight90", "TurnLeft135", "TurnRight135",
+                                          "Turn180", "TurnLeft180", "TurnRight180", "AI_LeftTurn", "AI_RightTurn", "AI_LeftTurn_90",
+                                          "AI_RightTurn_90", "AI_LeftTurn_135", "AI_RightTurn_135"};
+    for (const char* st : kStates) {
+        const std::string clip = logic_.state_clip(type, st);
+        glm::mat4 a, b;
+        float length = 0;
+        if (clip.empty() || !scene_.sample_node(t.object, "Bip01", clip, 0, a, &length) || !scene_.sample_node(t.object, "Bip01", clip, length, b))
+            continue;
+        const glm::vec3 v = glm::mat3(b) * glm::inverse(glm::mat3(a)) * glm::vec3(1, 0, 0);
+        const float turn = glm::degrees(std::atan2(v.y, v.x));
+        if (std::abs(turn) > 20.0f && length > 0) out.push_back({clip, turn, length / 1000.0f});
+    }
+    return out;
+}
+
+// CNPCComponent::GetRotationStateToPos / CheckRotationToTarget: the target over 40 degrees
+// off, the turn on the spot nearest that (over 40: 45, 80: 90, 130: 135, 170: 180).
+bool Combat::try_turn(Target& t, const glm::vec3& towards) {
+    const float want = angle_diff(t.yaw, yaw_towards(t.pos, towards));   // + to its left
+    if (std::abs(want) <= 40.0f) return false;
+    const float size = std::abs(want) > 170.0f ? 180.0f : std::abs(want) > 130.0f ? 135.0f : std::abs(want) > 80.0f ? 90.0f : 45.0f;
+    const TurnClip* best = nullptr;
+    for (const TurnClip& c : turn_clips(t)) {
+        const bool around = std::abs(c.turn) > 160.0f;
+        if (std::abs(std::abs(c.turn) - size) > 20.0f || (!around && (c.turn > 0) != (want > 0))) continue;
+        if (!best || (around && (c.turn > 0) == (want > 0))) best = &c;
+    }
+    if (!best || !scene_.play_clip(t.object, best->clip, false)) return false;
+    t.playing = best->clip, t.turn = best->turn, t.turn_left = t.turn_length = best->length;
+    if (logic_.trace) {
+        char line[128];
+        std::snprintf(line, sizeof line, "%d turns %.0f degrees (%s) for %.0f", t.id, t.turn, best->clip.c_str(), want);
+        log(line);
+    }
+    return true;
+}
+
+// Turning on the spot: the clip's root turns the body; done (or cut short), the actor's
+// heading takes the turn.
+bool Combat::update_turn(Target& t, float dt) {
+    if (t.turn_left <= 0) return false;
+    t.turn_left -= dt;
+    const bool cut = t.state == Target::State::Hurt || t.state == Target::State::Dying || t.state == Target::State::Dead;
+    if (t.turn_left > 0 && !cut && !scene_.clip_finished(t.object)) return true;
+    const float done = cut ? std::clamp(1.0f - t.turn_left / t.turn_length, 0.0f, 1.0f) : 1.0f;
+    t.yaw += t.turn * done, t.turn_left = 0;
+    if (!cut) play(t, t.clip_alert, true);
+    scene_.set_object_pose(t.object, t.pos, t.yaw);
+    return false;
+}
+
 void Combat::move_along_path(Target& t, float dt, float speed_scale) {
     float budget = t.run_speed * speed_scale * dt;
     while (budget > 0 && t.path_next < t.path.size()) {
@@ -2362,6 +2421,7 @@ void Combat::update_actor(Target& t, float dt) {
         scene_.set_object_pose(t.object, t.pos, t.yaw);
         return;
     }
+    if (update_turn(t, dt)) return;
     if (t.attacks == 0 && t.locked < 0) return;
     if ((t.choose_timer -= dt) <= 0) {
         const int before = t.enemy;
@@ -2479,6 +2539,9 @@ void Combat::update_actor(Target& t, float dt) {
             t.state = S::Chase, t.timer = 0, t.token = false, t.shots_left = 0;
             break;
         }
+        // Between bursts, the enemy well off to one side: a turn on the spot.
+        if (t.reload_left <= 0 && (t.attack_choices.empty() && !t.mech_ai ? t.shots_left <= 0 : t.attack_state.empty()) && try_turn(t, target))
+            break;
         face(t, target, dt);
         if (t.reload_left <= 0 && t.attack_state.empty()) {   // between attacks by states: their attack idle
             const std::vector<std::string> idle = t.mech_ai                ? logic_.state_clips(scene_.level().objects[t.object].type, "AI_Idle")
@@ -2499,6 +2562,7 @@ void Combat::update_actor(Target& t, float dt) {
         t.state = S::Chase;
         const bool in_melee = dist < t.melee_range;
         if (in_melee && (!t.ranged || t.no_weapons)) {
+            if (try_turn(t, target)) break;   // facing it first
             start_melee(t);
             break;
         }

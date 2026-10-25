@@ -497,7 +497,8 @@ private:
         // "hurt" false: no hurt reactions (CNPCComponent flag 5); "exit_area": leaving, gone
         // once out of the player's sight (StartAutoDisable).
         bool no_hurt = false, exiting = false;
-        bool no_weapons = false;   // "use_ranged_weapons" false (flag 14, CanUseWeapons): melee only
+        bool no_weapons = false;
+        float turn = 0, turn_left = 0, turn_length = 1;   // turning on the spot: by how much, time left   // "use_ranged_weapons" false (flag 14, CanUseWeapons): melee only
         float exit_time = 0;
         float paralyzed = 0;   // seconds left frozen by the Paralyze power
         float paralyze_time = 5;   // CHealthComponent::GetParalyzeDuration (health [3], ms)
@@ -893,6 +894,14 @@ private:
     int best_melee_slot(const Target& t) const;
     bool melee_slot_point(const Target& t, int slot, glm::vec3& out) const;
     void hold_off(Target& t, const glm::vec3& target, float dt);
+    struct TurnClip {
+        std::string clip;
+        float turn = 0, length = 0;   // degrees (+ left), seconds
+    };
+    std::unordered_map<int, std::vector<TurnClip>> turn_clips_;
+    const std::vector<TurnClip>& turn_clips(const Target& t);
+    bool try_turn(Target& t, const glm::vec3& towards);
+    bool update_turn(Target& t, float dt);
     static constexpr int kMeleeSlots = 4;   // CTargetableComponent::Init: a radius under 50
     // Start a particle effect at `at` with its +Z along `normal`; false if there is no such effect.
     bool effect(const std::string& name, const glm::vec3& at, const glm::vec3& normal = {0, 0, 1});
