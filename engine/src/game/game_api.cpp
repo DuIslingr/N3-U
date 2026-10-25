@@ -93,7 +93,8 @@ int api_send_event(lua_State* L) {
     if (c.combat && lua_gettop(L) >= 2) {
         const int arg = lua_isnumber(L, 3) ? int(lua_tointeger(L, 3)) : 0;
         // A word ("start" / "stop") for some (CLinkedObjectsComponent's "flashlight").
-        const bool flag = lua_gettop(L) < 3 || (lua_type(L, 3) == LUA_TSTRING ? str_arg(L, 3) != "stop" : lua_toboolean(L, 3) != 0);
+        bool flag = lua_gettop(L) < 3 || (lua_type(L, 3) == LUA_TSTRING ? str_arg(L, 3) != "stop" : lua_toboolean(L, 3) != 0);
+        if (lua_isnumber(L, 3) && lua_isboolean(L, 4)) flag = lua_toboolean(L, 4) != 0;   // a waypoint and a flag ("run": on along its path)
         c.combat->npc_order(id, name, arg, flag, lua_isnumber(L, 4) ? float(lua_tonumber(L, 4)) : 0.0f,
                             lua_isnumber(L, 5) ? float(lua_tonumber(L, 5)) : 0.0f);
     }

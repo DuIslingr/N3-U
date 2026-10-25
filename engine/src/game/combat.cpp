@@ -1807,11 +1807,18 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         leave_cover(*t);
         t->goals.clear();
     } else if (order == "run" || order == "fly") {
-        const LevelLogic::Object* wp = logic_.object(arg);
-        if (!wp) return false;
-        NpcGoal g;
-        g.kind = NpcGoal::Kind::Move, g.pos = wp->position, g.run = true, g.id = -1;
-        if (t->goals.size() < 16) t->goals.push_back(g);
+        // StartMove(waypoint, flag): with the flag, on along the waypoints' path after it.
+        int wp_id = arg;
+        for (int k = 0; k < 16 && wp_id > 0 && t->goals.size() < 16; ++k) {
+            const LevelLogic::Object* wp = logic_.object(wp_id);
+            if (!wp) return k > 0;
+            NpcGoal g;
+            g.kind = NpcGoal::Kind::Move, g.pos = wp->position, g.run = true, g.id = -1;
+            t->goals.push_back(g);
+            if (order == "fly" || !flag) break;
+            wp_id = logic_.next_waypoint(wp_id);
+            if (wp_id == arg) break;
+        }
     } else if (order == "jump" || order == "jump_at" || order == "AI_JumpSpecial") {   // a leap to the waypoint
         const LevelLogic::Object* wp = logic_.object(arg);
         if (!wp) return false;
@@ -1847,6 +1854,9 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         const bool cloak = order == "cloack";
         scene_.set_object_visible(t->object, !cloak);
         t->invulnerable = cloak;
+    } else if (order == "jump_attack") {   // CBigSpiderAiComponent::OnEvent: at the player now, by a leap
+        t->locked = -1, t->choose_timer = 0, t->jump_cool = 0, t->slot_check = 0;
+        notice(*t);
     } else if (order == "invisible_behavior") {   // SetFlag(9): UpdateInvisibility's cloaking when hurt
         t->auto_cloak = flag;
     } else if (order == "use_ranged_weapons") {   // SetFlag(14)
