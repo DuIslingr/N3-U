@@ -1479,6 +1479,9 @@ void Combat::setup_actor(Target& t, const LevelObject& o) {
     if (const Value* rf = component(o, 0x59); rf && rf->size() > 22 && (*rf)[22].size() > 0 && (*rf)[22][0].size() > 28) {
         const Value& a = (*rf)[22][0];   // its first aggro level ("Normal")
         t.red_fury = true;
+        // A fire spell in the air over, [32] % of the time it lands in a cover (UpdateGoal,
+        // GetGroundCover) and fights from there.
+        t.use_covers = true, t.rf_cover_chance = a.size() > 32 ? float(a[32].i) : 50.0f;
         t.rf_air_only = lower(o.name).find("aironly") != std::string::npos;
         t.rf_air_min = num(a, 2, 15), t.rf_air_max = num(a, 3, 25), t.rf_h_min = num(a, 4, 5), t.rf_h_max = num(a, 5, 7);
         t.rf_time_min = num(a, 22, 8000) / 1000.0f, t.rf_time_max = num(a, 23, 12000) / 1000.0f;
@@ -2592,11 +2595,30 @@ void Combat::red_fury_pick_point(Target& t, const glm::vec3& feet) {
 bool Combat::update_red_fury(Target& t, float dt, const glm::vec3& feet, const glm::vec3& chest, bool sees) {
     if (!t.rf_air) return false;
     std::uniform_real_distribution<float> u(0, 1);
+    const bool target = t.aware && t.enemy != kNoEnemy;
     if ((t.rf_fire_timer -= dt) <= 0) {
         t.rf_fire_on = !t.rf_fire_on, t.rf_spell_sounded = false;
         t.rf_fire_timer = t.rf_fire_on ? t.rf_fire_on_s : t.rf_fire_off_min + (t.rf_fire_off_max - t.rf_fire_off_min) * u(rng_);
+        // The spell over: now and then down into the nearest free ground cover that hides it.
+        if (!t.rf_fire_on && target && !t.rf_directed && !t.rf_landing && !t.rf_air_only && u(rng_) * 100.0f < t.rf_cover_chance) {
+            const int self = int(&t - targets_.data());
+            int best = -1;
+            float best_d = 25.0f;
+            for (size_t i = 0; i < covers_.size(); ++i) {
+                const CoverPoint& c = covers_[i];
+                const float d = glm::distance(glm::vec2(c.pos), glm::vec2(t.pos));
+                if ((c.holder >= 0 && c.holder != self) || d >= best_d || glm::distance(glm::vec2(c.pos), glm::vec2(feet)) < 5.0f ||
+                    !cover_protects(c, chest + glm::vec3(0, 0, 0.3f)))
+                    continue;
+                best = int(i), best_d = d;
+            }
+            if (best >= 0) {
+                t.rf_landing = true, t.rf_dest = covers_[size_t(best)].pos + glm::vec3(0, 0, 0.1f), t.rf_land_t = 0;
+                t.cover = best, covers_[size_t(best)].holder = self, t.cover_phase = Target::CoverPhase::Moving;
+                if (logic_.trace) log(std::to_string(t.id) + " lands in cover " + std::to_string(best));
+            }
+        }
     }
-    const bool target = t.aware && t.enemy != kNoEnemy;
     // Its time up there over: down to the floor below.
     if (!t.rf_directed && !t.rf_landing && !t.rf_air_only && target && (t.rf_mode_timer -= dt) <= 0) {
         glm::vec3 on;

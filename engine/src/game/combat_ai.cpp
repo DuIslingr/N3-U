@@ -628,7 +628,7 @@ bool Combat::fight_from_cover(Target& t, float dt, const glm::vec3& target, cons
     }
     // Looking for a cover every 3-5 s while it has none (timer 9).
     if (t.cover < 0) {
-        if ((t.cover_eval -= dt) > 0) return false;
+        if (t.red_fury || (t.cover_eval -= dt) > 0) return false;   // a Red Fury trooper: only covers it lands in
         t.cover_eval = std::uniform_real_distribution<float>(3.0f, 5.0f)(rng_);
         const int c = choose_cover(t, target, enemy_eye);
         if (c < 0) return false;

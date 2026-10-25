@@ -619,6 +619,7 @@ private:
         bool rf_spell_sounded = false;
         float rf_mode_timer = 0, rf_fire_timer = 0, rf_shot = 0, rf_repick = 0, rf_land_t = 0;
         float rf_air_min = 15, rf_air_max = 25, rf_h_min = 5, rf_h_max = 7, rf_time_min = 8, rf_time_max = 12;
+        float rf_cover_chance = 50;
         float rf_fire_on_s = 1.5f, rf_fire_off_min = 3, rf_fire_off_max = 4, rf_speed = 7, rf_accel = 10;
         glm::vec3 rf_vel{0}, rf_dest{0};
         int jump_phase = 0;   // 0 none, 1 start, 2 in the air, 3 landing
