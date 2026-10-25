@@ -240,6 +240,7 @@ public:
         bool enabled = true, visible = true, dead = false;
         bool interactive = false, interact_enabled = true;
         bool spent = false;          // used, and its use runs once ([2] of CInteractiveComponent unset)
+        bool start_spawn = false;    // Actor_SetStartSpawn (the original's actor +0x5d0: only read back by Actor_GetStartSpawn)
         float health = 100;
         std::string state;
         int trigger = -1, door = -1;

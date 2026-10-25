@@ -934,6 +934,15 @@ int api_give_damage_to_script_target(lua_State* L) {
     if (Combat* c = ctx(L).combat) c->damage_player(float(lua_tonumber(L, 2)), ctx(L).player.center);
     return 0;
 }
+int api_actor_set_start_spawn(lua_State* L) {
+    if (auto* o = obj(L, 1)) o->start_spawn = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+int api_actor_get_start_spawn(lua_State* L) {
+    auto* o = obj(L, 1);
+    lua_pushboolean(L, o && o->start_spawn);
+    return 1;
+}
 int api_is_trigger_target(lua_State* L) {
     const lua_Integer who = lua_tointeger(L, 2);
     lua_pushboolean(L, who == 0 || who == -1);
@@ -1360,6 +1369,8 @@ const Entry kImplemented[] = {
     {"GiveDamageMC", api_give_damage_mc},
     {"GiveDamageToScriptTarget", api_give_damage_to_script_target},
     {"IsTriggerTarget", api_is_trigger_target},
+    {"Actor_SetStartSpawn", api_actor_set_start_spawn},
+    {"Actor_GetStartSpawn", api_actor_get_start_spawn},
     {"GetRandom", api_get_random},
     {"ShowMessage", api_show_message},
     {"ShowMessageEx", api_show_message},
