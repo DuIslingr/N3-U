@@ -31,6 +31,12 @@ float field(const Value& v, size_t i, float fallback) {
 void Combat::load_covers() {
     covers_.clear();
     const Level& level = scene_.level();
+    // The zones' exit points (nav points {id, x, y, z, flags, next} flagged 1, CZone +0x150):
+    // where "exit_area" sends its actors.
+    exit_points_.clear();
+    for (const LevelObject& o : level.objects)
+        if (o.kind == "nav_point" && o.fields.size() > 4 && (o.fields[4].i & 1) != 0)
+            exit_points_.emplace_back(field(o.fields, 1, 0), field(o.fields, 2, 0), field(o.fields, 3, 0));
     for (size_t i = 0; i < level.objects.size(); ++i) {
         const LevelObject& o = level.objects[i];
         auto c = o.components.find(kCompBuiltinCover);

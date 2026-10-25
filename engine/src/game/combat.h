@@ -811,6 +811,7 @@ private:
         int holder = -1;   // the target index holding it
     };
     std::vector<CoverPoint> covers_;
+    std::vector<glm::vec3> exit_points_;
     void load_covers();
     void read_ai(Target& t, const Value& ai);
     void update_aggressiveness(Target& t, float dt, float dist, bool sees, bool in_cover);

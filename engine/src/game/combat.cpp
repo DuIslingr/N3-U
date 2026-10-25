@@ -1873,14 +1873,26 @@ bool Combat::npc_order(int npc, const std::string& order, int arg, bool flag, fl
         for (size_t i = 0; i < t->attached.size(); ++i)
             if (std::find(t->linked.begin(), t->linked.end(), i) == t->linked.end()) t->attached[i].on = flag;
     } else if (order == "exit_area") {
-        // To its zone's nearest way out (ClearActions, StartMove to a zone exit point), then
-        // gone where the player cannot see it (StartAutoDisable). Here: running off away from
-        // the player, without the zone's exit points.
-        const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
-        glm::vec2 away = glm::vec2(t->pos - feet);
-        away = glm::length(away) > 1e-3f ? glm::normalize(away) : glm::vec2(1, 0);
+        // To the nearest way out it can reach (ClearActions, StartMove to the nearest zone
+        // exit point), then gone where the player cannot see it (StartAutoDisable); with none,
+        // off away from the player.
         glm::vec3 goal = t->pos;
-        nav_.nearest(t->pos + glm::vec3(away * 25.0f, 0), 15.0f, goal);
+        float best = 1e9f;
+        for (const glm::vec3& e : exit_points_) {
+            const float d = glm::distance(e, t->pos);
+            glm::vec3 on;
+            std::vector<glm::vec3> path;
+            const int tri = d < best ? nav_.nearest(e + glm::vec3(0, 0, 0.3f), 2.0f, on) : -1;
+            if (tri >= 0 && t->tri >= 0 && nav_.find_path(t->tri, t->pos, tri, on, path, [this](int door) { return logic_.door_passable(door); }))
+                goal = on, best = d;
+        }
+        if (best > 1e8f) {
+            const glm::vec3 feet = player_.center - glm::vec3(0, 0, player_.radius.z);
+            glm::vec2 away = glm::vec2(t->pos - feet);
+            away = glm::length(away) > 1e-3f ? glm::normalize(away) : glm::vec2(1, 0);
+            nav_.nearest(t->pos + glm::vec3(away * 25.0f, 0), 15.0f, goal);
+        }
+        if (logic_.trace) log(std::to_string(npc) + " leaves the area" + (best < 1e8f ? " by an exit point" : ""));
         NpcGoal g;
         g.kind = NpcGoal::Kind::Move, g.pos = goal, g.run = true, g.id = -1;
         leave_cover(*t);
